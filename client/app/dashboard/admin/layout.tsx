@@ -110,9 +110,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         </aside>
 
         {sidebarOpen ? (
-          <div className="fixed inset-0 z-40 bg-slate-900/45 lg:hidden" onClick={() => setSidebarOpen(false)}>
+          <div className="fixed inset-0 z-40 animate-fade-in bg-slate-900/45 lg:hidden" onClick={() => setSidebarOpen(false)}>
             <aside
-              className="h-full w-72 bg-white px-4 py-6 text-slate-900 shadow-xl"
+              className="h-full w-72 animate-slide-in-left bg-white px-4 py-6 text-slate-900 shadow-xl"
               onClick={(event) => event.stopPropagation()}
             >
               {sidebarContent}
