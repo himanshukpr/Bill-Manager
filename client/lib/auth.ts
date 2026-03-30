@@ -24,7 +24,7 @@ const profileRules: ProfileRule[] = [
   {
     role: "supplier",
     userId: "SUP-001",
-    destination: "/dashboard/member",
+    destination: "/dashboard/supplier",
     aliases: ["supplier", "suppliers", "member 1", "member 1 - suppliers"],
   },
   {
@@ -52,7 +52,19 @@ export function saveSessionAuth(auth: SessionAuth) {
     return
   }
 
-  window.sessionStorage.setItem("bill-manager-auth", JSON.stringify(auth))
+  const serialized = JSON.stringify(auth)
+
+  try {
+    window.sessionStorage.setItem("bill-manager-auth", serialized)
+  } catch {
+    // Some mobile/private browser contexts can block sessionStorage writes.
+  }
+
+  try {
+    window.localStorage.setItem("bill-manager-auth", serialized)
+  } catch {
+    // localStorage can also fail in restricted contexts.
+  }
 }
 
 export function getSessionAuth(): SessionAuth | null {
@@ -60,7 +72,22 @@ export function getSessionAuth(): SessionAuth | null {
     return null
   }
 
-  const value = window.sessionStorage.getItem("bill-manager-auth")
+  let value: string | null = null
+
+  try {
+    value = window.sessionStorage.getItem("bill-manager-auth")
+  } catch {
+    value = null
+  }
+
+  if (!value) {
+    try {
+      value = window.localStorage.getItem("bill-manager-auth")
+    } catch {
+      value = null
+    }
+  }
+
   if (!value) {
     return null
   }
@@ -77,5 +104,15 @@ export function clearSessionAuth() {
     return
   }
 
-  window.sessionStorage.removeItem("bill-manager-auth")
+  try {
+    window.sessionStorage.removeItem("bill-manager-auth")
+  } catch {
+    // ignore
+  }
+
+  try {
+    window.localStorage.removeItem("bill-manager-auth")
+  } catch {
+    // ignore
+  }
 }

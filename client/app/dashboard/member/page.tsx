@@ -22,7 +22,7 @@ export default function MemberDashboardPage() {
   useEffect(() => {
     const session = getSessionAuth()
 
-    if (!session || (session.role !== "member" && session.role !== "supplier")) {
+    if (!session || session.role !== "member") {
       router.replace("/")
       return
     }
