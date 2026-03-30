@@ -1,25 +1,39 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
-import { resolveProfile, saveSessionAuth } from "@/lib/auth"
+import { getSessionAuth, saveSessionAuth } from "@/lib/auth"
 
 export function LoginForm() {
   const router = useRouter()
-  const [profile, setProfile] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
 
-  const resolvedProfile = resolveProfile(profile)
-  const userId = resolvedProfile?.userId ?? "-"
+  useEffect(() => {
+    const session = getSessionAuth()
+
+    if (!session) {
+      return
+    }
+
+    if (session.role === "admin") {
+      router.replace("/dashboard/admin")
+      return
+    }
+
+    router.replace("/dashboard/member")
+  }, [router])
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!resolvedProfile) {
-      setErrorMessage("Enter a valid profile: Admin, Supplier, or Member.")
+    const trimmedEmail = email.trim()
+
+    if (!trimmedEmail || !trimmedEmail.includes("@")) {
+      setErrorMessage("Please enter a valid email.")
       return
     }
 
@@ -31,13 +45,13 @@ export function LoginForm() {
     setErrorMessage("")
 
     saveSessionAuth({
-      role: resolvedProfile.role,
-      profile: profile.trim(),
-      userId: resolvedProfile.userId,
+      role: "admin",
+      profile: trimmedEmail,
+      userId: "",
       loginAt: new Date().toISOString(),
     })
 
-    router.push(resolvedProfile.destination)
+    router.replace("/dashboard/admin")
   }
 
   return (
@@ -69,21 +83,13 @@ export function LoginForm() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700">Profile</span>
+          <span className="text-sm font-medium text-slate-700">Email</span>
           <input
-            value={profile}
-            onChange={(event) => setProfile(event.target.value)}
-            placeholder="Admin, Supplier, Member"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="name@example.com"
             className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-          />
-        </label>
-
-        <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700">User ID</span>
-          <input
-            readOnly
-            value={userId}
-            className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 outline-none"
           />
         </label>
 
@@ -112,7 +118,7 @@ export function LoginForm() {
         ) : null}
 
         <p className="text-center text-xs text-slate-500">
-          Admin opens admin dashboard. Supplier or Member opens period page.
+          Sign in opens the admin dashboard.
         </p>
       </form>
     </section>
