@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { getSessionAuth, saveSessionAuth } from "@/lib/auth"
@@ -136,6 +137,13 @@ export function LoginForm() {
 
         <p className="text-center text-xs text-slate-500 dark:text-slate-400">
           Sign in opens the admin dashboard.
+        </p>
+
+        <p className="text-center text-sm text-slate-600 dark:text-slate-400">
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="font-semibold text-slate-900 hover:underline dark:text-slate-100">
+            Sign Up
+          </Link>
         </p>
       </form>
     </section>
