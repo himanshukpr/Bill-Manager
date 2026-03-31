@@ -72,4 +72,12 @@ export class AuthService {
       user,
     };
   }
+
+  async getMe(uuid: string) {
+    const user = await this.usersService.findById(uuid);
+    if (!user) return null;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password: _pw, ...result } = user;
+    return result;
+  }
 }

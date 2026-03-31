@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
@@ -20,7 +20,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   useEffect(() => {
     const session = getSessionAuth()
 
-    if (!session || session.role !== "admin") {
+    if (!session?.token || session.role !== "admin") {
       router.replace("/")
       return
     }
@@ -68,7 +68,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     >
       <AppSidebar
         variant="inset"
-        userName={auth.profile}
+        userName={auth.username}
         userRole="Admin"
         onLogout={logout}
       />

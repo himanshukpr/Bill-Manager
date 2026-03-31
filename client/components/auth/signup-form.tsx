@@ -1,30 +1,27 @@
-"use client"
+﻿"use client"
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
-import { saveSessionAuth } from "@/lib/auth"
+import { apiRegister, dashboardPath } from "@/lib/auth"
 
 export function SignUpForm() {
   const router = useRouter()
-  const [name, setName] = useState("")
+  const [username, setUsername] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isSubmitting) return
 
-    if (isSubmitting) {
-      return
-    }
-
-    if (!name.trim()) {
-      setErrorMessage("Please enter your name.")
+    if (!username.trim()) {
+      setErrorMessage("Please enter a username.")
       return
     }
 
@@ -47,15 +44,14 @@ export function SignUpForm() {
     setErrorMessage("")
     setIsSubmitting(true)
 
-    // Simulating signup success and auto-login
-    saveSessionAuth({
-      role: "admin",
-      profile: trimmedEmail,
-      userId: "NEW-USER",
-      loginAt: new Date().toISOString(),
-    })
-
-    router.replace("/dashboard/admin")
+    try {
+      const session = await apiRegister(username.trim(), trimmedEmail, password)
+      router.replace(dashboardPath(session.role))
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Sign up failed. Please try again."
+      setErrorMessage(msg)
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -88,12 +84,14 @@ export function SignUpForm() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Full Name</span>
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Username</span>
           <input
             type="text"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="John Doe"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+            autoCapitalize="none"
+            placeholder="johndoe"
             className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none transition-all duration-300 placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
           />
         </label>
@@ -116,6 +114,7 @@ export function SignUpForm() {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
             placeholder="Create a password"
             className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none transition-all duration-300 placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
           />
@@ -127,6 +126,7 @@ export function SignUpForm() {
             type="password"
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
+            autoComplete="new-password"
             placeholder="Confirm your password"
             className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none transition-all duration-300 placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
           />
@@ -137,7 +137,7 @@ export function SignUpForm() {
           disabled={isSubmitting}
           className="mt-2 h-11 w-full rounded-xl bg-slate-900 text-sm font-medium text-white transition-all duration-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-80 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
         >
-          {isSubmitting ? "Creating Account..." : "Sign Up"}
+          {isSubmitting ? "Creating Account…" : "Sign Up"}
         </Button>
 
         {errorMessage ? (

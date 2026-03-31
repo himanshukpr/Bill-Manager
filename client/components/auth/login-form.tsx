@@ -1,69 +1,52 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
-import { getSessionAuth, saveSessionAuth } from "@/lib/auth"
+import { apiLogin, dashboardPath, getSessionAuth } from "@/lib/auth"
 
 export function LoginForm() {
   const router = useRouter()
-  const [email, setEmail] = useState("")
+  const [emailOrUsername, setEmailOrUsername] = useState("")
   const [password, setPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  // Redirect already-authenticated users to their dashboard
   useEffect(() => {
     const session = getSessionAuth()
-
-    if (!session) {
-      return
+    if (session?.token) {
+      router.replace(dashboardPath(session.role))
     }
-
-    if (session.role === "admin") {
-      router.replace("/dashboard/admin")
-      return
-    }
-
-    if (session.role === "supplier") {
-      router.replace("/dashboard/supplier")
-      return
-    }
-
-    router.replace("/dashboard/member")
   }, [router])
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isSubmitting) return
 
-    if (isSubmitting) {
+    const trimmed = emailOrUsername.trim()
+    if (!trimmed) {
+      setErrorMessage("Please enter your email or username.")
       return
     }
-
-    const trimmedEmail = email.trim()
-
-    if (!trimmedEmail || !trimmedEmail.includes("@")) {
-      setErrorMessage("Please enter a valid email.")
-      return
-    }
-
     if (!password.trim()) {
-      setErrorMessage("Please enter password.")
+      setErrorMessage("Please enter your password.")
       return
     }
 
     setErrorMessage("")
     setIsSubmitting(true)
 
-    saveSessionAuth({
-      role: "admin",
-      profile: trimmedEmail,
-      userId: "",
-      loginAt: new Date().toISOString(),
-    })
-
-    router.replace("/dashboard/admin")
+    try {
+      const session = await apiLogin(trimmed, password)
+      router.replace(dashboardPath(session.role))
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Login failed. Please try again."
+      setErrorMessage(msg)
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -95,16 +78,15 @@ export function LoginForm() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Email</span>
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Email or Username</span>
           <input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
+            type="text"
+            value={emailOrUsername}
+            onChange={(event) => setEmailOrUsername(event.target.value)}
+            autoComplete="username"
             autoCapitalize="none"
             autoCorrect="off"
-            inputMode="email"
-            placeholder="name@example.com"
+            placeholder="name@example.com or username"
             className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none transition-all duration-300 placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
           />
         </label>
@@ -126,7 +108,7 @@ export function LoginForm() {
           disabled={isSubmitting}
           className="mt-2 h-12 w-full rounded-xl bg-slate-900 text-sm font-medium text-white transition-all duration-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-80 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
         >
-          {isSubmitting ? "Signing In..." : "Sign In"}
+          {isSubmitting ? "Signing In…" : "Sign In"}
         </Button>
 
         {errorMessage ? (
@@ -134,10 +116,6 @@ export function LoginForm() {
             {errorMessage}
           </p>
         ) : null}
-
-        <p className="text-center text-xs text-slate-500 dark:text-slate-400">
-          Sign in opens the admin dashboard.
-        </p>
 
         <p className="text-center text-sm text-slate-600 dark:text-slate-400">
           Don&apos;t have an account?{" "}

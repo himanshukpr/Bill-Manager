@@ -20,7 +20,7 @@ export default function SupplierDashboardPage() {
     useEffect(() => {
         const session = getSessionAuth()
 
-        if (!session || session.role !== "supplier") {
+        if (!session?.token || session.role !== "supplier") {
             router.replace("/")
             return
         }
@@ -48,9 +48,9 @@ export default function SupplierDashboardPage() {
                                 Supplier Workspace
                             </p>
                             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                                Welcome, {auth.profile}
+                                Welcome, {auth.username}
                             </h1>
-                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Supplier ID: {auth.userId}</p>
+                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Supplier ID: {auth.uuid}</p>
                         </div>
                         <Button type="button" variant="outline" className="rounded-xl" onClick={logout}>
                             Log Out

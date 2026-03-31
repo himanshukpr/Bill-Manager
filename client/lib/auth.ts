@@ -1,118 +1,158 @@
+// ─── Types ───────────────────────────────────────────────────────────────────
+
 export type AppRole = "admin" | "supplier" | "member"
 
 export type SessionAuth = {
+  token: string
+  uuid: string
+  username: string
+  email: string
   role: AppRole
-  profile: string
-  userId: string
+  isVerified: boolean
   loginAt: string
 }
 
-type ProfileRule = {
-  role: AppRole
-  userId: string
-  destination: string
-  aliases: string[]
+// ─── Cookie helpers (used by Edge Middleware) ─────────────────────────────────
+
+function setCookie(name: string, value: string, days = 7): void {
+  if (typeof document === "undefined") return
+  const expires = new Date(Date.now() + days * 864e5).toUTCString()
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`
 }
 
-const profileRules: ProfileRule[] = [
-  {
-    role: "admin",
-    userId: "ADM-001",
-    destination: "/dashboard/admin",
-    aliases: ["admin", "family - admin", "family admin"],
-  },
-  {
-    role: "supplier",
-    userId: "SUP-001",
-    destination: "/dashboard/supplier",
-    aliases: ["supplier", "suppliers", "member 1", "member 1 - suppliers"],
-  },
-  {
-    role: "member",
-    userId: "MEM-002",
-    destination: "/dashboard/member",
-    aliases: ["member", "member 2"],
-  },
-]
-
-export function resolveProfile(profileInput: string) {
-  const normalized = profileInput.trim().toLowerCase()
-
-  if (!normalized) {
-    return null
-  }
-
-  return profileRules.find((rule) =>
-    rule.aliases.some((alias) => alias === normalized)
-  )
+function deleteCookie(name: string): void {
+  if (typeof document === "undefined") return
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`
 }
 
-export function saveSessionAuth(auth: SessionAuth) {
-  if (typeof window === "undefined") {
-    return
-  }
+// ─── Storage helpers (sessionStorage + localStorage mirror) ──────────────────
 
+const STORAGE_KEY = "bill-manager-auth"
+
+export function saveSessionAuth(auth: SessionAuth): void {
+  if (typeof window === "undefined") return
   const serialized = JSON.stringify(auth)
-
-  try {
-    window.sessionStorage.setItem("bill-manager-auth", serialized)
-  } catch {
-    // Some mobile/private browser contexts can block sessionStorage writes.
-  }
-
-  try {
-    window.localStorage.setItem("bill-manager-auth", serialized)
-  } catch {
-    // localStorage can also fail in restricted contexts.
-  }
+  try { window.sessionStorage.setItem(STORAGE_KEY, serialized) } catch { /* noop */ }
+  try { window.localStorage.setItem(STORAGE_KEY, serialized) } catch { /* noop */ }
+  // Write cookies so Next.js Edge Middleware can read them
+  setCookie("bill-manager-token", auth.token)
+  setCookie("bill-manager-role", auth.role)
+  setCookie("bill-manager-verified", String(auth.isVerified))
 }
 
 export function getSessionAuth(): SessionAuth | null {
-  if (typeof window === "undefined") {
-    return null
+  if (typeof window === "undefined") return null
+  let raw: string | null = null
+  try { raw = window.sessionStorage.getItem(STORAGE_KEY) } catch { /* noop */ }
+  if (!raw) {
+    try { raw = window.localStorage.getItem(STORAGE_KEY) } catch { /* noop */ }
   }
-
-  let value: string | null = null
-
-  try {
-    value = window.sessionStorage.getItem("bill-manager-auth")
-  } catch {
-    value = null
-  }
-
-  if (!value) {
-    try {
-      value = window.localStorage.getItem("bill-manager-auth")
-    } catch {
-      value = null
-    }
-  }
-
-  if (!value) {
-    return null
-  }
-
-  try {
-    return JSON.parse(value) as SessionAuth
-  } catch {
-    return null
-  }
+  if (!raw) return null
+  try { return JSON.parse(raw) as SessionAuth } catch { return null }
 }
 
-export function clearSessionAuth() {
-  if (typeof window === "undefined") {
-    return
+export function clearSessionAuth(): void {
+  if (typeof window === "undefined") return
+  try { window.sessionStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
+  try { window.localStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
+  // Clear cookies so middleware stops protecting immediately
+  deleteCookie("bill-manager-token")
+  deleteCookie("bill-manager-role")
+  deleteCookie("bill-manager-verified")
+}
+
+export function getAuthHeader(): Record<string, string> {
+  const session = getSessionAuth()
+  if (!session?.token) return {}
+  return { Authorization: `Bearer ${session.token}` }
+}
+
+// ─── Destination helper ───────────────────────────────────────────────────────
+
+export function dashboardPath(role: AppRole): string {
+  if (role === "admin") return "/dashboard/admin"
+  if (role === "supplier") return "/dashboard/supplier"
+  return "/dashboard/member"
+}
+
+// ─── API base URL ─────────────────────────────────────────────────────────────
+
+const BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
+
+// ─── Auth API ─────────────────────────────────────────────────────────────────
+
+export type ApiError = { message: string | string[]; statusCode: number }
+
+async function handleResponse<T>(res: Response): Promise<T> {
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = body as ApiError
+    const msg = Array.isArray(err.message) ? err.message[0] : err.message ?? "Unknown error"
+    throw new Error(msg)
+  }
+  return body as T
+}
+
+/**
+ * POST /auth/login
+ * Returns the stored SessionAuth on success.
+ * Throws Error with a human-readable message on failure.
+ */
+export async function apiLogin(
+  emailOrUsername: string,
+  password: string,
+): Promise<SessionAuth> {
+  const res = await fetch(`${BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emailOrUsername, password }),
+  })
+
+  const data = await handleResponse<{
+    access_token: string
+    user: {
+      uuid: string
+      username: string
+      email: string
+      role: AppRole
+      isVerified: boolean
+    }
+  }>(res)
+
+  const session: SessionAuth = {
+    token: data.access_token,
+    uuid: data.user.uuid,
+    username: data.user.username,
+    email: data.user.email,
+    role: data.user.role,
+    isVerified: data.user.isVerified,
+    loginAt: new Date().toISOString(),
   }
 
-  try {
-    window.sessionStorage.removeItem("bill-manager-auth")
-  } catch {
-    // ignore
-  }
+  saveSessionAuth(session)
+  return session
+}
 
-  try {
-    window.localStorage.removeItem("bill-manager-auth")
-  } catch {
-    // ignore
-  }
+/**
+ * POST /auth/register
+ * Registers the user then auto-logs-in to obtain a JWT.
+ * Returns the stored SessionAuth on success.
+ * Throws Error with a human-readable message on failure.
+ */
+export async function apiRegister(
+  username: string,
+  email: string,
+  password: string,
+): Promise<SessionAuth> {
+  const res = await fetch(`${BASE_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, email, password }),
+  })
+
+  await handleResponse<unknown>(res) // throws on conflict / validation error
+
+  // Auto-login after registration to get the JWT
+  return apiLogin(email, password)
 }
