@@ -17,6 +17,7 @@ model User {
   email     String   @unique
   password  String
   role      Role     @default(supplier)
+  isVerified Boolean @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("users")
