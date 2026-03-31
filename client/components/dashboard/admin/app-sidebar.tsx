@@ -1,0 +1,93 @@
+"use client"
+
+import * as React from "react"
+import { Building2, FileText, Home, Receipt, Users } from "lucide-react"
+
+import { NavMain } from "@/components/dashboard/shared/nav-main"
+import { NavUser } from "@/components/dashboard/shared/nav-user"
+import {
+    Sidebar,
+    SidebarContent,
+    SidebarFooter,
+    SidebarHeader,
+    SidebarMenu,
+    SidebarMenuButton,
+    SidebarMenuItem,
+} from "@/components/ui/sidebar"
+
+interface AppSidebarProps {
+    variant?: "inset" | "default"
+    userName?: string
+    userRole?: string
+    onLogout?: () => void
+}
+
+const navItems = [
+    {
+        title: "Dashboard",
+        url: "/dashboard/admin",
+        icon: Home,
+    },
+    {
+        title: "Houses",
+        url: "/dashboard/admin/houses",
+        icon: Building2,
+    },
+    {
+        title: "Bills",
+        url: "/dashboard/admin/bills",
+        icon: FileText,
+    },
+    {
+        title: "Users",
+        url: "/dashboard/admin/users",
+        icon: Users,
+    },
+    {
+        title: "Receipts",
+        url: "/dashboard/admin/recipts",
+        icon: Receipt,
+    },
+]
+
+export function AppSidebar({
+    variant = "inset",
+    userName = "Admin User",
+    userRole = "Administrator",
+    onLogout,
+}: AppSidebarProps) {
+    return (
+        <Sidebar variant={variant}>
+            <SidebarHeader>
+                <SidebarMenu>
+                    <SidebarMenuItem>
+                        <SidebarMenuButton size="lg" asChild>
+                            <a href="/dashboard/admin" className="cursor-pointer">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-violet-500 to-violet-600">
+                                    <span className="text-sm font-bold text-white">B</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 leading-none">
+                                    <span className="font-semibold">Bill Manager</span>
+                                    <span className="text-xs text-muted-foreground">Admin</span>
+                                </div>
+                            </a>
+                        </SidebarMenuButton>
+                    </SidebarMenuItem>
+                </SidebarMenu>
+            </SidebarHeader>
+            <SidebarContent>
+                <NavMain items={navItems} />
+            </SidebarContent>
+            <SidebarFooter>
+                <NavUser
+                    user={{
+                        name: userName,
+                        email: userRole,
+                        avatar: "",
+                    }}
+                    onLogout={onLogout}
+                />
+            </SidebarFooter>
+        </Sidebar>
+    )
+}
