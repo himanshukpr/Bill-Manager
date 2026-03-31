@@ -12,7 +12,7 @@ import {
 } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export default function PendingVerificationPage() {
   const router = useRouter()
