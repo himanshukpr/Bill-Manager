@@ -15,7 +15,7 @@ async function bootstrap() {
   });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  const port = process.env.PORT ?? 3000;
+  const port = process.env.PORT || 3000;
   console.log(`Starting server on http://localhost:${port}`);
   await app.listen(port);
 }
