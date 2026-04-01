@@ -1,53 +1,54 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Eye, ShieldCheck, ShieldX, Trash2, Users } from "lucide-react"
 
+import {
+  apiAdminDeleteUser,
+  apiAdminListUsers,
+  apiAdminVerifyUser,
+  type AdminUser,
+} from "@/lib/admin-users"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-type UserRole = "admin" | "supplier" | "member"
-
-type UserItem = {
-  uuid: string
-  username: string
-  email: string
-  role: UserRole
-  isVerified: boolean
-  createdAt: string
-}
-
-const dummyUsers: UserItem[] = [
-  {
-    uuid: "2b1ab7c4-a9f6-41a5-b7e0-104e0db4db10",
-    username: "Arjun",
-    email: "arjun@example.com",
-    role: "supplier",
-    isVerified: false,
-    createdAt: "2026-04-01T08:15:00.000Z",
-  },
-  {
-    uuid: "f8adca91-9a5c-4798-b610-0f8d2c86f118",
-    username: "Meera",
-    email: "meera@example.com",
-    role: "member",
-    isVerified: false,
-    createdAt: "2026-04-01T07:55:00.000Z",
-  },
-  {
-    uuid: "c9c490be-b8ff-4a77-9a11-c9f4a4f7135e",
-    username: "Rohit",
-    email: "rohit@example.com",
-    role: "supplier",
-    isVerified: true,
-    createdAt: "2026-03-30T11:20:00.000Z",
-  },
-]
+type UserItem = AdminUser
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<UserItem[]>(dummyUsers)
+  const [users, setUsers] = useState<UserItem[]>([])
   const [query, setQuery] = useState("")
   const [selectedUser, setSelectedUser] = useState<UserItem | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [processingUuid, setProcessingUuid] = useState("")
+
+  useEffect(() => {
+    let active = true
+
+    async function loadUsers() {
+      setLoading(true)
+      setError("")
+
+      try {
+        const result = await apiAdminListUsers()
+        if (!active) return
+        setUsers(result.users)
+      } catch (err) {
+        if (!active) return
+        setError(err instanceof Error ? err.message : "Failed to load users")
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadUsers()
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   const filteredUsers = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -64,19 +65,44 @@ export default function UsersPage() {
     const confirmed = window.confirm("Delete this user permanently?")
     if (!confirmed) return
 
-    setUsers((prev) => prev.filter((item) => item.uuid !== uuid))
-    if (selectedUser?.uuid === uuid) setSelectedUser(null)
+    setProcessingUuid(uuid)
+    setError("")
+
+    void apiAdminDeleteUser(uuid)
+      .then(() => {
+        setUsers((prev) => prev.filter((item) => item.uuid !== uuid))
+        if (selectedUser?.uuid === uuid) setSelectedUser(null)
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to delete user")
+      })
+      .finally(() => {
+        setProcessingUuid("")
+      })
   }
 
   function toggleVerification(user: UserItem) {
-    setUsers((prev) =>
-      prev.map((item) =>
-        item.uuid === user.uuid ? { ...item, isVerified: !item.isVerified } : item,
-      ),
-    )
-    if (selectedUser?.uuid === user.uuid) {
-      setSelectedUser({ ...user, isVerified: !user.isVerified })
-    }
+    if (user.isVerified) return
+
+    setProcessingUuid(user.uuid)
+    setError("")
+
+    void apiAdminVerifyUser(user.uuid)
+      .then((response) => {
+        setUsers((prev) =>
+          prev.map((item) => (item.uuid === user.uuid ? response.user : item)),
+        )
+
+        if (selectedUser?.uuid === user.uuid) {
+          setSelectedUser(response.user)
+        }
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to verify user")
+      })
+      .finally(() => {
+        setProcessingUuid("")
+      })
   }
 
   return (
@@ -85,9 +111,7 @@ export default function UsersPage() {
         <div>
           <p className="text-xs font-semibold tracking-[0.18em] text-foreground/70 uppercase">Users</p>
           <h1 className="text-2xl font-semibold tracking-tight text-card-foreground">User Management</h1>
-          <p className="text-sm text-foreground/75">
-            Frontend demo view only. Shows users, verify state, and action buttons.
-          </p>
+          <p className="text-sm text-foreground/75">Manage users, review verification status, and take admin actions.</p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1.5 text-xs font-medium text-foreground">
           <Users className="h-3.5 w-3.5" />
@@ -109,6 +133,12 @@ export default function UsersPage() {
         )}
       </div>
 
+      {error ? (
+        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+
       <article className="hidden overflow-x-auto rounded-2xl border border-border bg-card md:block">
         <table className="w-full min-w-200 text-sm">
           <thead>
@@ -122,7 +152,13 @@ export default function UsersPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredUsers.length === 0 ? (
+            {loading ? (
+              <tr>
+                <td className="px-4 py-6 text-foreground/70" colSpan={6}>
+                  Loading users...
+                </td>
+              </tr>
+            ) : filteredUsers.length === 0 ? (
               <tr>
                 <td className="px-4 py-6 text-foreground/70" colSpan={6}>
                   No users found.
@@ -167,14 +203,16 @@ export default function UsersPage() {
                         size="sm"
                         variant="outline"
                         onClick={() => void toggleVerification(user)}
+                        disabled={user.isVerified || processingUuid === user.uuid}
                       >
-                        {user.isVerified ? "Unverify" : "Verify"}
+                        {processingUuid === user.uuid ? "Please wait..." : user.isVerified ? "Verified" : "Verify"}
                       </Button>
                       <Button
                         type="button"
                         size="sm"
                         variant="destructive"
                         onClick={() => void handleDelete(user.uuid)}
+                        disabled={processingUuid === user.uuid}
                       >
                         <Trash2 className="h-3.5 w-3.5" /> Delete
                       </Button>
@@ -188,7 +226,11 @@ export default function UsersPage() {
       </article>
 
       <div className="space-y-3 md:hidden">
-        {filteredUsers.length === 0 ? (
+        {loading ? (
+          <div className="rounded-xl border border-border bg-muted/30 px-3 py-4 text-sm text-foreground/70">
+            Loading users...
+          </div>
+        ) : filteredUsers.length === 0 ? (
           <div className="rounded-xl border border-border bg-muted/30 px-3 py-4 text-sm text-foreground/70">
             No users found.
           </div>
@@ -224,10 +266,22 @@ export default function UsersPage() {
                 <Button type="button" size="sm" variant="outline" onClick={() => setSelectedUser(user)}>
                   <Eye className="h-3.5 w-3.5" /> View
                 </Button>
-                <Button type="button" size="sm" variant="outline" onClick={() => void toggleVerification(user)}>
-                  {user.isVerified ? "Unverify" : "Verify"}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void toggleVerification(user)}
+                  disabled={user.isVerified || processingUuid === user.uuid}
+                >
+                  {processingUuid === user.uuid ? "Please wait..." : user.isVerified ? "Verified" : "Verify"}
                 </Button>
-                <Button type="button" size="sm" variant="destructive" onClick={() => void handleDelete(user.uuid)}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => void handleDelete(user.uuid)}
+                  disabled={processingUuid === user.uuid}
+                >
                   <Trash2 className="h-3.5 w-3.5" /> Delete
                 </Button>
               </div>

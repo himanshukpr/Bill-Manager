@@ -10,6 +10,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 const stats = [
   {
@@ -110,6 +111,16 @@ const alerts = [
   },
 ]
 
+type StatCardProps = {
+  icon: LucideIcon
+  label: string
+  value: string
+  change: string
+  bgGradient: string
+  iconBg: string
+  iconColor: string
+}
+
 function StatCard({
   icon: Icon,
   label,
@@ -118,7 +129,7 @@ function StatCard({
   bgGradient,
   iconBg,
   iconColor,
-}) {
+}: StatCardProps) {
   const isPositive = change.startsWith('+')
 
   return (
