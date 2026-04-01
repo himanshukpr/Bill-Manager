@@ -56,7 +56,7 @@ export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onL
                         variant="ghost"
                         size="icon"
                         onClick={toggleTheme}
-                        className="h-8 w-8 sm:h-9 sm:w-9"
+                        className="h-8 w-8 border border-border/60 bg-background/70 backdrop-blur-sm hover:bg-accent sm:h-9 sm:w-9"
                         title={`Theme: ${theme ?? "system"}`}
                         aria-label={`Change theme (current: ${theme ?? "system"})`}
                     >
@@ -72,7 +72,7 @@ export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onL
                         variant="ghost"
                         size="sm"
                         onClick={onLogout}
-                        className="h-8 px-2 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 sm:h-9 sm:px-3 sm:text-sm"
+                        className="h-8 px-2 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-500/15 dark:hover:text-red-300 sm:h-9 sm:px-3 sm:text-sm"
                     >
                         Logout
                     </Button>

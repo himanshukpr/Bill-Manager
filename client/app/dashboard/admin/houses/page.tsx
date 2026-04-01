@@ -26,16 +26,16 @@ export default function HousesPage() {
   return (
     <section className="space-y-6">
       <div>
-        <p className="text-xs font-semibold tracking-[0.18em] text-slate-500 uppercase">Houses</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">House Directory</h1>
-        <p className="mt-2 text-sm text-slate-600">A clean overview of registered houses.</p>
+        <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">Houses</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">House Directory</h1>
+        <p className="mt-2 text-sm text-muted-foreground">A clean overview of registered houses.</p>
       </div>
 
-      <article className="rounded-2xl border border-slate-200 bg-white p-6">
+      <article className="rounded-2xl border border-border bg-card p-6">
         <div className="overflow-x-auto">
           <table className="w-full min-w-130 border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+              <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="py-3">House ID</th>
                 <th className="py-3">Name</th>
                 <th className="py-3">Owner</th>
@@ -45,8 +45,8 @@ export default function HousesPage() {
             </thead>
             <tbody>
               {houses.map((house) => (
-                <tr key={house.id} className="border-b border-slate-100 text-slate-700">
-                  <td className="py-3 font-medium text-slate-900">{house.id}</td>
+                <tr key={house.id} className="border-b border-border/50 text-muted-foreground">
+                  <td className="py-3 font-medium text-card-foreground">{house.id}</td>
                   <td className="py-3">{house.name}</td>
                   <td className="py-3">{house.owner}</td>
                   <td className="py-3">{house.units}</td>
@@ -54,8 +54,8 @@ export default function HousesPage() {
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
                         house.status === "Active"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-amber-100 text-amber-700"
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/35 dark:text-emerald-300"
+                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/35 dark:text-amber-300"
                       }`}
                     >
                       {house.status}
