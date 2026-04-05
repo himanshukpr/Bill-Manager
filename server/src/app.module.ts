@@ -5,6 +5,10 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { HousesModule } from './houses/houses.module';
+import { HouseConfigModule } from './house-config/house-config.module';
+import { HouseBalanceModule } from './house-balance/house-balance.module';
+import { BillsModule } from './bills/bills.module';
 
 @Module({
   imports: [
@@ -12,6 +16,10 @@ import { AuthModule } from './auth/auth.module';
     PrismaModule,
     UsersModule,
     AuthModule,
+    HousesModule,
+    HouseConfigModule,
+    HouseBalanceModule,
+    BillsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

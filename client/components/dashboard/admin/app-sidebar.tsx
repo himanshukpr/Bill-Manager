@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/sidebar"
 
 interface AppSidebarProps {
-    variant?: "inset" | "default"
+    variant?: "sidebar" | "floating" | "inset"
     userName?: string
     userRole?: string
     onLogout?: () => void
