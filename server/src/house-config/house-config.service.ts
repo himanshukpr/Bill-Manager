@@ -4,6 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Shift } from '@prisma/client';
 import {
   CreateHouseConfigDto,
   UpdateHouseConfigDto,
@@ -12,7 +13,7 @@ import {
 
 @Injectable()
 export class HouseConfigService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async findAll(supplierId?: string) {
     const where = supplierId ? { supplierId } : {};
@@ -62,15 +63,48 @@ export class HouseConfigService {
     });
   }
 
-  async reorder(dto: ReorderConfigDto) {
+  async reorder(dto: ReorderConfigDto, user?: any) {
+    // Validate input
+    if (!dto.orderedIds || !Array.isArray(dto.orderedIds) || dto.orderedIds.length === 0) {
+      throw new BadRequestException('orderedIds must be a non-empty array');
+    }
+
+    // Fetch all configs being reordered
+    const configs = await this.prisma.houseConfig.findMany({
+      where: { id: { in: dto.orderedIds } },
+    });
+
+    if (configs.length !== dto.orderedIds.length) {
+      throw new BadRequestException(`Expected ${dto.orderedIds.length} configs, found ${configs.length}`);
+    }
+
+    // Supplier permissions:
+    // - can reorder all evening configs (shared)
+    // - can reorder only their own morning configs
+    if (user && user.role === 'supplier') {
+      const unauthorizedConfigs = configs.filter((c) => {
+        if (c.shift === Shift.evening) return false;
+        return !(c.shift === Shift.morning && c.supplierId === user.uuid);
+      });
+
+      if (unauthorizedConfigs.length > 0) {
+        throw new BadRequestException(
+          'Suppliers can reorder evening routes and only their own morning routes',
+        );
+      }
+    }
+    // Admins can reorder any configs
+
+    // Update positions in order
     const updates = dto.orderedIds.map((cfgId, index) =>
       this.prisma.houseConfig.update({
         where: { id: cfgId },
         data: { position: index },
+        include: { house: true, supplier: { select: { username: true } } },
       }),
     );
     await this.prisma.$transaction(updates);
-    return { success: true };
+    return { success: true, updated: configs.length };
   }
 
   async remove(id: number) {

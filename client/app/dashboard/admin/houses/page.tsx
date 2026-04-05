@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Plus, Search, Phone, MapPin, Building2,
-  Pencil, Trash2, Eye, IndianRupee, ChevronRight
+  Pencil, Trash2, Eye, IndianRupee, ChevronRight, Settings2
 } from 'lucide-react'
-import { housesApi, type House } from '@/lib/api'
+import { balanceApi, houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -35,15 +35,46 @@ const MONTH_NAMES = [
 type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
+  shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string;
+  previousBalance: string; currentBalance: string;
+}
+
+type HouseConfigForm = {
+  houseId: string
+  shift: 'morning' | 'evening'
+  supplierId: string
+  position: string
+  dailyAlerts: string
+}
+
+type BalanceForm = {
+  previousBalance: string
+  currentBalance: string
 }
 
 const emptyForm: HouseForm = {
   houseNo: '', area: '', phoneNo: '', alternativePhone: '',
-  description: '', rate1Type: '', rate1: '', rate2Type: '', rate2: ''
+  description: '', rate1Type: '', rate1: '', rate2Type: '', rate2: '',
+  shift: 'evening', supplierId: '', position: '0', dailyAlerts: '',
+  previousBalance: '0', currentBalance: '0',
+}
+
+const emptyConfigForm: HouseConfigForm = {
+  houseId: '',
+  shift: 'morning',
+  supplierId: '',
+  position: '0',
+  dailyAlerts: '',
+}
+
+const emptyBalanceForm: BalanceForm = {
+  previousBalance: '0',
+  currentBalance: '0',
 }
 
 export default function HousesPage() {
   const [houses, setHouses] = useState<House[]>([])
+  const [suppliers, setSuppliers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [form, setForm] = useState<HouseForm>(emptyForm)
@@ -52,12 +83,24 @@ export default function HousesPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [viewHouse, setViewHouse] = useState<House | null>(null)
   const [saving, setSaving] = useState(false)
+  const [formConfigId, setFormConfigId] = useState<number | null>(null)
+  const [configDialogOpen, setConfigDialogOpen] = useState(false)
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configEditingId, setConfigEditingId] = useState<number | null>(null)
+  const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
+  const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
+  const [balanceSaving, setBalanceSaving] = useState(false)
+  const [balanceForm, setBalanceForm] = useState<BalanceForm>(emptyBalanceForm)
 
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      const data = await housesApi.list()
+      const [data, supplierData] = await Promise.all([
+        housesApi.list(),
+        usersApi.list('supplier'),
+      ])
       setHouses(data)
+      setSuppliers(supplierData)
     } catch (e: any) {
       toast.error(e.message)
     } finally {
@@ -75,17 +118,26 @@ export default function HousesPage() {
 
   function openAdd() {
     setForm(emptyForm)
+    setFormConfigId(null)
     setEditingId(null)
     setDialogOpen(true)
   }
 
   function openEdit(h: House) {
+    const primaryConfig = h.configs?.find(cfg => cfg.shift === 'morning') ?? h.configs?.[0]
     setForm({
       houseNo: h.houseNo, area: h.area ?? '', phoneNo: h.phoneNo,
       alternativePhone: h.alternativePhone ?? '', description: h.description ?? '',
       rate1Type: h.rate1Type ?? '', rate1: h.rate1 ?? '',
       rate2Type: h.rate2Type ?? '', rate2: h.rate2 ?? '',
+      shift: primaryConfig?.shift ?? 'evening',
+      supplierId: primaryConfig?.supplierId ?? '',
+      position: String(primaryConfig?.position ?? 0),
+      dailyAlerts: primaryConfig?.dailyAlerts ?? '',
+      previousBalance: String(h.balance?.previousBalance ?? '0'),
+      currentBalance: String(h.balance?.currentBalance ?? '0'),
     })
+    setFormConfigId(primaryConfig?.id ?? null)
     setEditingId(h.id)
     setDialogOpen(true)
   }
@@ -93,6 +145,10 @@ export default function HousesPage() {
   async function handleSave() {
     if (!form.houseNo || !form.phoneNo) {
       toast.error('House No and Phone No are required')
+      return
+    }
+    if (form.shift === 'morning' && !form.supplierId) {
+      toast.error('Select a supplier for morning shift')
       return
     }
     setSaving(true)
@@ -104,13 +160,37 @@ export default function HousesPage() {
         rate1Type: form.rate1Type || undefined, rate1: form.rate1 ? form.rate1 : undefined,
         rate2Type: form.rate2Type || undefined, rate2: form.rate2 ? form.rate2 : undefined,
       }
-      if (editingId) {
-        await housesApi.update(editingId, payload)
-        toast.success('House updated')
-      } else {
-        await housesApi.create(payload)
-        toast.success('House added')
+      const savedHouse = editingId
+        ? await housesApi.update(editingId, payload)
+        : await housesApi.create(payload)
+
+      const houseId = savedHouse.id ?? editingId
+      if (!houseId) {
+        throw new Error('Unable to resolve house id')
       }
+
+      const previousBalance = Number.parseFloat(form.previousBalance)
+      const currentBalance = Number.parseFloat(form.currentBalance)
+      await balanceApi.update(houseId, {
+        previousBalance: Number.isFinite(previousBalance) ? previousBalance : 0,
+        currentBalance: Number.isFinite(currentBalance) ? currentBalance : 0,
+      })
+
+      const configPayload = {
+        houseId,
+        shift: form.shift,
+        supplierId: form.shift === 'morning' ? form.supplierId : undefined,
+        position: Number.isFinite(Number.parseInt(form.position, 10)) ? Number.parseInt(form.position, 10) : 0,
+        dailyAlerts: form.dailyAlerts || undefined,
+      }
+
+      if (formConfigId) {
+        await houseConfigApi.update(formConfigId, configPayload)
+      } else {
+        await houseConfigApi.create(configPayload)
+      }
+
+      toast.success(editingId ? 'House updated' : 'House added')
       setDialogOpen(false)
       load()
     } catch (e: any) {
@@ -138,6 +218,93 @@ export default function HousesPage() {
       setViewHouse(full)
     } catch {
       setViewHouse(h)
+    }
+  }
+
+  function openConfigDialog(house: House, config?: HouseConfig) {
+    setConfigEditingId(config?.id ?? null)
+    setConfigForm({
+      houseId: String(house.id),
+      shift: config?.shift ?? 'morning',
+      supplierId: config?.supplierId ?? '',
+      position: String(config?.position ?? house.configs?.length ?? 0),
+      dailyAlerts: config?.dailyAlerts ?? '',
+    })
+    setConfigDialogOpen(true)
+  }
+
+  function openBalanceDialog(house: House) {
+    setBalanceForm({
+      previousBalance: String(house.balance?.previousBalance ?? '0'),
+      currentBalance: String(house.balance?.currentBalance ?? '0'),
+    })
+    setBalanceDialogOpen(true)
+  }
+
+  async function handleConfigSave() {
+    if (!configForm.houseId) {
+      toast.error('Select a house')
+      return
+    }
+    if (configForm.shift === 'morning' && !configForm.supplierId) {
+      toast.error('Select a supplier for morning shift')
+      return
+    }
+
+    setConfigSaving(true)
+    try {
+      const positionValue = Number.parseInt(configForm.position, 10)
+      const payload = {
+        houseId: parseInt(configForm.houseId),
+        shift: configForm.shift,
+        supplierId: configForm.shift === 'morning' ? configForm.supplierId : undefined,
+        position: Number.isFinite(positionValue) ? positionValue : 0,
+        dailyAlerts: configForm.dailyAlerts || undefined,
+      }
+
+      if (configEditingId) {
+        await houseConfigApi.update(configEditingId, payload)
+        toast.success('House config updated')
+      } else {
+        await houseConfigApi.create(payload)
+        toast.success('House config created')
+      }
+
+      setConfigDialogOpen(false)
+      setConfigEditingId(null)
+      setConfigForm(emptyConfigForm)
+      await load()
+      if (viewHouse?.id === parseInt(configForm.houseId)) {
+        const refreshed = await housesApi.get(parseInt(configForm.houseId))
+        setViewHouse(refreshed)
+      }
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setConfigSaving(false)
+    }
+  }
+
+  async function handleBalanceSave() {
+    if (!viewHouse) return
+    setBalanceSaving(true)
+    try {
+      const previousBalance = Number.parseFloat(balanceForm.previousBalance)
+      const currentBalance = Number.parseFloat(balanceForm.currentBalance)
+      await balanceApi.update(viewHouse.id, {
+        previousBalance: Number.isFinite(previousBalance) ? previousBalance : 0,
+        currentBalance: Number.isFinite(currentBalance) ? currentBalance : 0,
+      })
+      toast.success('Balance updated')
+      setBalanceDialogOpen(false)
+      setBalanceForm(emptyBalanceForm)
+      await load()
+      const refreshed = await housesApi.get(viewHouse.id)
+      setViewHouse(refreshed)
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setBalanceSaving(false)
     }
   }
 
@@ -262,14 +429,14 @@ export default function HousesPage() {
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit House' : 'Add New House'}</DialogTitle>
             <DialogDescription>
               {editingId ? 'Update house details below.' : 'Fill in the house details to add a new delivery location.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 py-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 py-2">
             <div className="space-y-1.5">
               <Label htmlFor="house-houseNo">House No <span className="text-destructive">*</span></Label>
               <Input id="house-houseNo" value={form.houseNo} onChange={e => setForm(f => ({ ...f, houseNo: e.target.value }))} placeholder="e.g. A-101" />
@@ -316,7 +483,85 @@ export default function HousesPage() {
               <Label htmlFor="house-rate2">Rate 2 (₹/L)</Label>
               <Input id="house-rate2" type="number" min="0" step="0.5" value={form.rate2} onChange={e => setForm(f => ({ ...f, rate2: e.target.value }))} placeholder="e.g. 50" />
             </div>
-            <div className="sm:col-span-2 space-y-1.5">
+            <div className="lg:col-span-3 rounded-xl border border-border/70 bg-muted/20 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Delivery Allocation</p>
+                  <p className="text-xs text-muted-foreground">Assign a supplier for morning routes. Evening routes stay shared.</p>
+                </div>
+                <Badge variant="outline" className="uppercase tracking-wide">Config</Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Shift</Label>
+                  <Select value={form.shift} onValueChange={v => setForm(f => ({ ...f, shift: v as 'morning' | 'evening', supplierId: v === 'evening' ? '' : f.supplierId }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select shift" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="morning">Morning</SelectItem>
+                      <SelectItem value="evening">Evening</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Supplier</Label>
+                  <Select value={form.supplierId || '__none__'} onValueChange={v => setForm(f => ({ ...f, supplierId: v === '__none__' ? '' : v }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={form.shift === 'morning' ? 'Select supplier' : 'Shared route'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Unassigned / shared</SelectItem>
+                      {suppliers.map(supplier => (
+                        <SelectItem key={supplier.uuid} value={supplier.uuid}>
+                          {supplier.username} - {supplier.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="house-position">
+                    Position
+                    {form.shift === 'evening' && <span className="text-xs font-normal text-muted-foreground ml-2">(global, managed by suppliers)</span>}
+                  </Label>
+                  <Input
+                    id="house-position"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.position}
+                    onChange={e => setForm(f => ({ ...f, position: e.target.value }))}
+                    placeholder="0"
+                    disabled={form.shift === 'evening'}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="house-alerts">Daily Alerts</Label>
+                  <Input id="house-alerts" value={form.dailyAlerts} onChange={e => setForm(f => ({ ...f, dailyAlerts: e.target.value }))} placeholder="Optional alert text" />
+                </div>
+              </div>
+            </div>
+            <div className="lg:col-span-3 rounded-xl border border-border/70 bg-muted/20 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Balance</p>
+                  <p className="text-xs text-muted-foreground">Enter the carried balance and the current month amount.</p>
+                </div>
+                <Badge variant="outline" className="uppercase tracking-wide">Balance</Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="house-previous-balance">Previous Balance</Label>
+                  <Input id="house-previous-balance" type="number" min="0" step="0.01" value={form.previousBalance} onChange={e => setForm(f => ({ ...f, previousBalance: e.target.value }))} placeholder="0" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="house-current-balance">Current Balance</Label>
+                  <Input id="house-current-balance" type="number" min="0" step="0.01" value={form.currentBalance} onChange={e => setForm(f => ({ ...f, currentBalance: e.target.value }))} placeholder="0" />
+                </div>
+              </div>
+            </div>
+            <div className="sm:col-span-2 lg:col-span-3 space-y-1.5">
               <Label htmlFor="house-desc">Description / Notes</Label>
               <Textarea id="house-desc" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional notes..." rows={3} />
             </div>
@@ -378,25 +623,64 @@ export default function HousesPage() {
                 )}
 
                 {/* Balance */}
-                {viewHouse.balance && (
-                  <div className="rounded-xl border border-border bg-muted/30 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">Balance</p>
-                    <div className="flex gap-6">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Pending</p>
-                        <p className="text-xl font-bold text-amber-600 dark:text-amber-400">
-                          ₹{Number(viewHouse.balance.previousBalance).toLocaleString('en-IN')}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Current Month</p>
-                        <p className="text-xl font-bold text-primary">
-                          ₹{Number(viewHouse.balance.currentBalance).toLocaleString('en-IN')}
-                        </p>
-                      </div>
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Balance</p>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openBalanceDialog(viewHouse)}>
+                      <IndianRupee className="h-3.5 w-3.5" /> Edit Balance
+                    </Button>
+                  </div>
+                  <div className="flex gap-6">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Pending</p>
+                      <p className="text-xl font-bold text-amber-600 dark:text-amber-400">
+                        ₹{Number(viewHouse.balance?.previousBalance ?? 0).toLocaleString('en-IN')}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Current Month</p>
+                      <p className="text-xl font-bold text-primary">
+                        ₹{Number(viewHouse.balance?.currentBalance ?? 0).toLocaleString('en-IN')}
+                      </p>
                     </div>
                   </div>
-                )}
+                </div>
+
+                {/* House Configs */}
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Configs</p>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse)}>
+                      <Settings2 className="h-3.5 w-3.5" /> Add Config
+                    </Button>
+                  </div>
+                  {viewHouse.configs && viewHouse.configs.length > 0 ? (
+                    <div className="space-y-2">
+                      {viewHouse.configs
+                        .slice()
+                        .sort((a: HouseConfig, b: HouseConfig) => a.position - b.position)
+                        .map((config: HouseConfig) => (
+                          <div key={config.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-background px-3 py-2.5">
+                            <div className="flex flex-wrap items-center gap-2 text-sm">
+                              <Badge variant="secondary" className="uppercase tracking-wide">{config.shift}</Badge>
+                              <span className="font-medium">
+                                {config.shift === 'morning' ? (config.supplier?.username ?? 'Unassigned supplier') : 'Shared evening route'}
+                              </span>
+                              <span className="text-muted-foreground">Position {config.position + 1}</span>
+                              {config.dailyAlerts ? (
+                                <span className="text-xs text-amber-700 dark:text-amber-400">{config.dailyAlerts}</span>
+                              ) : null}
+                            </div>
+                            <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
+                              <Pencil className="h-3.5 w-3.5" /> Edit
+                            </Button>
+                          </div>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No delivery config assigned to this house yet.</p>
+                  )}
+                </div>
 
                 {/* Recent Bills */}
                 {viewHouse.bills && viewHouse.bills.length > 0 && (
@@ -442,6 +726,130 @@ export default function HousesPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{configEditingId ? 'Edit House Config' : 'Add House Config'}</DialogTitle>
+            <DialogDescription>
+              Assign a supplier to the morning route or keep the evening route shared across suppliers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="config-house">House</Label>
+              <Select value={configForm.houseId} onValueChange={value => setConfigForm(form => ({ ...form, houseId: value }))}>
+                <SelectTrigger id="config-house">
+                  <SelectValue placeholder="Select house" />
+                </SelectTrigger>
+                <SelectContent>
+                  {houses.map(house => (
+                    <SelectItem key={house.id} value={String(house.id)}>
+                      {house.houseNo}{house.area ? ` - ${house.area}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="config-shift">Shift</Label>
+              <Select value={configForm.shift} onValueChange={value => setConfigForm(form => ({ ...form, shift: value as 'morning' | 'evening', supplierId: value === 'evening' ? '' : form.supplierId }))}>
+                <SelectTrigger id="config-shift">
+                  <SelectValue placeholder="Select shift" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="morning">Morning</SelectItem>
+                  <SelectItem value="evening">Evening</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="config-supplier">Supplier</Label>
+              <Select value={configForm.supplierId || '__none__'} onValueChange={value => setConfigForm(form => ({ ...form, supplierId: value === '__none__' ? '' : value }))}>
+                <SelectTrigger id="config-supplier">
+                  <SelectValue placeholder={configForm.shift === 'morning' ? 'Select supplier' : 'Not required for evening'} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Unassigned / shared</SelectItem>
+                  {suppliers.map(supplier => (
+                    <SelectItem key={supplier.uuid} value={supplier.uuid}>
+                      {supplier.username} - {supplier.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="config-position">Position</Label>
+              <Input
+                id="config-position"
+                type="number"
+                min="0"
+                step="1"
+                value={configForm.position}
+                onChange={e => setConfigForm(form => ({ ...form, position: e.target.value }))}
+                placeholder="0"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="config-alerts">Daily Alerts</Label>
+              <Input
+                id="config-alerts"
+                value={configForm.dailyAlerts}
+                onChange={e => setConfigForm(form => ({ ...form, dailyAlerts: e.target.value }))}
+                placeholder="Optional alert text"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleConfigSave} disabled={configSaving}>
+              {configSaving ? 'Saving...' : configEditingId ? 'Update Config' : 'Save Config'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit House Balance</DialogTitle>
+            <DialogDescription>
+              Update the pending balance carried forward and the current month balance for this house.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="balance-previous">Previous Balance</Label>
+              <Input
+                id="balance-previous"
+                type="number"
+                min="0"
+                step="0.01"
+                value={balanceForm.previousBalance}
+                onChange={e => setBalanceForm(form => ({ ...form, previousBalance: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="balance-current">Current Balance</Label>
+              <Input
+                id="balance-current"
+                type="number"
+                min="0"
+                step="0.01"
+                value={balanceForm.currentBalance}
+                onChange={e => setBalanceForm(form => ({ ...form, currentBalance: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBalanceDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleBalanceSave} disabled={balanceSaving}>
+              {balanceSaving ? 'Saving...' : 'Update Balance'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

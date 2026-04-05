@@ -9,6 +9,8 @@ import {
   ParseIntPipe,
   Query,
   UseGuards,
+  Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { HouseConfigService } from './house-config.service';
 import {
@@ -21,7 +23,7 @@ import { JwtAuthGuard } from '../auth/guards/auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('house-config')
 export class HouseConfigController {
-  constructor(private service: HouseConfigService) {}
+  constructor(private service: HouseConfigService) { }
 
   @Get()
   findAll(@Query('supplierId') supplierId?: string) {
@@ -39,8 +41,8 @@ export class HouseConfigController {
   }
 
   @Patch('reorder')
-  reorder(@Body() dto: ReorderConfigDto) {
-    return this.service.reorder(dto);
+  async reorder(@Body() dto: ReorderConfigDto, @Request() req: any) {
+    return this.service.reorder(dto, req.user);
   }
 
   @Patch(':id')

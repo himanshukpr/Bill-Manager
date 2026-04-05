@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Param,
   ParseIntPipe,
   Body,
@@ -9,12 +10,13 @@ import {
 } from '@nestjs/common';
 import { HouseBalanceService } from './house-balance.service';
 import { RecordPaymentDto } from './dto/payment.dto';
+import { UpdateHouseBalanceDto } from './dto/balance.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
 @Controller('house-balance')
 export class HouseBalanceController {
-  constructor(private service: HouseBalanceService) {}
+  constructor(private service: HouseBalanceService) { }
 
   @Get('payments')
   getAllPaymentHistory() {
@@ -29,6 +31,14 @@ export class HouseBalanceController {
   @Get(':houseId/payments')
   getPaymentHistory(@Param('houseId', ParseIntPipe) houseId: number) {
     return this.service.getPaymentHistory(houseId);
+  }
+
+  @Patch(':houseId')
+  updateBalance(
+    @Param('houseId', ParseIntPipe) houseId: number,
+    @Body() dto: UpdateHouseBalanceDto,
+  ) {
+    return this.service.updateBalance(houseId, dto);
   }
 
   @Post('payment')

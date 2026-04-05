@@ -81,6 +81,7 @@ export type HouseBalance = {
   houseId: number;
   previousBalance: string;
   currentBalance: string;
+  updatedAt?: string;
   payments?: PaymentHistory[];
 };
 
@@ -164,6 +165,8 @@ export const balanceApi = {
   get: (houseId: number) => apiGet<HouseBalance>(`/house-balance/${houseId}`),
   payments: (houseId: number) => apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`),
   allPayments: () => apiGet<PaymentHistory[]>('/house-balance/payments'),
+  update: (houseId: number, data: { previousBalance?: number; currentBalance?: number }) =>
+    apiPatch<HouseBalance>(`/house-balance/${houseId}`, data),
   record: (data: { houseId: number; amount: number; note?: string }) =>
     apiPost('/house-balance/payment', data),
 };
