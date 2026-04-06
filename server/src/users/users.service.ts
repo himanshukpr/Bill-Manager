@@ -27,4 +27,32 @@ export class UsersService {
   }) {
     return this.prisma.user.create({ data });
   }
+
+  async findAll(role?: Role) {
+    const where = role ? { role } : {};
+    return this.prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        uuid: true,
+        username: true,
+        email: true,
+        role: true,
+        isVerified: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async verify(uuid: string, isVerified: boolean) {
+    return this.prisma.user.update({
+      where: { uuid },
+      data: { isVerified },
+      select: { uuid: true, username: true, email: true, role: true, isVerified: true },
+    });
+  }
+
+  async remove(uuid: string) {
+    return this.prisma.user.delete({ where: { uuid } });
+  }
 }

@@ -6,19 +6,119 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  uuid       String   @id @default(uuid()) @db.Uuid
-  username   String   @unique
-  email      String   @unique
-  password   String
-  role       Role     @default(supplier)
-  createdAt  DateTime @default(now()) @map("created_at")
-  isVerified Boolean  @default(false)
-
-  @@map("users")
-}
+// ─── Enums ────────────────────────────────────────────────────────────────────
 
 enum Role {
   admin
   supplier
+}
+
+enum Shift {
+  morning
+  evening
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+model User {
+  uuid       String        @id @default(uuid()) @db.Uuid
+  username   String        @unique
+  email      String        @unique
+  password   String
+  role       Role          @default(supplier)
+  createdAt  DateTime      @default(now()) @map("created_at")
+  isVerified Boolean       @default(false)
+
+  houseConfigs HouseConfig[]
+
+  @@map("users")
+}
+
+// ─── Houses ───────────────────────────────────────────────────────────────────
+
+model House {
+  id               Int           @id @default(autoincrement())
+  houseNo          String        @unique @map("house_no")
+  area             String?
+  phoneNo          String        @map("phone_no")
+  alternativePhone String?       @map("alternative_phone")
+  description      String?
+  rate1Type        String?       @map("rate1_type")
+  rate1            Decimal?      @map("rate1") @db.Decimal(10, 2)
+  rate2Type        String?       @map("rate2_type")
+  rate2            Decimal?      @map("rate2") @db.Decimal(10, 2)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  configs  HouseConfig[]
+  balance  HouseBalance?
+  bills    Bill[]
+
+  @@map("houses")
+}
+
+// ─── House Config ─────────────────────────────────────────────────────────────
+
+model HouseConfig {
+  id          Int      @id @default(autoincrement())
+  houseId     Int      @map("house_id")
+  shift       Shift
+  supplierId  String?  @map("supplier_id") @db.Uuid
+  position    Int      @default(0)
+  dailyAlerts String?  @map("daily_alerts")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  house    House  @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  supplier User?  @relation(fields: [supplierId], references: [uuid])
+
+  @@map("house_configs")
+}
+
+// ─── House Balance ────────────────────────────────────────────────────────────
+
+model HouseBalance {
+  id              Int    @id @default(autoincrement())
+  houseId         Int    @unique @map("house_id")
+  previousBalance Decimal @default(0) @map("previous_balance") @db.Decimal(10, 2)
+  currentBalance  Decimal @default(0) @map("current_balance") @db.Decimal(10, 2)
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  house    House            @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  payments PaymentHistory[]
+
+  @@map("house_balances")
+}
+
+// ─── Payment History ──────────────────────────────────────────────────────────
+
+model PaymentHistory {
+  id         Int      @id @default(autoincrement())
+  balanceRef Int      @map("balance_ref")
+  amount     Decimal  @db.Decimal(10, 2)
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  balance HouseBalance @relation(fields: [balanceRef], references: [id], onDelete: Cascade)
+
+  @@map("payment_history")
+}
+
+// ─── Bills ────────────────────────────────────────────────────────────────────
+
+model Bill {
+  id              Int      @id @default(autoincrement())
+  houseId         Int      @map("house_id")
+  month           Int
+  year            Int
+  totalAmount     Decimal  @map("total_amount") @db.Decimal(10, 2)
+  items           Json
+  previousBalance Decimal  @default(0) @map("previous_balance") @db.Decimal(10, 2)
+  generatedDate   DateTime @default(now()) @map("generated_date")
+  note            String?
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+
+  @@unique([houseId, month, year])
+  @@map("bills")
 }
