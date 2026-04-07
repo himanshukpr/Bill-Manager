@@ -38,6 +38,23 @@ export class HouseConfigService {
   }
 
   async create(dto: CreateHouseConfigDto) {
+    const existing = await this.prisma.houseConfig.findFirst({
+      where: { houseId: dto.houseId },
+    });
+
+    if (existing) {
+      return this.prisma.houseConfig.update({
+        where: { id: existing.id },
+        data: {
+          shift: dto.shift,
+          supplierId: dto.supplierId,
+          position: dto.position ?? existing.position,
+          dailyAlerts: dto.dailyAlerts,
+        },
+        include: { house: true },
+      });
+    }
+
     const count = await this.prisma.houseConfig.count({
       where: { supplierId: dto.supplierId ?? null },
     });

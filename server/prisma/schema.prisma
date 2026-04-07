@@ -51,6 +51,7 @@ model HouseConfig {
   house       House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier    User?    @relation(fields: [supplierId], references: [uuid])
 
+  @@unique([houseId])
   @@map("house_configs")
 }
 

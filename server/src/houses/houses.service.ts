@@ -8,7 +8,7 @@ import { CreateHouseDto, UpdateHouseDto } from './dto/house.dto';
 
 @Injectable()
 export class HousesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async findAll() {
     return this.prisma.house.findMany({
@@ -16,6 +16,7 @@ export class HousesService {
       include: {
         balance: true,
         configs: {
+          orderBy: { position: 'asc' },
           include: { supplier: { select: { uuid: true, username: true } } },
         },
       },
