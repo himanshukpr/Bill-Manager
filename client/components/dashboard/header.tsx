@@ -4,6 +4,7 @@ import { Menu, Moon, Sun } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
 import { useEffect, useState } from 'react'
+import { LogoutConfirmButton } from '@/components/dashboard/shared/logout-confirm-button'
 
 type HeaderProps = {
     userName: string
@@ -73,13 +74,18 @@ export function Header({
                                 )}
                             </Button>
                         )}
-                        <Button
-                            onClick={onLogout}
-                            className="rounded-lg bg-destructive text-white hover:bg-destructive/90"
-                            size="sm"
-                        >
-                            Log Out
-                        </Button>
+                        <LogoutConfirmButton
+                            onConfirm={onLogout}
+                            trigger={({ onClick }) => (
+                                <Button
+                                    onClick={onClick}
+                                    className="rounded-lg bg-destructive text-white hover:bg-destructive/90"
+                                    size="sm"
+                                >
+                                    Log Out
+                                </Button>
+                            )}
+                        />
                     </div>
                 </div>
 

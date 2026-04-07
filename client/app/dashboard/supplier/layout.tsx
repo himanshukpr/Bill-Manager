@@ -35,7 +35,7 @@ export default function SupplierLayout({ children }: SupplierLayoutProps) {
   if (!ready || !auth) return <div className="min-h-screen bg-background" />
 
   return (
-    <SidebarProvider style={{ '--sidebar-width': 'calc(var(--spacing) * 65)', '--header-height': 'calc(var(--spacing) * 12)' } as React.CSSProperties}>
+    <SidebarProvider style={{ '--sidebar-width': 'calc(var(--spacing) * 65)', '--header-height': 'calc(var(--spacing) * 13)' } as React.CSSProperties}>
       <SupplierSidebar variant="inset" userName={auth.username} onLogout={logout} />
       <SidebarInset>
         <SiteHeader title="Supplier Panel" todayText={todayText} todayShortText={todayShortText} onLogout={logout} />

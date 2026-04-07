@@ -63,7 +63,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     <SidebarProvider
       style={{
         "--sidebar-width": "calc(var(--spacing) * 72)",
-        "--header-height": "calc(var(--spacing) * 12)",
+        "--header-height": "calc(var(--spacing) * 13)",
       } as React.CSSProperties}
     >
       <AppSidebar
