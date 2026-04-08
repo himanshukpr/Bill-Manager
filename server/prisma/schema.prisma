@@ -34,14 +34,14 @@ model House {
   updatedAt        DateTime      @updatedAt @map("updated_at")
   bills            Bill[]
   balance          HouseBalance?
-  configs          HouseConfig[]
+  configs          HouseConfig?
 
   @@map("houses")
 }
 
 model HouseConfig {
   id          Int      @id @default(autoincrement())
-  houseId     Int      @map("house_id")
+  houseId     Int      @unique @map("house_id")
   shift       Shift
   supplierId  String?  @map("supplier_id") @db.Uuid
   position    Int      @default(0)
@@ -51,7 +51,6 @@ model HouseConfig {
   house       House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier    User?    @relation(fields: [supplierId], references: [uuid])
 
-  @@unique([houseId])
   @@map("house_configs")
 }
 
@@ -77,7 +76,6 @@ model PaymentHistory {
 
   @@map("payment_history")
 }
-
 
 model Bill {
   id              Int      @id @default(autoincrement())
