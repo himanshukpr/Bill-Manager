@@ -86,7 +86,7 @@ export default function PendingVerificationPage() {
   return (
     <main className="flex min-h-svh items-center justify-center bg-[radial-gradient(circle_at_top,#f7fafc_0%,#eef2f7_45%,#e8edf5_100%)] px-4 py-10 dark:bg-[radial-gradient(circle_at_top,#111827_0%,#0f172a_45%,#020617_100%)]">
       <div className="mx-auto w-full max-w-md">
-        <section className="rounded-3xl border border-slate-200/70 bg-white/95 p-8 text-center shadow-[0_30px_80px_-36px_rgba(15,23,42,0.35)] backdrop-blur-sm transition-colors duration-300 dark:border-white/10 dark:bg-slate-950/80 dark:shadow-[0_30px_80px_-36px_rgba(0,0,0,0.7)] sm:p-10">
+        <section className="rounded-3xl border border-border/70 bg-card/90 p-8 text-center shadow-[0_30px_80px_-36px_rgba(15,23,42,0.22)] backdrop-blur-sm transition-colors duration-300 dark:border-white/10 dark:bg-slate-950/80 dark:shadow-[0_30px_80px_-36px_rgba(0,0,0,0.7)] sm:p-10">
 
           {/* Icon */}
           <div className="mx-auto mb-6 grid size-16 place-content-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
@@ -136,7 +136,7 @@ export default function PendingVerificationPage() {
 
           {/* Feedback message */}
           {checkMsg ? (
-            <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+            <p className="mt-4 rounded-xl border border-border/70 bg-muted/60 px-3 py-2 text-xs text-foreground/70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
               {checkMsg}
             </p>
           ) : null}

@@ -286,7 +286,7 @@ export default function DeliveryPage() {
                 </div>
 
                 {/* Current House Card */}
-                <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-lg overflow-hidden">
+                <div className="bg-card dark:bg-slate-800 rounded-3xl border border-border/70 shadow-lg overflow-hidden">
                     {/* Status Badge */}
                     <div
                         className={`px-6 py-4 ${isCompleted
@@ -418,7 +418,7 @@ export default function DeliveryPage() {
                         </Button>
 
                         {showNotes && (
-                            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4">
+                            <div className="bg-card dark:bg-slate-800 rounded-2xl border border-border/70 p-6 space-y-4">
                                 <div className="space-y-2">
                                     <Label htmlFor="balance">Current Balance</Label>
                                     <Input
@@ -498,7 +498,7 @@ export default function DeliveryPage() {
                 </div>
 
                 {/* Stats Footer */}
-                <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 text-center">
+                <div className="bg-card dark:bg-slate-800 rounded-2xl border border-border/70 p-4 text-center">
                     <p className="text-sm text-muted-foreground">Deliveries Completed Today</p>
                     <p className="text-3xl font-bold text-emerald-600">
                         {completedCount}/{houses.length}
@@ -507,7 +507,7 @@ export default function DeliveryPage() {
 
                 {/* Jump to any house */}
                 {houses.length > 5 && (
-                    <div className="bg-white dark:bg-slate-800 rounded-2xl p-4">
+                    <div className="bg-card dark:bg-slate-800 rounded-2xl border border-border/70 p-4">
                         <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-3">
                             Jump to House
                         </p>

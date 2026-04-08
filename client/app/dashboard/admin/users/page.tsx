@@ -61,7 +61,6 @@ export default function UsersPage() {
     }
   }
 
-  const admins = filtered.filter(u => u.role === 'admin')
   const suppliers = filtered.filter(u => u.role === 'supplier')
 
   return (
@@ -106,13 +105,6 @@ export default function UsersPage() {
           <UserSection
             title="Suppliers"
             users={suppliers}
-            onToggleVerify={toggleVerify}
-            onDelete={setDeleteUuid}
-          />
-          {/* Admins */}
-          <UserSection
-            title="Administrators"
-            users={admins}
             onToggleVerify={toggleVerify}
             onDelete={setDeleteUuid}
           />
