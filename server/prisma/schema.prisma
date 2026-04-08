@@ -78,6 +78,7 @@ model PaymentHistory {
   @@map("payment_history")
 }
 
+
 model Bill {
   id              Int      @id @default(autoincrement())
   houseId         Int      @map("house_id")
@@ -92,6 +93,18 @@ model Bill {
 
   @@unique([houseId, month, year])
   @@map("bills")
+}
+
+model ProductRate {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  unit      String   @default("L")
+  rate      Decimal  @db.Decimal(10, 2)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("product_rates")
 }
 
 enum Role {
