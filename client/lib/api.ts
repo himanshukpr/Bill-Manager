@@ -145,6 +145,28 @@ export type ProductRate = {
   updatedAt: string;
 };
 
+export type DeliveryLogItem = {
+  milkType: 'buffalo' | 'cow';
+  qty: number;
+  rate: number;
+  amount: number;
+};
+
+export type DeliveryLog = {
+  id: number;
+  houseId: number;
+  supplierId: string;
+  shift: 'morning' | 'evening';
+  items: DeliveryLogItem[];
+  totalAmount: string;
+  openingBalance: string;
+  closingBalance: string;
+  note?: string;
+  deliveredAt: string;
+  house?: { id: number; houseNo: string; area?: string };
+  supplier?: { uuid: string; username: string };
+};
+
 // ─── Houses ───────────────────────────────────────────────────────────────────
 
 export const housesApi = {
@@ -223,4 +245,22 @@ export const productRatesApi = {
     data: Partial<{ name: string; unit: string; rate: number; isActive: boolean }>,
   ) => apiPatch<ProductRate>(`/product-rates/${id}`, data),
   delete: (id: number) => apiDelete(`/product-rates/${id}`),
+};
+
+// ─── Delivery Logs ───────────────────────────────────────────────────────────
+
+export const deliveryLogsApi = {
+  list: (params?: { houseId?: number; shift?: 'morning' | 'evening' }) => {
+    const q = new URLSearchParams();
+    if (params?.houseId) q.set('houseId', String(params.houseId));
+    if (params?.shift) q.set('shift', params.shift);
+    return apiGet<DeliveryLog[]>(`/delivery-logs${q.toString() ? `?${q}` : ''}`);
+  },
+  create: (data: {
+    houseId: number;
+    shift: 'morning' | 'evening';
+    items: DeliveryLogItem[];
+    currentBalance?: number;
+    note?: string;
+  }) => apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data),
 };
