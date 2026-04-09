@@ -14,8 +14,8 @@ model User {
   role         Role          @default(supplier)
   createdAt    DateTime      @default(now()) @map("created_at")
   isVerified   Boolean       @default(false)
-  houseConfigs HouseConfig[]
   deliveries   DeliveryLog[]
+  houseConfigs HouseConfig[]
 
   @@map("users")
 }

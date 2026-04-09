@@ -1,11 +1,12 @@
 import {
     BadRequestException,
+    ForbiddenException,
     Injectable,
     NotFoundException,
 } from '@nestjs/common';
 import { Shift } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateDeliveryLogDto } from './dto/delivery-log.dto';
+import { CreateDeliveryLogDto, UpdateDeliveryLogDto } from './dto/delivery-log.dto';
 
 @Injectable()
 export class DeliveryLogsService {
@@ -89,5 +90,70 @@ export class DeliveryLogsService {
                 supplier: { select: { uuid: true, username: true } },
             },
         });
+    }
+
+    async update(id: number, dto: UpdateDeliveryLogDto, user: any) {
+        if (!user?.uuid) {
+            throw new BadRequestException('Invalid user context');
+        }
+
+        const log = await this.prisma.deliveryLog.findUnique({ where: { id } });
+        if (!log) throw new NotFoundException(`Delivery log #${id} not found`);
+
+        // Only supplier who created it can update
+        if (user.role === 'supplier' && log.supplierId !== user.uuid) {
+            throw new ForbiddenException('You can only update your own delivery logs');
+        }
+
+        // If items are updated, recalculate total
+        if (dto.items && dto.items.length > 0) {
+            const validItems = dto.items.filter((item) => item.qty > 0 && item.rate > 0);
+            if (validItems.length === 0) {
+                throw new BadRequestException('At least one delivery item with positive qty and rate is required');
+            }
+
+            const computedTotal = validItems.reduce((sum, item) => sum + item.amount, 0);
+
+            return this.prisma.deliveryLog.update({
+                where: { id },
+                data: {
+                    items: validItems as any,
+                    totalAmount: computedTotal,
+                    note: dto.note !== undefined ? dto.note : log.note,
+                },
+                include: {
+                    house: { select: { id: true, houseNo: true, area: true } },
+                    supplier: { select: { uuid: true, username: true } },
+                },
+            });
+        }
+
+        // Update other fields
+        return this.prisma.deliveryLog.update({
+            where: { id },
+            data: {
+                ...(dto.note !== undefined ? { note: dto.note } : {}),
+            },
+            include: {
+                house: { select: { id: true, houseNo: true, area: true } },
+                supplier: { select: { uuid: true, username: true } },
+            },
+        });
+    }
+
+    async remove(id: number, user: any) {
+        if (!user?.uuid) {
+            throw new BadRequestException('Invalid user context');
+        }
+
+        const log = await this.prisma.deliveryLog.findUnique({ where: { id } });
+        if (!log) throw new NotFoundException(`Delivery log #${id} not found`);
+
+        // Only supplier who created it or admin can delete
+        if (user.role === 'supplier' && log.supplierId !== user.uuid) {
+            throw new ForbiddenException('You can only delete your own delivery logs');
+        }
+
+        return this.prisma.deliveryLog.delete({ where: { id } });
     }
 }

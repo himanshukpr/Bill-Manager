@@ -1,7 +1,11 @@
 import {
     Body,
     Controller,
+    Delete,
     Get,
+    Param,
+    ParseIntPipe,
+    Patch,
     Post,
     Query,
     Request,
@@ -9,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { Shift } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
-import { CreateDeliveryLogDto } from './dto/delivery-log.dto';
+import { CreateDeliveryLogDto, UpdateDeliveryLogDto } from './dto/delivery-log.dto';
 import { DeliveryLogsService } from './delivery-logs.service';
 
 @UseGuards(JwtAuthGuard)
@@ -37,5 +41,22 @@ export class DeliveryLogsController {
     @Post()
     create(@Body() dto: CreateDeliveryLogDto, @Request() req: any) {
         return this.service.create(dto, req.user);
+    }
+
+    @Patch(':id')
+    update(
+        @Param('id', ParseIntPipe) id: number,
+        @Body() dto: UpdateDeliveryLogDto,
+        @Request() req: any,
+    ) {
+        return this.service.update(id, dto, req.user);
+    }
+
+    @Delete(':id')
+    remove(
+        @Param('id', ParseIntPipe) id: number,
+        @Request() req: any,
+    ) {
+        return this.service.remove(id, req.user);
     }
 }

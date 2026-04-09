@@ -263,4 +263,13 @@ export const deliveryLogsApi = {
     currentBalance?: number;
     note?: string;
   }) => apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data),
+  update: (
+    id: number,
+    data: {
+      items?: DeliveryLogItem[];
+      currentBalance?: number;
+      note?: string;
+    },
+  ) => apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data),
+  delete: (id: number) => apiDelete(`/delivery-logs/${id}`),
 };
