@@ -9,6 +9,7 @@ import { HousesModule } from './houses/houses.module';
 import { HouseConfigModule } from './house-config/house-config.module';
 import { HouseBalanceModule } from './house-balance/house-balance.module';
 import { BillsModule } from './bills/bills.module';
+import { ProductRatesModule } from './product-rates/product-rates.module';
 
 @Module({
   imports: [
@@ -20,8 +21,9 @@ import { BillsModule } from './bills/bills.module';
     HouseConfigModule,
     HouseBalanceModule,
     BillsModule,
+    ProductRatesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

@@ -115,6 +115,7 @@ export default function HousesPage() {
     h.area?.toLowerCase().includes(search.toLowerCase()) ||
     h.phoneNo.includes(search)
   )
+  const selectedConfigHouse = houses.find(h => h.id === Number.parseInt(configForm.houseId, 10))
 
   function openAdd() {
     setForm(emptyForm)
@@ -124,7 +125,7 @@ export default function HousesPage() {
   }
 
   function openEdit(h: House) {
-    const primaryConfig = h.configs?.find(cfg => cfg.shift === 'morning') ?? h.configs?.[0]
+    const primaryConfig = h.configs?.[0]
     setForm({
       houseNo: h.houseNo, area: h.area ?? '', phoneNo: h.phoneNo,
       alternativePhone: h.alternativePhone ?? '', description: h.description ?? '',
@@ -222,13 +223,14 @@ export default function HousesPage() {
   }
 
   function openConfigDialog(house: House, config?: HouseConfig) {
-    setConfigEditingId(config?.id ?? null)
+    const houseConfig = config ?? house.configs?.[0]
+    setConfigEditingId(houseConfig?.id ?? null)
     setConfigForm({
       houseId: String(house.id),
-      shift: config?.shift ?? 'morning',
-      supplierId: config?.supplierId ?? '',
-      position: String(config?.position ?? house.configs?.length ?? 0),
-      dailyAlerts: config?.dailyAlerts ?? '',
+      shift: houseConfig?.shift ?? 'morning',
+      supplierId: houseConfig?.supplierId ?? '',
+      position: String(houseConfig?.position ?? 0),
+      dailyAlerts: houseConfig?.dailyAlerts ?? '',
     })
     setConfigDialogOpen(true)
   }
@@ -262,8 +264,12 @@ export default function HousesPage() {
         dailyAlerts: configForm.dailyAlerts || undefined,
       }
 
-      if (configEditingId) {
-        await houseConfigApi.update(configEditingId, payload)
+      const selectedHouseId = parseInt(configForm.houseId)
+      const selectedHouse = houses.find(house => house.id === selectedHouseId)
+      const existingConfigId = configEditingId ?? selectedHouse?.configs?.[0]?.id ?? null
+
+      if (existingConfigId) {
+        await houseConfigApi.update(existingConfigId, payload)
         toast.success('House config updated')
       } else {
         await houseConfigApi.create(payload)
@@ -274,8 +280,8 @@ export default function HousesPage() {
       setConfigEditingId(null)
       setConfigForm(emptyConfigForm)
       await load()
-      if (viewHouse?.id === parseInt(configForm.houseId)) {
-        const refreshed = await housesApi.get(parseInt(configForm.houseId))
+      if (viewHouse?.id === selectedHouseId) {
+        const refreshed = await housesApi.get(selectedHouseId)
         setViewHouse(refreshed)
       }
     } catch (e: any) {
@@ -506,7 +512,11 @@ export default function HousesPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Supplier</Label>
-                  <Select value={form.supplierId || '__none__'} onValueChange={v => setForm(f => ({ ...f, supplierId: v === '__none__' ? '' : v }))}>
+                  <Select
+                    value={form.supplierId || '__none__'}
+                    onValueChange={v => setForm(f => ({ ...f, supplierId: v === '__none__' ? '' : v }))}
+                    disabled={form.shift === 'evening'}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder={form.shift === 'morning' ? 'Select supplier' : 'Shared route'} />
                     </SelectTrigger>
@@ -651,15 +661,16 @@ export default function HousesPage() {
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Configs</p>
                     <Button variant="outline" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse)}>
-                      <Settings2 className="h-3.5 w-3.5" /> Add Config
+                      <Settings2 className="h-3.5 w-3.5" /> {viewHouse.configs?.length ? 'Edit Config' : 'Add Config'}
                     </Button>
                   </div>
                   {viewHouse.configs && viewHouse.configs.length > 0 ? (
                     <div className="space-y-2">
-                      {viewHouse.configs
-                        .slice()
-                        .sort((a: HouseConfig, b: HouseConfig) => a.position - b.position)
-                        .map((config: HouseConfig) => (
+                      {(() => {
+                        const config = viewHouse.configs?.[0]
+                        if (!config) return null
+
+                        return (
                           <div key={config.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-background px-3 py-2.5">
                             <div className="flex flex-wrap items-center gap-2 text-sm">
                               <Badge variant="secondary" className="uppercase tracking-wide">{config.shift}</Badge>
@@ -675,7 +686,8 @@ export default function HousesPage() {
                               <Pencil className="h-3.5 w-3.5" /> Edit
                             </Button>
                           </div>
-                        ))}
+                        )
+                      })()}
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">No delivery config assigned to this house yet.</p>
@@ -734,24 +746,17 @@ export default function HousesPage() {
           <DialogHeader>
             <DialogTitle>{configEditingId ? 'Edit House Config' : 'Add House Config'}</DialogTitle>
             <DialogDescription>
-              Assign a supplier to the morning route or keep the evening route shared across suppliers.
+              Each house supports a single delivery config. Update the existing config details below.
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="config-house">House</Label>
-              <Select value={configForm.houseId} onValueChange={value => setConfigForm(form => ({ ...form, houseId: value }))}>
-                <SelectTrigger id="config-house">
-                  <SelectValue placeholder="Select house" />
-                </SelectTrigger>
-                <SelectContent>
-                  {houses.map(house => (
-                    <SelectItem key={house.id} value={String(house.id)}>
-                      {house.houseNo}{house.area ? ` - ${house.area}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                id="config-house"
+                value={selectedConfigHouse ? `${selectedConfigHouse.houseNo}${selectedConfigHouse.area ? ` - ${selectedConfigHouse.area}` : ''}` : 'Selected house'}
+                disabled
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="config-shift">Shift</Label>
@@ -767,7 +772,11 @@ export default function HousesPage() {
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="config-supplier">Supplier</Label>
-              <Select value={configForm.supplierId || '__none__'} onValueChange={value => setConfigForm(form => ({ ...form, supplierId: value === '__none__' ? '' : value }))}>
+              <Select
+                value={configForm.supplierId || '__none__'}
+                onValueChange={value => setConfigForm(form => ({ ...form, supplierId: value === '__none__' ? '' : value }))}
+                disabled={configForm.shift === 'evening'}
+              >
                 <SelectTrigger id="config-supplier">
                   <SelectValue placeholder={configForm.shift === 'morning' ? 'Select supplier' : 'Not required for evening'} />
                 </SelectTrigger>

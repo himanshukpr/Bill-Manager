@@ -244,7 +244,7 @@ export default function SupplierHousesPage() {
     const renderSkeleton = () => (
         <div className="grid gap-4 lg:grid-cols-2">
             {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+                <div key={index} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                     <Skeleton className="h-5 w-28 rounded-full" />
                     <Skeleton className="mt-4 h-7 w-40 rounded-lg" />
                     <Skeleton className="mt-3 h-4 w-52 rounded-lg" />
@@ -263,12 +263,11 @@ export default function SupplierHousesPage() {
 
     return (
         <div className="space-y-6">
-            <section className="relative overflow-hidden rounded-[2rem] border border-border bg-linear-to-br from-emerald-500/15 via-background to-amber-500/15 p-6 shadow-sm">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.12),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(245,158,11,0.12),transparent_32%)]" />
-                <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-2xl space-y-3">
                         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Supplier Workspace</p>
-                        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+                        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
                             {selectedShift === 'morning' ? 'Your Morning Routes' : 'Shared Evening Routes'}
                         </h1>
                         <p className="max-w-xl text-sm text-muted-foreground">
@@ -295,7 +294,7 @@ export default function SupplierHousesPage() {
                         </Button>
                     </div>
                 </div>
-                <div className="relative mt-6 grid gap-3 sm:grid-cols-2">
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
                     <StatCard
                         label={selectedShift === 'morning' ? 'My Morning Routes' : 'Evening Routes'}
                         value={loading ? '—' : String(stats.visibleCount)}
@@ -308,7 +307,7 @@ export default function SupplierHousesPage() {
                     />
                 </div>
                 {!loading && (morningPlan.length > 0 || eveningPlan.length > 0) && !plannerOpen && (
-                    <div className="relative mt-6">
+                    <div className="mt-6">
                         <Button
                             variant="outline"
                             onClick={() => setPlannerOpen(true)}
@@ -321,7 +320,7 @@ export default function SupplierHousesPage() {
             </section>
 
             {plannerOpen && (
-                <div className="rounded-[2rem] border border-border bg-card p-6 shadow-sm">
+                <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
                     <div className="mb-6">
                         <h2 className="text-lg font-semibold mb-2">Drag Route Planner</h2>
                         <p className="text-sm text-muted-foreground mb-4">
@@ -330,6 +329,7 @@ export default function SupplierHousesPage() {
                         <p className="mb-4 rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                             Mobile tip: you can drag items or use the up/down buttons for quick rearranging.
                         </p>
+
                         <div className="grid gap-4 lg:grid-cols-2">
                             <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
                                 <div className="mb-3 flex items-center justify-between">
@@ -438,11 +438,9 @@ export default function SupplierHousesPage() {
                             </div>
                         </div>
                     </div>
+
                     <div className="flex gap-3 justify-end">
-                        <Button
-                            variant="outline"
-                            onClick={() => setPlannerOpen(false)}
-                        >
+                        <Button variant="outline" onClick={() => setPlannerOpen(false)}>
                             Close Planner
                         </Button>
                     </div>
@@ -452,7 +450,7 @@ export default function SupplierHousesPage() {
             {loading ? (
                 renderSkeleton()
             ) : houses.length === 0 ? (
-                <div className="rounded-[2rem] border border-border bg-card px-6 py-12 text-center shadow-sm">
+                <div className="rounded-2xl border border-border bg-card px-6 py-12 text-center shadow-sm">
                     <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
                         <Building2 className="h-7 w-7 text-muted-foreground" />
                     </div>
@@ -484,7 +482,7 @@ export default function SupplierHousesPage() {
                         const current = Number(house.balance?.currentBalance ?? 0)
 
                         return (
-                            <article key={house.id} className="group rounded-[1.75rem] border border-border bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg">
+                            <article key={house.id} className="group rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg">
                                 <div className="flex items-start justify-between gap-4">
                                     <div>
                                         <div className="flex flex-wrap items-center gap-2">
