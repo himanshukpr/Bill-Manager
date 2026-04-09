@@ -10,6 +10,7 @@ import { HouseConfigModule } from './house-config/house-config.module';
 import { HouseBalanceModule } from './house-balance/house-balance.module';
 import { BillsModule } from './bills/bills.module';
 import { ProductRatesModule } from './product-rates/product-rates.module';
+import { DeliveryLogsModule } from './delivery-logs/delivery-logs.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ProductRatesModule } from './product-rates/product-rates.module';
     HouseBalanceModule,
     BillsModule,
     ProductRatesModule,
+    DeliveryLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

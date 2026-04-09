@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Home, List } from "lucide-react"
+import { Home, List, BadgeDollarSign } from "lucide-react"
 import { NavMain } from "@/components/dashboard/shared/nav-main"
 import { NavUser } from "@/components/dashboard/shared/nav-user"
 import {
@@ -18,6 +18,7 @@ interface SupplierSidebarProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
+  // { title: "Rate List", url: "/dashboard/supplier/rates", icon: BadgeDollarSign },
 ]
 
 export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLogout }: SupplierSidebarProps) {
@@ -28,7 +29,7 @@ export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLo
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <a href="/dashboard/supplier">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500 to-emerald-600">
                   <span className="text-sm font-bold text-white">B</span>
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">

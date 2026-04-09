@@ -15,6 +15,7 @@ model User {
   createdAt    DateTime      @default(now()) @map("created_at")
   isVerified   Boolean       @default(false)
   houseConfigs HouseConfig[]
+  deliveries   DeliveryLog[]
 
   @@map("users")
 }
@@ -33,6 +34,7 @@ model House {
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
   bills            Bill[]
+  deliveries       DeliveryLog[]
   balance          HouseBalance?
   configs          HouseConfig?
 
@@ -103,6 +105,25 @@ model ProductRate {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("product_rates")
+}
+
+model DeliveryLog {
+  id             Int      @id @default(autoincrement())
+  houseId        Int      @map("house_id")
+  supplierId     String   @map("supplier_id") @db.Uuid
+  shift          Shift
+  items          Json
+  totalAmount    Decimal  @map("total_amount") @db.Decimal(10, 2)
+  openingBalance Decimal  @map("opening_balance") @db.Decimal(10, 2)
+  closingBalance Decimal  @map("closing_balance") @db.Decimal(10, 2)
+  note           String?
+  deliveredAt    DateTime @default(now()) @map("delivered_at")
+  house          House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  supplier       User     @relation(fields: [supplierId], references: [uuid], onDelete: Cascade)
+
+  @@index([houseId, deliveredAt])
+  @@index([supplierId, deliveredAt])
+  @@map("delivery_logs")
 }
 
 enum Role {
