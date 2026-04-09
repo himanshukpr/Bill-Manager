@@ -15,8 +15,9 @@ import {
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { houseConfigApi, housesApi } from '@/lib/api'
-import { getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { clearSessionAuth, getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
 export default function SupplierPage() {
@@ -37,6 +38,11 @@ export default function SupplierPage() {
         }
         setAuth(session)
     }, [router])
+
+    function handleLogout() {
+        clearSessionAuth()
+        router.replace('/')
+    }
 
     useEffect(() => {
         if (!auth) return
