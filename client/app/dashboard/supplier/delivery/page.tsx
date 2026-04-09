@@ -8,12 +8,9 @@ import {
     ChevronRight,
     MapPin,
     Phone,
-    IndianRupee,
     CheckCircle,
     AlertCircle,
     Home,
-    Clock,
-    Navigation,
     X,
     Plus,
     Trash2,
@@ -25,21 +22,20 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
     houseConfigApi,
     housesApi,
-    balanceApi,
+    deliveryLogsApi,
     productRatesApi,
+    type DeliveryLog,
+    type ProductRate,
     type House,
     type HouseConfig,
-    type ProductRate,
 } from '@/lib/api'
 import {
     Select,
@@ -48,35 +44,101 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
-import { getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
 type DeliveryItemForm = {
-    productId: string
+    milkType: 'buffalo' | 'cow'
     qty: string
 }
 
 const emptyDeliveryItem: DeliveryItemForm = {
-    productId: '',
+    milkType: 'buffalo',
     qty: '',
+}
+
+type MilkType = DeliveryItemForm['milkType']
+
+function normalizeProductName(name?: string | null): string {
+    return (name ?? '').trim().toLowerCase()
+}
+
+function resolveGlobalRateMap(rates: ProductRate[]): Record<MilkType, number> {
+    const next: Record<MilkType, number> = {
+        buffalo: 0,
+        cow: 0,
+    }
+
+    for (const rate of rates) {
+        if (!rate.isActive) continue
+
+        const name = normalizeProductName(rate.name)
+        const parsedRate = Number(rate.rate)
+
+        if (!Number.isFinite(parsedRate) || parsedRate <= 0) continue
+
+        if (!next.buffalo && name.includes('buffalo')) {
+            next.buffalo = parsedRate
+        }
+
+        if (!next.cow && (name.includes('cow') || name.includes('cows'))) {
+            next.cow = parsedRate
+        }
+    }
+
+    return next
+}
+
+function resolveHouseRate(house: House | undefined, milkType: MilkType): number {
+    if (!house) return 0
+
+    const configured = [
+        { type: normalizeProductName(house.rate1Type), rate: Number(house.rate1 ?? 0) },
+        { type: normalizeProductName(house.rate2Type), rate: Number(house.rate2 ?? 0) },
+    ]
+
+    const typedMatch = configured.find((entry) =>
+        entry.type.includes(milkType) && Number.isFinite(entry.rate) && entry.rate > 0
+    )
+
+    if (typedMatch) return typedMatch.rate
+
+    const fallback = milkType === 'buffalo' ? Number(house.rate1 ?? 0) : Number(house.rate2 ?? 0)
+    return Number.isFinite(fallback) && fallback > 0 ? fallback : 0
+}
+
+function isSameLocalDate(left: Date, right: Date): boolean {
+    return (
+        left.getFullYear() === right.getFullYear() &&
+        left.getMonth() === right.getMonth() &&
+        left.getDate() === right.getDate()
+    )
 }
 
 export default function DeliveryPage() {
     const router = useRouter()
-    const [auth, setAuth] = useState<SessionAuth | null>(null)
+
+    const [auth, setAuth] = useState<any>(null)
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
-    const [showShiftSelector, setShowShiftSelector] = useState(false)
+
     const [houses, setHouses] = useState<House[]>([])
+    const [globalRateMap, setGlobalRateMap] = useState<Record<MilkType, number>>({
+        buffalo: 0,
+        cow: 0,
+    })
     const [loading, setLoading] = useState(true)
+
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
-    const [showNotes, setShowNotes] = useState(false)
-    const [notes, setNotes] = useState('')
-    const [currentBalance, setCurrentBalance] = useState('')
-    const [productRates, setProductRates] = useState<ProductRate[]>([])
+    const [currentHouseLogs, setCurrentHouseLogs] = useState<DeliveryLog[]>([])
+    const [logsLoading, setLogsLoading] = useState(false)
+
     const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
+    const [currentBalance, setCurrentBalance] = useState('')
+    const [notes, setNotes] = useState('')
     const [marking, setMarking] = useState(false)
 
+    // AUTH
     useEffect(() => {
         const session = getSessionAuth()
         if (!session?.token || session.role !== 'supplier') {
@@ -84,622 +146,432 @@ export default function DeliveryPage() {
             return
         }
         setAuth(session)
-        setShowShiftSelector(true)
-    }, [router])
+    }, [])
 
+    // LOAD HOUSES
     const loadHouses = useCallback(async () => {
         if (!auth || !selectedShift) return
 
         try {
             setLoading(true)
-            const data = await housesApi.list()
-            const configs = await houseConfigApi.list()
 
-            const configsByHouse = new Map<number, HouseConfig[]>()
-            for (const config of configs) {
-                const next = configsByHouse.get(config.houseId) ?? []
-                next.push(config)
-                configsByHouse.set(config.houseId, next)
-            }
+            const [data, configs, rates] = await Promise.all([
+                housesApi.list(),
+                houseConfigApi.list(),
+                productRatesApi.list(),
+            ])
 
-            let filtered: House[] = []
+            setGlobalRateMap(resolveGlobalRateMap(rates))
 
-            if (selectedShift === 'morning') {
-                filtered = data
-                    .map((house) => ({
-                        ...house,
-                        configs: (configsByHouse.get(house.id) ?? house.configs ?? [])
-                            .filter((config) => config.shift === 'morning' && config.supplierId === auth.uuid)
-                            .sort((left, right) => left.position - right.position),
-                    }))
-                    .filter((house) => (house.configs?.length ?? 0) > 0)
-                    .sort((left, right) => {
-                        const leftOrder = left.configs?.[0]?.position ?? 0
-                        const rightOrder = right.configs?.[0]?.position ?? 0
-                        return leftOrder - rightOrder
-                    })
-            } else {
-                filtered = data
-                    .map((house) => ({
-                        ...house,
-                        configs: (configsByHouse.get(house.id) ?? house.configs ?? [])
-                            .filter((config) => config.shift === 'evening')
-                            .sort((left, right) => left.position - right.position),
-                    }))
-                    .filter((house) => (house.configs?.length ?? 0) > 0)
-                    .sort((left, right) => {
-                        const leftOrder = left.configs?.[0]?.position ?? 0
-                        const rightOrder = right.configs?.[0]?.position ?? 0
-                        return leftOrder - rightOrder
-                    })
-            }
+            const configsMap = new Map<number, HouseConfig[]>()
+
+            configs.forEach((c) => {
+                const arr = configsMap.get(c.houseId) || []
+                arr.push(c)
+                configsMap.set(c.houseId, arr)
+            })
+
+            const filtered = data
+                .map((house) => ({
+                    ...house,
+                    configs: (configsMap.get(house.id) || [])
+                        .filter((c) => c.shift === selectedShift)
+                        .sort((a, b) => a.position - b.position),
+                }))
+                .filter((h) => h.configs.length > 0)
 
             setHouses(filtered)
             setCurrentIndex(0)
-            setCompletedHouses(new Set())
-            setDeliveryItems([{ ...emptyDeliveryItem }])
-        } catch (error: any) {
-            toast.error(error.message)
+        } catch (err: any) {
+            toast.error(err.message)
         } finally {
             setLoading(false)
         }
     }, [auth, selectedShift])
 
-    const loadProductRates = useCallback(async () => {
-        try {
-            const rates = await productRatesApi.list()
-            setProductRates(rates)
-        } catch (error: any) {
-            toast.error(error.message)
-        }
-    }, [])
-
     useEffect(() => {
         loadHouses()
     }, [loadHouses])
 
-    useEffect(() => {
-        loadProductRates()
-    }, [loadProductRates])
-
     const currentHouse = houses[currentIndex]
-    const progress = `${currentIndex + 1} of ${houses.length}`
-    const completedCount = completedHouses.size
 
+    useEffect(() => {
+        if (!currentHouse || !selectedShift) {
+            setCurrentHouseLogs([])
+            return
+        }
+
+        let active = true
+
+        const loadCurrentHouseLogs = async () => {
+            try {
+                setLogsLoading(true)
+                const logs = await deliveryLogsApi.list({
+                    houseId: currentHouse.id,
+                    shift: selectedShift,
+                })
+
+                const today = new Date()
+                const todayLogs = logs.filter((log) => {
+                    const deliveredAt = new Date(log.deliveredAt)
+                    return isSameLocalDate(deliveredAt, today)
+                })
+
+                if (!active) return
+
+                setCurrentHouseLogs(todayLogs)
+                if (todayLogs.length > 0) {
+                    setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+                }
+            } catch (err: any) {
+                if (active) toast.error(err.message)
+            } finally {
+                if (active) setLogsLoading(false)
+            }
+        }
+
+        loadCurrentHouseLogs()
+
+        return () => {
+            active = false
+        }
+    }, [currentHouse?.id, selectedShift])
+
+    const getEffectiveRate = (house: House | undefined, milkType: MilkType): { rate: number; source: 'house' | 'global' | 'none' } => {
+        const houseRate = resolveHouseRate(house, milkType)
+        if (houseRate > 0) {
+            return { rate: houseRate, source: 'house' }
+        }
+
+        const globalRate = Number(globalRateMap[milkType] ?? 0)
+        if (globalRate > 0) {
+            return { rate: globalRate, source: 'global' }
+        }
+
+        return { rate: 0, source: 'none' }
+    }
+
+    // NAVIGATION HANDLERS
     const handleNext = () => {
         if (currentIndex < houses.length - 1) {
-            setCurrentIndex(currentIndex + 1)
-            setNotes('')
-            setCurrentBalance('')
-            setShowNotes(false)
-            setDeliveryItems([{ ...emptyDeliveryItem }])
+            setCurrentIndex((i) => i + 1)
+            resetForm()
         }
     }
 
     const handlePrevious = () => {
         if (currentIndex > 0) {
-            setCurrentIndex(currentIndex - 1)
-            setNotes('')
-            setCurrentBalance('')
-            setShowNotes(false)
-            setDeliveryItems([{ ...emptyDeliveryItem }])
+            setCurrentIndex((i) => i - 1)
+            resetForm()
         }
     }
 
-    function updateDeliveryItem(idx: number, field: keyof DeliveryItemForm, value: string) {
+    const resetForm = () => {
+        setDeliveryItems([{ ...emptyDeliveryItem }])
+        setCurrentBalance('')
+        setNotes('')
+    }
+
+    // DELIVERY ITEMS
+    const updateDeliveryItem = (idx: number, field: keyof DeliveryItemForm, value: string) => {
         setDeliveryItems((prev) =>
-            prev.map((item, itemIndex) =>
-                itemIndex === idx ? { ...item, [field]: value } : item,
-            ),
+            prev.map((item, i) =>
+                i === idx ? { ...item, [field]: value } : item
+            )
         )
     }
 
-    function addDeliveryItem() {
+    const addItem = () => {
         setDeliveryItems((prev) => [...prev, { ...emptyDeliveryItem }])
     }
 
-    function removeDeliveryItem(idx: number) {
-        setDeliveryItems((prev) => prev.filter((_, itemIndex) => itemIndex !== idx))
+    const removeItem = (idx: number) => {
+        setDeliveryItems((prev) => prev.filter((_, i) => i !== idx))
     }
 
+    // TOTAL CALCULATION
+    const currentDeliveryTotal = deliveryItems.reduce((sum, item) => {
+        const qty = Number(item.qty)
+        const { rate } = getEffectiveRate(currentHouse, item.milkType)
+
+        if (!qty || qty <= 0) return sum
+
+        return sum + qty * rate
+    }, 0)
+
+    // MARK DELIVERED
     const handleMarkDelivered = async () => {
         if (!currentHouse) return
+        if (!selectedShift) return
 
         setMarking(true)
-        try {
-            const parsedItems = deliveryItems
-                .map((item) => {
-                    const product = productRates.find((rate) => String(rate.id) === item.productId)
-                    const qty = Number.parseFloat(item.qty)
-                    const rate = Number.parseFloat(product?.rate ?? '0')
 
+        try {
+            const payloadItems = deliveryItems
+                .map((item) => {
+                    const qty = Number(item.qty)
+                    const { rate } = getEffectiveRate(currentHouse, item.milkType)
                     return {
-                        product,
+                        milkType: item.milkType,
                         qty,
-                        amount: Number.isFinite(qty) && qty > 0 ? qty * rate : 0,
+                        rate,
+                        amount: qty > 0 ? qty * rate : 0,
                     }
                 })
-                .filter((item) => item.product && item.qty > 0)
+                .filter((item) => item.qty > 0 && item.rate > 0)
 
-            const deliveryAmount = parsedItems.reduce((sum, item) => sum + item.amount, 0)
-
-            if (deliveryItems.some((item) => item.productId && !item.qty)) {
-                toast.error('Enter quantity for selected products')
-                setMarking(false)
+            if (payloadItems.length === 0) {
+                toast.error('Add at least one item with qty and rate before marking delivered')
                 return
             }
 
-            // Update balance from delivery amount, unless explicit override is provided.
-            if (currentBalance || deliveryAmount > 0) {
-                const computedCurrentBalance = currentBalance
-                    ? Number(currentBalance)
-                    : Number(currentHouse.balance?.currentBalance ?? 0) + deliveryAmount
+            await deliveryLogsApi.create({
+                houseId: currentHouse.id,
+                shift: selectedShift,
+                items: payloadItems,
+                currentBalance: currentBalance ? Number(currentBalance) : undefined,
+                note: notes.trim() || undefined,
+            })
 
-                await balanceApi.update(currentHouse.id, {
-                    currentBalance: computedCurrentBalance,
-                })
-            }
-
-            // Mark as completed
             setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+            const refreshedLogs = await deliveryLogsApi.list({
+                houseId: currentHouse.id,
+                shift: selectedShift,
+            })
+            const today = new Date()
+            setCurrentHouseLogs(
+                refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+            )
+
             toast.success(`${currentHouse.houseNo} delivered!`)
 
-            // Auto-move to next
-            if (currentIndex < houses.length - 1) {
-                setTimeout(() => {
-                    handleNext()
-                }, 500)
-            }
-        } catch (error: any) {
-            toast.error(error.message)
+            setTimeout(() => handleNext(), 400)
+        } catch (err: any) {
+            toast.error(err.message)
         } finally {
             setMarking(false)
         }
     }
 
-    if (!auth) {
-        return <div className="min-h-screen" />
-    }
-
-    // Shift selector
+    // SHIFT SELECTOR
     if (!selectedShift) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-emerald-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4">
-                <Dialog open={!selectedShift} onOpenChange={() => { }}>
-                    <DialogContent className="max-w-sm">
-                        <DialogHeader>
-                            <DialogTitle>Select Shift</DialogTitle>
-                            <DialogDescription>
-                                Choose which shift you want to deliver today
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-3">
-                            <Button
-                                onClick={() => setSelectedShift('morning')}
-                                className="w-full h-14 flex flex-col items-start justify-center"
-                                variant="outline"
-                            >
-                                <span className="font-semibold">Morning Shift</span>
-                                <span className="text-xs text-muted-foreground">Your assigned routes</span>
-                            </Button>
-                            <Button
-                                onClick={() => setSelectedShift('evening')}
-                                className="w-full h-14 flex flex-col items-start justify-center"
-                                variant="outline"
-                            >
-                                <span className="font-semibold">Evening Shift</span>
-                                <span className="text-xs text-muted-foreground">Shared routes</span>
-                            </Button>
-                        </div>
-                        <Button
-                            asChild
-                            variant="ghost"
-                            className="w-full mt-4"
-                        >
-                            <Link href="/dashboard/supplier">Go Back</Link>
-                        </Button>
-                    </DialogContent>
-                </Dialog>
-            </div>
-        )
-    }
+            <Dialog open>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Select Shift</DialogTitle>
+                    </DialogHeader>
 
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-linear-to-br from-emerald-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4">
-                <div className="max-w-md mx-auto space-y-4">
-                    <Skeleton className="h-20 w-full rounded-xl" />
-                    <Skeleton className="h-40 w-full rounded-xl" />
-                    <Skeleton className="h-32 w-full rounded-xl" />
-                </div>
-            </div>
-        )
-    }
-
-    if (houses.length === 0) {
-        return (
-            <div className="min-h-screen bg-linear-to-br from-emerald-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4 flex items-center justify-center">
-                <div className="max-w-sm text-center">
-                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
-                        <Home className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                    <h2 className="text-xl font-semibold mb-2">No routes available</h2>
-                    <p className="text-muted-foreground mb-6">
-                        No {selectedShift} shift routes for delivery today
-                    </p>
-                    <Button asChild>
-                        <Link href="/dashboard/supplier">Go Back</Link>
+                    <Button onClick={() => setSelectedShift('morning')}>
+                        Morning
                     </Button>
-                </div>
-            </div>
+
+                    <Button onClick={() => setSelectedShift('evening')}>
+                        Evening
+                    </Button>
+                </DialogContent>
+            </Dialog>
         )
     }
+
+    if (loading) return <Skeleton className="h-40 w-full" />
+    if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
-    const pending = Number(currentHouse.balance?.previousBalance ?? 0)
-    const current = Number(currentHouse.balance?.currentBalance ?? 0)
-    const currentDeliveryTotal = deliveryItems.reduce((sum, item) => {
-        const product = productRates.find((rate) => String(rate.id) === item.productId)
-        if (!product) return sum
-
-        const qty = Number.parseFloat(item.qty)
-        const rate = Number.parseFloat(product.rate)
-        if (!Number.isFinite(qty) || qty <= 0) return sum
-
-        return sum + qty * rate
-    }, 0)
 
     return (
-        <div className="min-h-screen bg-linear-to-br from-emerald-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4">
-            <div className="max-w-md mx-auto space-y-4">
-                {/* Header */}
-                <div className="flex items-center justify-between">
-                    <Button asChild variant="ghost" size="icon">
-                        <Link href="/dashboard/supplier">
-                            <ChevronLeft className="h-5 w-5" />
-                        </Link>
-                    </Button>
-                    <div className="text-center">
-                        <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">
-                            {selectedShift === 'morning' ? 'Morning' : 'Evening'} Route
-                        </p>
-                        <p className="text-lg font-bold">{progress}</p>
-                    </div>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setSelectedShift(null)}
-                    >
-                        <X className="h-5 w-5" />
-                    </Button>
-                </div>
+        <div className="max-w-md mx-auto p-4 space-y-4">
 
-                {/* Progress bar */}
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-                    <div
-                        className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${((currentIndex + 1) / houses.length) * 100}%` }}
-                    />
-                </div>
+            {/* HEADER NAV */}
+            <div className="flex items-center justify-between">
+                <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
+                    <ChevronLeft />
+                </Button>
 
-                {/* Current House Card */}
-                <div className="bg-card dark:bg-slate-800 rounded-3xl border border-border/70 shadow-lg overflow-hidden">
-                    {/* Status Badge */}
-                    <div
-                        className={`px-6 py-4 ${isCompleted
-                            ? 'bg-emerald-100 dark:bg-emerald-900'
-                            : 'bg-amber-100 dark:bg-amber-900'
-                            }`}
-                    >
-                        <div className="flex items-center gap-2">
-                            {isCompleted ? (
-                                <>
-                                    <CheckCircle className="h-5 w-5 text-emerald-600" />
-                                    <span className="font-semibold text-emerald-900 dark:text-emerald-100">
-                                        Delivered
-                                    </span>
-                                </>
-                            ) : (
-                                <>
-                                    <AlertCircle className="h-5 w-5 text-amber-600" />
-                                    <span className="font-semibold text-amber-900 dark:text-amber-100">
-                                        Pending
-                                    </span>
-                                </>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* House Details */}
-                    <div className="p-6 space-y-4">
-                        {/* House No and Area */}
-                        <div>
-                            <p className="text-4xl font-bold text-foreground">{currentHouse.houseNo}</p>
-                            {currentHouse.area && (
-                                <div className="flex items-center gap-2 mt-2 text-muted-foreground">
-                                    <MapPin className="h-4 w-4" />
-                                    <span>{currentHouse.area}</span>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Contact Info */}
-                        <div className="space-y-2 pt-2 border-t border-border">
-                            <div className="flex items-center gap-3">
-                                <Phone className="h-5 w-5 text-primary shrink-0" />
-                                <div>
-                                    <p className="text-sm text-muted-foreground">Primary</p>
-                                    <p className="font-semibold">{currentHouse.phoneNo}</p>
-                                </div>
-                            </div>
-                            {currentHouse.alternativePhone && (
-                                <div className="flex items-center gap-3">
-                                    <Phone className="h-5 w-5 text-muted-foreground shrink-0" />
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Alternative</p>
-                                        <p className="font-semibold">{currentHouse.alternativePhone}</p>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Balance Info */}
-                        <div className="pt-2 border-t border-border grid grid-cols-2 gap-4">
-                            <div>
-                                <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-1">
-                                    Previous Balance
-                                </p>
-                                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                                    ₹{pending.toLocaleString('en-IN')}
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-1">
-                                    Current
-                                </p>
-                                <p className="text-2xl font-bold text-primary">
-                                    ₹{current.toLocaleString('en-IN')}
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Rates */}
-                        {(currentHouse.rate1Type || currentHouse.rate2Type) && (
-                            <div className="pt-2 border-t border-border">
-                                <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-2">
-                                    Rates
-                                </p>
-                                <div className="flex flex-wrap gap-2">
-                                    {currentHouse.rate1Type && (
-                                        <Badge variant="secondary">
-                                            {currentHouse.rate1Type} ₹{currentHouse.rate1}/L
-                                        </Badge>
-                                    )}
-                                    {currentHouse.rate2Type && (
-                                        <Badge variant="secondary">
-                                            {currentHouse.rate2Type} ₹{currentHouse.rate2}/L
-                                        </Badge>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Alerts/Notes from config */}
-                        {currentHouse.configs?.[0]?.dailyAlerts && (
-                            <div className="pt-2 border-t border-border bg-amber-50 dark:bg-amber-950 p-3 rounded-lg">
-                                <div className="flex gap-2">
-                                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">
-                                            Special Instructions
-                                        </p>
-                                        <p className="text-sm text-amber-800 dark:text-amber-200 mt-1">
-                                            {currentHouse.configs[0].dailyAlerts}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Update Balance Form */}
-                {!isCompleted && (
-                    <>
-                        <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => setShowNotes(!showNotes)}
-                        >
-                            {showNotes ? 'Hide Details' : 'Update Balance'}
-                        </Button>
-
-                        {showNotes && (
-                            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4">
-                                <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <Label className="text-sm font-semibold">Delivery Products</Label>
-                                        <Button type="button" variant="outline" size="sm" onClick={addDeliveryItem} className="gap-1">
-                                            <Plus className="h-3.5 w-3.5" /> Add Product
-                                        </Button>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        {deliveryItems.map((item, idx) => {
-                                            const selectedProduct = productRates.find((rate) => String(rate.id) === item.productId)
-                                            const productRate = Number.parseFloat(selectedProduct?.rate ?? '0')
-                                            const qty = Number.parseFloat(item.qty)
-                                            const amount = Number.isFinite(qty) && qty > 0 ? qty * productRate : 0
-
-                                            return (
-                                                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                                                    <div className="col-span-6">
-                                                        <Select
-                                                            value={item.productId}
-                                                            onValueChange={(value) => updateDeliveryItem(idx, 'productId', value)}
-                                                        >
-                                                            <SelectTrigger>
-                                                                <SelectValue placeholder="Select product" />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                {productRates.map((product) => (
-                                                                    <SelectItem key={product.id} value={String(product.id)}>
-                                                                        {product.name}
-                                                                    </SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
-                                                    </div>
-                                                    <div className="col-span-3">
-                                                        <Input
-                                                            type="number"
-                                                            min="0"
-                                                            step="0.5"
-                                                            placeholder={selectedProduct ? `Qty (${selectedProduct.unit})` : 'Qty'}
-                                                            value={item.qty}
-                                                            onChange={(e) => updateDeliveryItem(idx, 'qty', e.target.value)}
-                                                        />
-                                                    </div>
-                                                    <div className="col-span-2 text-right text-xs text-muted-foreground">
-                                                        {selectedProduct ? `₹${productRate}/${selectedProduct.unit}` : 'Rate'}
-                                                        {selectedProduct && qty > 0 ? (
-                                                            <p className="text-sm font-semibold text-foreground">₹{amount.toLocaleString('en-IN')}</p>
-                                                        ) : null}
-                                                    </div>
-                                                    <div className="col-span-1 flex justify-end">
-                                                        {deliveryItems.length > 1 ? (
-                                                            <Button
-                                                                type="button"
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                onClick={() => removeDeliveryItem(idx)}
-                                                                className="h-8 w-8 text-destructive hover:text-destructive"
-                                                            >
-                                                                <Trash2 className="h-4 w-4" />
-                                                            </Button>
-                                                        ) : null}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-
-                                    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 flex items-center justify-between text-sm">
-                                        <span className="font-medium text-muted-foreground">Delivery Total</span>
-                                        <span className="text-base font-bold text-primary">
-                                            ₹{currentDeliveryTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="balance">Current Balance Override (Optional)</Label>
-                                    <Input
-                                        id="balance"
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        placeholder={current.toString()}
-                                        value={currentBalance}
-                                        onChange={(e) => setCurrentBalance(e.target.value)}
-                                        className="text-lg"
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        Leave empty to auto-add delivery total to current balance.
-                                    </p>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="notes">Delivery Notes (Optional)</Label>
-                                    <Textarea
-                                        id="notes"
-                                        placeholder="e.g., Not at home, Call later..."
-                                        value={notes}
-                                        onChange={(e) => setNotes(e.target.value)}
-                                        rows={3}
-                                    />
-                                </div>
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {/* Action Buttons */}
-                <div className="space-y-3">
-                    {!isCompleted ? (
-                        <Button
-                            onClick={handleMarkDelivered}
-                            disabled={marking}
-                            size="lg"
-                            className="w-full h-16 text-lg font-semibold"
-                        >
-                            <CheckCircle className="h-5 w-5 mr-2" />
-                            {marking ? 'Marking...' : 'Mark Delivered'}
-                        </Button>
-                    ) : (
-                        <Button
-                            disabled
-                            size="lg"
-                            className="w-full h-16 text-lg font-semibold"
-                            variant="outline"
-                        >
-                            <CheckCircle className="h-5 w-5 mr-2" />
-                            Delivered
-                        </Button>
-                    )}
-
-                    <div className="flex gap-3">
-                        <Button
-                            onClick={handlePrevious}
-                            disabled={currentIndex === 0}
-                            variant="outline"
-                            className="flex-1 h-12"
-                        >
-                            <ChevronLeft className="h-5 w-5 mr-2" />
-                            Previous
-                        </Button>
-                        <Button
-                            onClick={handleNext}
-                            disabled={currentIndex === houses.length - 1}
-                            variant="outline"
-                            className="flex-1 h-12"
-                        >
-                            Next
-                            <ChevronRight className="h-5 w-5 ml-2" />
-                        </Button>
-                    </div>
-                </div>
-
-                {/* Stats Footer */}
-                <div className="bg-card dark:bg-slate-800 rounded-2xl border border-border/70 p-4 text-center">
-                    <p className="text-sm text-muted-foreground">Deliveries Completed Today</p>
-                    <p className="text-3xl font-bold text-emerald-600">
-                        {completedCount}/{houses.length}
+                <div className="text-center">
+                    <p className="text-sm font-semibold">
+                        {currentIndex + 1} / {houses.length}
                     </p>
                 </div>
 
-                {/* Jump to any house */}
-                {houses.length > 5 && (
-                    <div className="bg-card dark:bg-slate-800 rounded-2xl border border-border/70 p-4">
-                        <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-3">
-                            Jump to House
-                        </p>
-                        <div className="grid grid-cols-5 gap-2">
-                            {houses.map((house, idx) => (
-                                <Button
-                                    key={house.id}
-                                    variant={currentIndex === idx ? 'default' : 'outline'}
-                                    size="sm"
-                                    className="h-10 text-xs font-bold"
-                                    onClick={() => setCurrentIndex(idx)}
-                                >
-                                    {house.houseNo}
-                                </Button>
-                            ))}
-                        </div>
+                <Button variant="ghost" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
+                    <ChevronRight />
+                </Button>
+            </div>
+
+            {/* <div className="flex justify-end">
+                <Button asChild variant="outline" size="sm">
+                    <Link href="/dashboard/supplier/rates">Rate List</Link>
+                </Button>
+            </div> */}
+
+            {/* PROGRESS BAR */}
+            <div className="w-full bg-gray-200 h-2 rounded-full">
+                <div
+                    className="bg-green-500 h-2 rounded-full"
+                    style={{ width: `${((currentIndex + 1) / houses.length) * 100}%` }}
+                />
+            </div>
+
+            {/* HOUSE CARD */}
+            <div className="bg-card p-5 rounded-2xl">
+                <h1 className="text-3xl font-bold">{currentHouse.houseNo}</h1>
+
+                <div className="flex gap-2 mt-2">
+                    <MapPin className="h-4 w-4" />
+                    {currentHouse.area}
+                </div>
+
+                <div className="mt-2">
+                    <Phone className="inline mr-2" />
+                    {currentHouse.phoneNo}
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                    {(() => {
+                        const buffalo = getEffectiveRate(currentHouse, 'buffalo')
+                        const cow = getEffectiveRate(currentHouse, 'cow')
+
+                        return (
+                            <>
+                                <Badge>
+                                    Buffalo ₹{buffalo.rate}/L
+                                    {buffalo.source === 'global' ? ' (Rate List)' : ''}
+                                </Badge>
+                                <Badge>
+                                    Cow ₹{cow.rate}/L
+                                    {cow.source === 'global' ? ' (Rate List)' : ''}
+                                </Badge>
+                            </>
+                        )
+                    })()}
+                </div>
+
+                <div className="mt-3">
+                    {isCompleted ? (
+                        <span className="text-green-600 font-semibold">Delivered</span>
+                    ) : (
+                        <span className="text-yellow-600 font-semibold">Pending</span>
+                    )}
+                </div>
+            </div>
+
+            <div className="bg-card p-5 rounded-2xl space-y-3">
+                <p className="text-sm font-semibold">Today&apos;s Delivery Records</p>
+                {logsLoading ? (
+                    <Skeleton className="h-20 w-full" />
+                ) : currentHouseLogs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No delivery records saved for this house yet.</p>
+                ) : (
+                    <div className="space-y-3">
+                        {currentHouseLogs.map((log) => (
+                            <div key={log.id} className="rounded-xl border border-border p-3">
+                                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                    <span>{new Date(log.deliveredAt).toLocaleTimeString('en-IN')}</span>
+                                    <span>Total ₹{Number(log.totalAmount).toLocaleString('en-IN')}</span>
+                                </div>
+                                <div className="mt-2 space-y-1 text-sm">
+                                    {log.items.map((item, idx) => (
+                                        <div key={`${log.id}-${idx}`} className="flex items-center justify-between">
+                                            <span className="capitalize">{item.milkType} {item.qty}L x ₹{item.rate}</span>
+                                            <span>₹{item.amount}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                {log.note ? (
+                                    <p className="mt-2 text-xs text-muted-foreground">Note: {log.note}</p>
+                                ) : null}
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>
+
+            {/* FORM */}
+            {!isCompleted && (
+                <div className="bg-card p-5 rounded-2xl space-y-4">
+
+                    {deliveryItems.map((item, idx) => {
+                        const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
+                        const rate = effectiveRate.rate
+
+                        const qty = Number(item.qty)
+                        const amount = qty > 0 ? qty * rate : 0
+
+                        return (
+                            <div key={idx} className="grid grid-cols-12 gap-2">
+
+                                <div className="col-span-4">
+                                    <Select
+                                        value={item.milkType}
+                                        onValueChange={(val) =>
+                                            updateDeliveryItem(idx, 'milkType', val)
+                                        }
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="buffalo">Buffalo</SelectItem>
+                                            <SelectItem value="cow">Cow</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="col-span-4">
+                                    <Input
+                                        type="number"
+                                        placeholder="Litres"
+                                        value={item.qty}
+                                        onChange={(e) =>
+                                            updateDeliveryItem(idx, 'qty', e.target.value)
+                                        }
+                                    />
+                                </div>
+
+                                <div className="col-span-3 text-sm">
+                                    ₹{rate}/L
+                                    {effectiveRate.source === 'global' ? <div className="text-xs text-muted-foreground">Rate List</div> : null}
+                                    {qty > 0 && <div>₹{amount}</div>}
+                                </div>
+
+                                <div className="col-span-1">
+                                    {deliveryItems.length > 1 && (
+                                        <Button onClick={() => removeItem(idx)}>
+                                            <Trash2 size={16} />
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        )
+                    })}
+
+                    <Button onClick={addItem}>
+                        <Plus className="mr-2" /> Add Item
+                    </Button>
+
+                    <div className="text-lg font-bold">
+                        Total: ₹{currentDeliveryTotal}
+                    </div>
+
+                    <Input
+                        placeholder="Override balance"
+                        value={currentBalance}
+                        onChange={(e) => setCurrentBalance(e.target.value)}
+                    />
+
+                    <Textarea
+                        placeholder="Notes"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                    />
+                </div>
+            )}
+
+            {/* ACTION */}
+            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full">
+                {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
+            </Button>
         </div>
     )
 }

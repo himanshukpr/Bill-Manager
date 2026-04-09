@@ -16,7 +16,6 @@ export class HousesService {
       include: {
         balance: true,
         configs: {
-          orderBy: { position: 'asc' },
           include: { supplier: { select: { uuid: true, username: true } } },
         },
       },
@@ -34,7 +33,6 @@ export class HousesService {
         },
         configs: {
           include: { supplier: { select: { uuid: true, username: true } } },
-          orderBy: { position: 'asc' },
         },
         bills: { orderBy: { year: 'desc' }, take: 12 },
       },
