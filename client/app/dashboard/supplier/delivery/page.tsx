@@ -15,6 +15,8 @@ import {
     Clock,
     Navigation,
     X,
+    Plus,
+    Trash2,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -30,9 +32,34 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { houseConfigApi, housesApi, balanceApi, type House, type HouseConfig } from '@/lib/api'
+import {
+    houseConfigApi,
+    housesApi,
+    balanceApi,
+    productRatesApi,
+    type House,
+    type HouseConfig,
+    type ProductRate,
+} from '@/lib/api'
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
+
+type DeliveryItemForm = {
+    productId: string
+    qty: string
+}
+
+const emptyDeliveryItem: DeliveryItemForm = {
+    productId: '',
+    qty: '',
+}
 
 export default function DeliveryPage() {
     const router = useRouter()
@@ -46,6 +73,8 @@ export default function DeliveryPage() {
     const [showNotes, setShowNotes] = useState(false)
     const [notes, setNotes] = useState('')
     const [currentBalance, setCurrentBalance] = useState('')
+    const [productRates, setProductRates] = useState<ProductRate[]>([])
+    const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
     const [marking, setMarking] = useState(false)
 
     useEffect(() => {
@@ -108,6 +137,7 @@ export default function DeliveryPage() {
             setHouses(filtered)
             setCurrentIndex(0)
             setCompletedHouses(new Set())
+            setDeliveryItems([{ ...emptyDeliveryItem }])
         } catch (error: any) {
             toast.error(error.message)
         } finally {
@@ -115,9 +145,22 @@ export default function DeliveryPage() {
         }
     }, [auth, selectedShift])
 
+    const loadProductRates = useCallback(async () => {
+        try {
+            const rates = await productRatesApi.list()
+            setProductRates(rates)
+        } catch (error: any) {
+            toast.error(error.message)
+        }
+    }, [])
+
     useEffect(() => {
         loadHouses()
     }, [loadHouses])
+
+    useEffect(() => {
+        loadProductRates()
+    }, [loadProductRates])
 
     const currentHouse = houses[currentIndex]
     const progress = `${currentIndex + 1} of ${houses.length}`
@@ -129,6 +172,7 @@ export default function DeliveryPage() {
             setNotes('')
             setCurrentBalance('')
             setShowNotes(false)
+            setDeliveryItems([{ ...emptyDeliveryItem }])
         }
     }
 
@@ -138,7 +182,24 @@ export default function DeliveryPage() {
             setNotes('')
             setCurrentBalance('')
             setShowNotes(false)
+            setDeliveryItems([{ ...emptyDeliveryItem }])
         }
+    }
+
+    function updateDeliveryItem(idx: number, field: keyof DeliveryItemForm, value: string) {
+        setDeliveryItems((prev) =>
+            prev.map((item, itemIndex) =>
+                itemIndex === idx ? { ...item, [field]: value } : item,
+            ),
+        )
+    }
+
+    function addDeliveryItem() {
+        setDeliveryItems((prev) => [...prev, { ...emptyDeliveryItem }])
+    }
+
+    function removeDeliveryItem(idx: number) {
+        setDeliveryItems((prev) => prev.filter((_, itemIndex) => itemIndex !== idx))
     }
 
     const handleMarkDelivered = async () => {
@@ -146,10 +207,36 @@ export default function DeliveryPage() {
 
         setMarking(true)
         try {
-            // Update balance if provided
-            if (currentBalance) {
+            const parsedItems = deliveryItems
+                .map((item) => {
+                    const product = productRates.find((rate) => String(rate.id) === item.productId)
+                    const qty = Number.parseFloat(item.qty)
+                    const rate = Number.parseFloat(product?.rate ?? '0')
+
+                    return {
+                        product,
+                        qty,
+                        amount: Number.isFinite(qty) && qty > 0 ? qty * rate : 0,
+                    }
+                })
+                .filter((item) => item.product && item.qty > 0)
+
+            const deliveryAmount = parsedItems.reduce((sum, item) => sum + item.amount, 0)
+
+            if (deliveryItems.some((item) => item.productId && !item.qty)) {
+                toast.error('Enter quantity for selected products')
+                setMarking(false)
+                return
+            }
+
+            // Update balance from delivery amount, unless explicit override is provided.
+            if (currentBalance || deliveryAmount > 0) {
+                const computedCurrentBalance = currentBalance
+                    ? Number(currentBalance)
+                    : Number(currentHouse.balance?.currentBalance ?? 0) + deliveryAmount
+
                 await balanceApi.update(currentHouse.id, {
-                    currentBalance: Number(currentBalance),
+                    currentBalance: computedCurrentBalance,
                 })
             }
 
@@ -251,6 +338,16 @@ export default function DeliveryPage() {
     const isCompleted = completedHouses.has(currentHouse.id)
     const pending = Number(currentHouse.balance?.previousBalance ?? 0)
     const current = Number(currentHouse.balance?.currentBalance ?? 0)
+    const currentDeliveryTotal = deliveryItems.reduce((sum, item) => {
+        const product = productRates.find((rate) => String(rate.id) === item.productId)
+        if (!product) return sum
+
+        const qty = Number.parseFloat(item.qty)
+        const rate = Number.parseFloat(product.rate)
+        if (!Number.isFinite(qty) || qty <= 0) return sum
+
+        return sum + qty * rate
+    }, 0)
 
     return (
         <div className="min-h-screen bg-linear-to-br from-emerald-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4">
@@ -290,8 +387,8 @@ export default function DeliveryPage() {
                     {/* Status Badge */}
                     <div
                         className={`px-6 py-4 ${isCompleted
-                                ? 'bg-emerald-100 dark:bg-emerald-900'
-                                : 'bg-amber-100 dark:bg-amber-900'
+                            ? 'bg-emerald-100 dark:bg-emerald-900'
+                            : 'bg-amber-100 dark:bg-amber-900'
                             }`}
                     >
                         <div className="flex items-center gap-2">
@@ -418,9 +515,85 @@ export default function DeliveryPage() {
                         </Button>
 
                         {showNotes && (
-                            <div className="bg-card dark:bg-slate-800 rounded-2xl border border-border/70 p-6 space-y-4">
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4">
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-sm font-semibold">Delivery Products</Label>
+                                        <Button type="button" variant="outline" size="sm" onClick={addDeliveryItem} className="gap-1">
+                                            <Plus className="h-3.5 w-3.5" /> Add Product
+                                        </Button>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {deliveryItems.map((item, idx) => {
+                                            const selectedProduct = productRates.find((rate) => String(rate.id) === item.productId)
+                                            const productRate = Number.parseFloat(selectedProduct?.rate ?? '0')
+                                            const qty = Number.parseFloat(item.qty)
+                                            const amount = Number.isFinite(qty) && qty > 0 ? qty * productRate : 0
+
+                                            return (
+                                                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                                                    <div className="col-span-6">
+                                                        <Select
+                                                            value={item.productId}
+                                                            onValueChange={(value) => updateDeliveryItem(idx, 'productId', value)}
+                                                        >
+                                                            <SelectTrigger>
+                                                                <SelectValue placeholder="Select product" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {productRates.map((product) => (
+                                                                    <SelectItem key={product.id} value={String(product.id)}>
+                                                                        {product.name}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div className="col-span-3">
+                                                        <Input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.5"
+                                                            placeholder={selectedProduct ? `Qty (${selectedProduct.unit})` : 'Qty'}
+                                                            value={item.qty}
+                                                            onChange={(e) => updateDeliveryItem(idx, 'qty', e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <div className="col-span-2 text-right text-xs text-muted-foreground">
+                                                        {selectedProduct ? `₹${productRate}/${selectedProduct.unit}` : 'Rate'}
+                                                        {selectedProduct && qty > 0 ? (
+                                                            <p className="text-sm font-semibold text-foreground">₹{amount.toLocaleString('en-IN')}</p>
+                                                        ) : null}
+                                                    </div>
+                                                    <div className="col-span-1 flex justify-end">
+                                                        {deliveryItems.length > 1 ? (
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                onClick={() => removeDeliveryItem(idx)}
+                                                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                                            >
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </Button>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+
+                                    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 flex items-center justify-between text-sm">
+                                        <span className="font-medium text-muted-foreground">Delivery Total</span>
+                                        <span className="text-base font-bold text-primary">
+                                            ₹{currentDeliveryTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                </div>
+
                                 <div className="space-y-2">
-                                    <Label htmlFor="balance">Current Balance</Label>
+                                    <Label htmlFor="balance">Current Balance Override (Optional)</Label>
                                     <Input
                                         id="balance"
                                         type="number"
@@ -432,7 +605,7 @@ export default function DeliveryPage() {
                                         className="text-lg"
                                     />
                                     <p className="text-xs text-muted-foreground">
-                                        Leave empty to keep: ₹{current.toLocaleString('en-IN')}
+                                        Leave empty to auto-add delivery total to current balance.
                                     </p>
                                 </div>
 

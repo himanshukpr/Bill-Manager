@@ -93,14 +93,16 @@ model Bill {
   @@map("bills")
 }
 
-model product_rates {
-  id         Int      @id @default(autoincrement())
-  name       String   @unique
-  unit       String   @default("L")
-  rate       Decimal  @db.Decimal(10, 2)
-  is_active  Boolean  @default(true)
-  created_at DateTime @default(now())
-  updated_at DateTime
+model ProductRate {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  unit      String   @default("L")
+  rate      Decimal  @db.Decimal(10, 2)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("product_rates")
 }
 
 enum Role {

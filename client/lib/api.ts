@@ -135,6 +135,16 @@ export type DashboardStats = {
   totalPendingBalance: string;
 };
 
+export type ProductRate = {
+  id: number;
+  name: string;
+  unit: string;
+  rate: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 // ─── Houses ───────────────────────────────────────────────────────────────────
 
 export const housesApi = {
@@ -200,4 +210,17 @@ export const usersApi = {
   verify: (uuid: string, isVerified: boolean) =>
     apiPatch(`/users/${uuid}/verify`, { isVerified }),
   delete: (uuid: string) => apiDelete(`/users/${uuid}`),
+};
+
+// ─── Product Rates ───────────────────────────────────────────────────────────
+
+export const productRatesApi = {
+  list: () => apiGet<ProductRate[]>('/product-rates'),
+  create: (data: { name: string; unit?: string; rate: number; isActive?: boolean }) =>
+    apiPost<ProductRate>('/product-rates', data),
+  update: (
+    id: number,
+    data: Partial<{ name: string; unit: string; rate: number; isActive: boolean }>,
+  ) => apiPatch<ProductRate>(`/product-rates/${id}`, data),
+  delete: (id: number) => apiDelete(`/product-rates/${id}`),
 };
