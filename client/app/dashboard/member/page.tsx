@@ -37,13 +37,13 @@ export default function MemberDashboardPage() {
   }
 
   if (!ready || !auth) {
-    return <main className="min-h-svh bg-slate-50" />
+    return <main className="min-h-svh bg-background" />
   }
 
   return (
-    <main className="min-h-svh bg-slate-50 px-4 py-8 sm:px-6 lg:px-10">
+    <main className="min-h-svh bg-background px-4 py-8 sm:px-6 lg:px-10">
       <div className="mx-auto w-full max-w-5xl space-y-6">
-        <header className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <header className="rounded-3xl border border-border/70 bg-card p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold tracking-[0.18em] text-slate-500 uppercase">
@@ -69,7 +69,7 @@ export default function MemberDashboardPage() {
         <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
           <PeriodSelector defaultPeriod="morning" />
 
-          <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
             <h2 className="text-sm font-semibold text-slate-900">Today Checklist</h2>
             <ul className="mt-3 space-y-2 text-sm text-slate-600">
               <li>Verify bills captured in selected period.</li>

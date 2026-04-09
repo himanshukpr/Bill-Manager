@@ -10,9 +10,9 @@ export function PeriodSelector({ defaultPeriod = "morning" }: PeriodSelectorProp
   const [period, setPeriod] = useState<"morning" | "evening">(defaultPeriod)
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-900">Select Period</h2>
-      <p className="mt-1 text-xs text-slate-500">Choose shift for bill entry activity.</p>
+    <section className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
+      <h2 className="text-sm font-semibold text-foreground">Select Period</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Choose shift for bill entry activity.</p>
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <button
@@ -20,8 +20,8 @@ export function PeriodSelector({ defaultPeriod = "morning" }: PeriodSelectorProp
           onClick={() => setPeriod("morning")}
           className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
             period === "morning"
-              ? "border-slate-900 bg-slate-900 text-white"
-              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-background/80 text-foreground/70 hover:bg-muted"
           }`}
         >
           Morning
@@ -31,15 +31,15 @@ export function PeriodSelector({ defaultPeriod = "morning" }: PeriodSelectorProp
           onClick={() => setPeriod("evening")}
           className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
             period === "evening"
-              ? "border-slate-900 bg-slate-900 text-white"
-              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-background/80 text-foreground/70 hover:bg-muted"
           }`}
         >
           Evening
         </button>
       </div>
 
-      <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+      <div className="mt-4 rounded-xl border border-border/70 bg-muted/60 p-3 text-sm text-foreground/80">
         Active period: <span className="font-semibold capitalize">{period}</span>
       </div>
     </section>

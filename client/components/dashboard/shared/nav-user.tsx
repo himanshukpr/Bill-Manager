@@ -16,6 +16,7 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar"
 import { EllipsisVerticalIcon, LogOut } from "lucide-react"
+import { LogoutConfirmButton } from "@/components/dashboard/shared/logout-confirm-button"
 
 export function NavUser({
     user,
@@ -83,12 +84,20 @@ export function NavUser({
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator />
                         {onLogout && (
-                            <DropdownMenuItem
-                                onClick={onLogout}
-                                className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/30 dark:focus:text-red-400"
-                            >
-                                <LogOut className="mr-2 h-4 w-4" />
-                                Log out
+                            <DropdownMenuItem asChild className="p-0 text-red-600 focus:bg-transparent focus:text-inherit">
+                                <LogoutConfirmButton
+                                    onConfirm={onLogout}
+                                    trigger={({ onClick }) => (
+                                        <button
+                                            type="button"
+                                            onClick={onClick}
+                                            className="flex w-full items-center px-2 py-1.5 text-left text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/30 dark:focus:text-red-400"
+                                        >
+                                            <LogOut className="mr-2 h-4 w-4" />
+                                            Log out
+                                        </button>
+                                    )}
+                                />
                             </DropdownMenuItem>
                         )}
                     </DropdownMenuContent>

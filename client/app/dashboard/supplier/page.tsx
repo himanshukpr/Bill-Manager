@@ -4,20 +4,19 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
-    Package,
     Navigation,
     Clock,
     TrendingUp,
     Settings,
     Home,
+    Package,
     ArrowRight,
 } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card } from '@/components/ui/card'
-import { houseConfigApi, housesApi, type House, type HouseConfig } from '@/lib/api'
-import { getSessionAuth, clearSessionAuth, type SessionAuth } from '@/lib/auth'
+import { houseConfigApi, housesApi } from '@/lib/api'
+import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
 export default function SupplierPage() {
@@ -47,22 +46,24 @@ export default function SupplierPage() {
                 setLoading(true)
                 const [houses, configs] = await Promise.all([
                     housesApi.list(),
-                    houseConfigApi.list(),
+                    houseConfigApi.list(auth.uuid),
                 ])
 
-                const morningCount = configs.filter(
-                    (c) => c.shift === 'morning' && c.supplierId === auth.uuid
-                ).length
+                const morningCount = configs.filter((c) => c.shift === 'morning').length
                 const eveningCount = configs.filter((c) => c.shift === 'evening').length
+                const assignedHouseIds = new Set(configs.map((c) => c.houseId))
                 const totalPending = houses.reduce(
                     (sum, h) => sum + Number(h.balance?.previousBalance ?? 0),
                     0
                 )
+                const assignedPending = houses
+                    .filter((h) => assignedHouseIds.has(h.id))
+                    .reduce((sum, h) => sum + Number(h.balance?.previousBalance ?? 0), 0)
 
                 setStats({
                     morningCount,
                     eveningCount,
-                    totalPending,
+                    totalPending: assignedHouseIds.size ? assignedPending : totalPending,
                 })
             } catch (error: any) {
                 toast.error(error.message)
@@ -73,11 +74,6 @@ export default function SupplierPage() {
 
         load()
     }, [auth])
-
-    const handleLogout = () => {
-        clearSessionAuth()
-        router.replace('/')
-    }
 
     if (!auth) {
         return <div className="min-h-screen" />

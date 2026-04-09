@@ -435,7 +435,7 @@ export default function HousesPage() {
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto [&_[data-slot=input]]:h-11 [&_[data-slot=select-trigger]]:h-11 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit House' : 'Add New House'}</DialogTitle>
             <DialogDescription>
@@ -510,7 +510,7 @@ export default function HousesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
+                <div className="min-w-0 space-y-1.5">
                   <Label>Supplier</Label>
                   <Select
                     value={form.supplierId || '__none__'}
@@ -520,10 +520,10 @@ export default function HousesPage() {
                     <SelectTrigger>
                       <SelectValue placeholder={form.shift === 'morning' ? 'Select supplier' : 'Shared route'} />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-w-[min(92vw,28rem)]">
                       <SelectItem value="__none__">Unassigned / shared</SelectItem>
                       {suppliers.map(supplier => (
-                        <SelectItem key={supplier.uuid} value={supplier.uuid}>
+                        <SelectItem key={supplier.uuid} value={supplier.uuid} className="max-w-full">
                           {supplier.username} - {supplier.email}
                         </SelectItem>
                       ))}
@@ -605,7 +605,7 @@ export default function HousesPage() {
 
       {/* View House Sheet */}
       <Dialog open={!!viewHouse} onOpenChange={open => !open && setViewHouse(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto [&_[data-slot=input]]:h-11 [&_[data-slot=select-trigger]]:h-11 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
           {viewHouse && (
             <>
               <DialogHeader>
@@ -770,7 +770,7 @@ export default function HousesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5 sm:col-span-2">
+            <div className="min-w-0 space-y-1.5 sm:col-span-2">
               <Label htmlFor="config-supplier">Supplier</Label>
               <Select
                 value={configForm.supplierId || '__none__'}
@@ -780,10 +780,10 @@ export default function HousesPage() {
                 <SelectTrigger id="config-supplier">
                   <SelectValue placeholder={configForm.shift === 'morning' ? 'Select supplier' : 'Not required for evening'} />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[min(92vw,28rem)]">
                   <SelectItem value="__none__">Unassigned / shared</SelectItem>
                   {suppliers.map(supplier => (
-                    <SelectItem key={supplier.uuid} value={supplier.uuid}>
+                    <SelectItem key={supplier.uuid} value={supplier.uuid} className="max-w-full">
                       {supplier.username} - {supplier.email}
                     </SelectItem>
                   ))}
@@ -822,7 +822,7 @@ export default function HousesPage() {
       </Dialog>
 
       <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md [&_[data-slot=input]]:h-11 sm:[&_[data-slot=input]]:h-9">
           <DialogHeader>
             <DialogTitle>Edit House Balance</DialogTitle>
             <DialogDescription>

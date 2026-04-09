@@ -10,6 +10,7 @@ import {
     FileText,
     LogOut,
 } from 'lucide-react';
+import { LogoutConfirmButton } from '@/components/dashboard/shared/logout-confirm-button'
 
 type SidebarProps = {
     userName: string
@@ -112,13 +113,19 @@ export function Sidebar({
 
             {/* Logout Button */}
             <div className="border-t border-sidebar-border px-3 py-4">
-                <button
-                    onClick={onLogout}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-                >
-                    <LogOut className="h-5 w-5" />
-                    <span>Log Out</span>
-                </button>
+                <LogoutConfirmButton
+                    onConfirm={onLogout}
+                    trigger={({ onClick }) => (
+                        <button
+                            type="button"
+                            onClick={onClick}
+                            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+                        >
+                            <LogOut className="h-5 w-5" />
+                            <span>Log Out</span>
+                        </button>
+                    )}
+                />
             </div>
         </aside>
     )

@@ -1,9 +1,26 @@
 'use client'
 
-import { useEffect, useMemo, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, BadgeAlert, Building2, Clock3, MapPin, Phone, RefreshCcw, Route, GripVertical, Check, Calendar } from 'lucide-react'
+import {
+    DndContext,
+    MouseSensor,
+    PointerSensor,
+    TouchSensor,
+    closestCenter,
+    useSensor,
+    useSensors,
+    type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+    SortableContext,
+    arrayMove,
+    useSortable,
+    verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,7 +47,21 @@ export default function SupplierHousesPage() {
     const [eveningPlan, setEveningPlan] = useState<HouseConfig[]>([])
     const [savingMorning, setSavingMorning] = useState(false)
     const [savingEvening, setSavingEvening] = useState(false)
-    const [draggedConfigId, setDraggedConfigId] = useState<number | null>(null)
+
+    const sensors = useSensors(
+        useSensor(MouseSensor, {
+            activationConstraint: { distance: 4 },
+        }),
+        useSensor(TouchSensor, {
+            activationConstraint: {
+                delay: 120,
+                tolerance: 8,
+            },
+        }),
+        useSensor(PointerSensor, {
+            activationConstraint: { distance: 4 },
+        })
+    )
 
     useEffect(() => {
         const session = getSessionAuth()
@@ -147,33 +178,22 @@ export default function SupplierHousesPage() {
         return { visibleCount, pendingAmount }
     }, [houses])
 
-    function reorderByDrag(list: HouseConfig[], draggedId: number, targetId: number): HouseConfig[] {
-        if (draggedId === targetId) return list
-        const current = [...list]
-        const fromIndex = current.findIndex((item) => item.id === draggedId)
-        const toIndex = current.findIndex((item) => item.id === targetId)
-        if (fromIndex < 0 || toIndex < 0) return list
-        const [moved] = current.splice(fromIndex, 1)
-        current.splice(toIndex, 0, moved)
-        return current
-    }
+    function handleDragEnd(section: 'morning' | 'evening', event: DragEndEvent) {
+        const { active, over } = event
+        if (!over || active.id === over.id) return
 
-    function onDragStart(configId: number) {
-        setDraggedConfigId(configId)
-    }
-
-    function onDragOver(e: DragEvent<HTMLDivElement>) {
-        e.preventDefault()
-    }
-
-    function onDrop(targetId: number, section: 'morning' | 'evening') {
-        if (!draggedConfigId) return
-        if (section === 'morning') {
-            setMorningPlan((prev) => reorderByDrag(prev, draggedConfigId, targetId))
-        } else {
-            setEveningPlan((prev) => reorderByDrag(prev, draggedConfigId, targetId))
+        const reorder = (prev: HouseConfig[]) => {
+            const oldIndex = prev.findIndex((item) => item.id === Number(active.id))
+            const newIndex = prev.findIndex((item) => item.id === Number(over.id))
+            if (oldIndex < 0 || newIndex < 0) return prev
+            return arrayMove(prev, oldIndex, newIndex)
         }
-        setDraggedConfigId(null)
+
+        if (section === 'morning') {
+            setMorningPlan(reorder)
+            return
+        }
+        setEveningPlan(reorder)
     }
 
     function movePlanItem(section: 'morning' | 'evening', index: number, direction: 'up' | 'down') {
@@ -338,50 +358,32 @@ export default function SupplierHousesPage() {
                                         <Check className="mr-1 h-4 w-4" /> {savingMorning ? 'Saving...' : 'Save Morning'}
                                     </Button>
                                 </div>
-                                <div className="space-y-2">
-                                    {morningPlan.length === 0 ? (
-                                        <p className="text-sm text-muted-foreground">No morning routes assigned.</p>
-                                    ) : morningPlan.map((config, idx) => {
-                                        const house = allHouses.find((h) => h.id === config.houseId)
-                                        return (
-                                            <div
-                                                key={config.id}
-                                                draggable
-                                                onDragStart={() => onDragStart(config.id)}
-                                                onDragOver={onDragOver}
-                                                onDrop={() => onDrop(config.id, 'morning')}
-                                                className="flex cursor-grab items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 active:cursor-grabbing"
-                                            >
-                                                <GripVertical className="h-4 w-4 text-muted-foreground" />
-                                                <span className="min-w-8 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
-                                                <span className="flex-1 font-medium">House {house?.houseNo ?? config.houseId}</span>
-                                                {house?.area && <span className="text-xs text-muted-foreground">{house.area}</span>}
-                                                <div className="ml-auto flex items-center gap-1">
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        className="h-7 px-2 text-xs"
-                                                        onClick={() => movePlanItem('morning', idx, 'up')}
-                                                        disabled={idx === 0}
-                                                    >
-                                                        Up
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        className="h-7 px-2 text-xs"
-                                                        onClick={() => movePlanItem('morning', idx, 'down')}
-                                                        disabled={idx === morningPlan.length - 1}
-                                                    >
-                                                        Down
-                                                    </Button>
-                                                </div>
+                                {morningPlan.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No morning routes assigned.</p>
+                                ) : (
+                                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('morning', event)}>
+                                        <SortableContext items={morningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                                            <div className="space-y-2">
+                                                {morningPlan.map((config, idx) => {
+                                                    const house = allHouses.find((h) => h.id === config.houseId)
+                                                    return (
+                                                        <PlannerSortableItem
+                                                            key={config.id}
+                                                            id={config.id}
+                                                            idx={idx}
+                                                            title={`House ${house?.houseNo ?? config.houseId}`}
+                                                            area={house?.area}
+                                                            onMoveUp={() => movePlanItem('morning', idx, 'up')}
+                                                            onMoveDown={() => movePlanItem('morning', idx, 'down')}
+                                                            canMoveUp={idx > 0}
+                                                            canMoveDown={idx < morningPlan.length - 1}
+                                                        />
+                                                    )
+                                                })}
                                             </div>
-                                        )
-                                    })}
-                                </div>
+                                        </SortableContext>
+                                    </DndContext>
+                                )}
                             </div>
 
                             <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
@@ -391,50 +393,32 @@ export default function SupplierHousesPage() {
                                         <Check className="mr-1 h-4 w-4" /> {savingEvening ? 'Saving...' : 'Save Evening'}
                                     </Button>
                                 </div>
-                                <div className="space-y-2">
-                                    {eveningPlan.length === 0 ? (
-                                        <p className="text-sm text-muted-foreground">No evening routes available.</p>
-                                    ) : eveningPlan.map((config, idx) => {
-                                        const house = allHouses.find((h) => h.id === config.houseId)
-                                        return (
-                                            <div
-                                                key={config.id}
-                                                draggable
-                                                onDragStart={() => onDragStart(config.id)}
-                                                onDragOver={onDragOver}
-                                                onDrop={() => onDrop(config.id, 'evening')}
-                                                className="flex cursor-grab items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 active:cursor-grabbing"
-                                            >
-                                                <GripVertical className="h-4 w-4 text-muted-foreground" />
-                                                <span className="min-w-8 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
-                                                <span className="flex-1 font-medium">House {house?.houseNo ?? config.houseId}</span>
-                                                {house?.area && <span className="text-xs text-muted-foreground">{house.area}</span>}
-                                                <div className="ml-auto flex items-center gap-1">
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        className="h-7 px-2 text-xs"
-                                                        onClick={() => movePlanItem('evening', idx, 'up')}
-                                                        disabled={idx === 0}
-                                                    >
-                                                        Up
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        className="h-7 px-2 text-xs"
-                                                        onClick={() => movePlanItem('evening', idx, 'down')}
-                                                        disabled={idx === eveningPlan.length - 1}
-                                                    >
-                                                        Down
-                                                    </Button>
-                                                </div>
+                                {eveningPlan.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No evening routes available.</p>
+                                ) : (
+                                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('evening', event)}>
+                                        <SortableContext items={eveningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                                            <div className="space-y-2">
+                                                {eveningPlan.map((config, idx) => {
+                                                    const house = allHouses.find((h) => h.id === config.houseId)
+                                                    return (
+                                                        <PlannerSortableItem
+                                                            key={config.id}
+                                                            id={config.id}
+                                                            idx={idx}
+                                                            title={`House ${house?.houseNo ?? config.houseId}`}
+                                                            area={house?.area}
+                                                            onMoveUp={() => movePlanItem('evening', idx, 'up')}
+                                                            onMoveDown={() => movePlanItem('evening', idx, 'down')}
+                                                            canMoveUp={idx > 0}
+                                                            canMoveDown={idx < eveningPlan.length - 1}
+                                                        />
+                                                    )
+                                                })}
                                             </div>
-                                        )
-                                    })}
-                                </div>
+                                        </SortableContext>
+                                    </DndContext>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -555,6 +539,83 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint: 
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
             <p className="mt-2 text-2xl font-bold">{value}</p>
             <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        </div>
+    )
+}
+
+function PlannerSortableItem({
+    id,
+    idx,
+    title,
+    area,
+    onMoveUp,
+    onMoveDown,
+    canMoveUp,
+    canMoveDown,
+}: {
+    id: number
+    idx: number
+    title: string
+    area?: string
+    onMoveUp: () => void
+    onMoveDown: () => void
+    canMoveUp: boolean
+    canMoveDown: boolean
+}) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging,
+    } = useSortable({ id })
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+    }
+
+    return (
+        <div
+            ref={setNodeRef}
+            style={style}
+            className={`touch-none select-none flex cursor-grab items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 transition-shadow active:cursor-grabbing ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''}`}
+            {...attributes}
+            {...listeners}
+        >
+            <span className="text-muted-foreground" aria-hidden="true">
+                <GripVertical className="h-4 w-4" />
+            </span>
+            <span className="min-w-8 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
+            <span className="flex-1 font-medium">{title}</span>
+            {area && <span className="text-xs text-muted-foreground">{area}</span>}
+            <div className="ml-auto flex items-center gap-1">
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    onClick={onMoveUp}
+                    disabled={!canMoveUp}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onTouchStart={(event) => event.stopPropagation()}
+                >
+                    Up
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    onClick={onMoveDown}
+                    disabled={!canMoveDown}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onTouchStart={(event) => event.stopPropagation()}
+                >
+                    Down
+                </Button>
+            </div>
         </div>
     )
 }
