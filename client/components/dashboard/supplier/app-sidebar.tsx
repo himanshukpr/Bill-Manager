@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Home, List, BadgeDollarSign } from "lucide-react"
+import { Home, List, Bell } from "lucide-react"
 import { NavMain } from "@/components/dashboard/shared/nav-main"
 import { NavUser } from "@/components/dashboard/shared/nav-user"
 import {
@@ -18,11 +18,12 @@ interface SupplierSidebarProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
-  // { title: "Rate List", url: "/dashboard/supplier/rates", icon: BadgeDollarSign },
+  { title: "Daily Alerts", url: "/dashboard/supplier/daily-alerts", icon: Bell },
 ]
 
 export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLogout }: SupplierSidebarProps) {
   return (
+  283 |         )}
     <Sidebar variant={variant}>
       <SidebarHeader>
         <SidebarMenu>

@@ -78,7 +78,7 @@ export class DeliveryLogsService {
         if (filters?.houseId) where.houseId = filters.houseId;
         if (filters?.shift) where.shift = filters.shift;
 
-        if (user?.role === 'supplier') {
+        if (user?.role === 'supplier' && filters?.shift !== Shift.evening) {
             where.supplierId = user.uuid;
         }
 

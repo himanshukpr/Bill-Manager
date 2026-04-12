@@ -1,17 +1,13 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import {
     ChevronLeft,
     ChevronRight,
     MapPin,
     Phone,
-    CheckCircle,
-    AlertCircle,
-    Home,
-    X,
+    Rows3,
     Plus,
     Trash2,
 } from 'lucide-react'
@@ -44,6 +40,14 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table'
 import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
@@ -127,6 +131,9 @@ export default function DeliveryPage() {
         cow: 0,
     })
     const [loading, setLoading] = useState(true)
+    const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
+    const [houseSearch, setHouseSearch] = useState('')
+    const [allocatedHouseProducts, setAllocatedHouseProducts] = useState<Record<number, string>>({})
 
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
@@ -181,7 +188,11 @@ export default function DeliveryPage() {
                 .map((house) => ({
                     ...house,
                     configs: (configsMap.get(house.id) || [])
-                        .filter((c) => c.shift === selectedShift)
+                        .filter((c) => {
+                            if (c.shift !== selectedShift) return false
+                            if (selectedShift === 'morning') return c.supplierId === auth.uuid
+                            return true
+                        })
                         .sort((a, b) => a.position - b.position),
                 }))
                 .filter((h) => h.configs.length > 0)
@@ -200,6 +211,73 @@ export default function DeliveryPage() {
     }, [loadHouses])
 
     const currentHouse = houses[currentIndex]
+
+    const searchedAllocatedHouses = useMemo(() => {
+        const query = houseSearch.trim().toLowerCase()
+        if (!query) return houses
+
+        return houses.filter((house) => {
+            const searchable = [
+                house.houseNo,
+                house.area ?? '',
+                house.phoneNo,
+                allocatedHouseProducts[house.id] ?? '',
+            ]
+
+            return searchable.some((value) => value.toLowerCase().includes(query))
+        })
+    }, [houses, houseSearch, allocatedHouseProducts])
+
+    useEffect(() => {
+        if (!auth || !selectedShift || panelView !== 'allocated-houses') return
+
+        let active = true
+
+        const loadDeliveredProducts = async () => {
+            try {
+                const logs = await deliveryLogsApi.list({ shift: selectedShift })
+                const today = new Date()
+                const deliveredToday = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+
+                const nextProducts: Record<number, Map<string, number>> = {}
+
+                for (const log of deliveredToday) {
+                    if (!nextProducts[log.houseId]) {
+                        nextProducts[log.houseId] = new Map<string, number>()
+                    }
+
+                    for (const item of log.items) {
+                        const productName = item.milkType.trim()
+                        if (!productName) continue
+
+                        const currentQty = nextProducts[log.houseId].get(productName) ?? 0
+                        nextProducts[log.houseId].set(productName, currentQty + Number(item.qty || 0))
+                    }
+                }
+
+                if (!active) return
+
+                const resolvedProducts: Record<number, string> = {}
+                for (const [houseId, products] of Object.entries(nextProducts)) {
+                    const formattedProducts = Array.from(products.entries())
+                        .filter(([, qty]) => qty > 0)
+                        .map(([productName, qty]) => `${productName} ${qty}L`)
+
+                    resolvedProducts[Number(houseId)] = formattedProducts.join(', ')
+                }
+
+                setAllocatedHouseProducts(resolvedProducts)
+            } catch (error: any) {
+                if (active) toast.error(error.message)
+            }
+        }
+
+        loadDeliveredProducts()
+
+        return () => {
+            active = false
+        }
+    }, [auth, selectedShift, panelView])
 
     useEffect(() => {
         if (!currentHouse || !selectedShift) {
@@ -510,12 +588,85 @@ export default function DeliveryPage() {
     }
 
     if (loading) return <Skeleton className="h-40 w-full" />
+
+    if (panelView === 'allocated-houses') {
+        return (
+            <div className="max-w-4xl mx-auto p-4 space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Supplier Panel</p>
+                        <h1 className="text-2xl font-bold">Allocated Houses</h1>
+                        <p className="text-sm text-muted-foreground">
+                            {selectedShift === 'morning'
+                                ? 'Houses allotted to you for morning delivery.'
+                                : 'Evening houses available in your delivery queue.'}
+                        </p>
+                    </div>
+
+                    <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => setPanelView('delivery')}
+                    >
+                        <Rows3 className="h-4 w-4" /> Switch to Delivery View
+                    </Button>
+                </div>
+
+                <Input
+                    placeholder="Search by house number, area, phone, or product"
+                    value={houseSearch}
+                    onChange={(event) => setHouseSearch(event.target.value)}
+                />
+
+                <div className="rounded-2xl border border-border bg-card p-2">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>House Number</TableHead>
+                                <TableHead>Products</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {searchedAllocatedHouses.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={2} className="text-center text-muted-foreground">
+                                        No houses match your search.
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                searchedAllocatedHouses.map((house) => (
+                                    <TableRow key={house.id}>
+                                        <TableCell className="font-semibold">{house.houseNo}</TableCell>
+                                        <TableCell>{allocatedHouseProducts[house.id] ?? '_'}</TableCell>
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
+            </div>
+        )
+    }
+
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
 
     return (
         <div className="max-w-md mx-auto p-4 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+                <Badge variant="outline" className="capitalize">
+                    {selectedShift} Shift
+                </Badge>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => setPanelView('allocated-houses')}
+                >
+                    <Rows3 className="h-4 w-4" /> Switch View
+                </Button>
+            </div>
 
             {/* HEADER NAV */}
             <div className="flex items-center justify-between">
