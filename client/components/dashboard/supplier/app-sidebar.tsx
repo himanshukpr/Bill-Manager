@@ -23,7 +23,6 @@ const navItems = [
 
 export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLogout }: SupplierSidebarProps) {
   return (
-  283 |         )}
     <Sidebar variant={variant}>
       <SidebarHeader>
         <SidebarMenu>

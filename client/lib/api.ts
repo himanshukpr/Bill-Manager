@@ -1,4 +1,6 @@
 import { getAuthHeader } from './auth';
+import { db } from './db';
+import { syncEngine } from './sync-engine';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -170,25 +172,86 @@ export type DeliveryLog = {
 // ─── Houses ───────────────────────────────────────────────────────────────────
 
 export const housesApi = {
-  list: () => apiGet<House[]>('/houses'),
-  get: (id: number) => apiGet<House>(`/houses/${id}`),
+  list: async () => {
+    const data = await apiGet<House[]>('/houses');
+    if (typeof window !== 'undefined') await db.houses.bulkPut(data);
+    return data;
+  },
+  get: async (id: number) => {
+    const data = await apiGet<House>(`/houses/${id}`);
+    if (typeof window !== 'undefined') await db.houses.put(data);
+    return data;
+  },
   stats: () => apiGet<HouseStats>('/houses/stats'),
-  create: (data: Partial<House>) => apiPost<House>('/houses', data),
-  update: (id: number, data: Partial<House>) => apiPatch<House>(`/houses/${id}`, data),
-  delete: (id: number) => apiDelete<House>(`/houses/${id}`),
+  create: async (data: Partial<House>) => {
+    const res = await apiPost<House>('/houses', data);
+    if (typeof window !== 'undefined') await db.houses.put(res);
+    return res;
+  },
+  update: async (id: number, data: Partial<House>) => {
+    if (typeof window !== 'undefined') {
+       await db.houses.update(id, data);
+       await syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
+    }
+    return apiPatch<House>(`/houses/${id}`, data).catch(console.error);
+  },
+  delete: async (id: number) => {
+    if (typeof window !== 'undefined') {
+       await db.houses.delete(id);
+       await syncEngine.enqueue(`/houses/${id}`, 'DELETE');
+    }
+    return apiDelete<House>(`/houses/${id}`).catch(console.error);
+  },
 };
 
 // ─── House Config ─────────────────────────────────────────────────────────────
 
 export const houseConfigApi = {
-  list: (supplierId?: string) =>
-    apiGet<HouseConfig[]>(`/house-config${supplierId ? `?supplierId=${supplierId}` : ''}`),
-  byHouse: (houseId: number) => apiGet<HouseConfig[]>(`/house-config/house/${houseId}`),
-  create: (data: Partial<HouseConfig>) => apiPost<HouseConfig>('/house-config', data),
-  update: (id: number, data: Partial<HouseConfig>) =>
-    apiPatch<HouseConfig>(`/house-config/${id}`, data),
+  list: async (supplierId?: string) => {
+    const data = await apiGet<HouseConfig[]>(`/house-config${supplierId ? `?supplierId=${supplierId}` : ''}`);
+    if (typeof window !== 'undefined') await db.houseConfigs.bulkPut(data);
+    return data;
+  },
+  byHouse: async (houseId: number) => {
+    const data = await apiGet<HouseConfig[]>(`/house-config/house/${houseId}`);
+    if (typeof window !== 'undefined') await db.houseConfigs.bulkPut(data);
+    return data;
+  },
+  create: async (data: Partial<HouseConfig>) => {
+    // Attempt rapid optimistic update if possible, otherwise rely on backend first
+    if (navigator.onLine) {
+        const res = await apiPost<HouseConfig>('/house-config', data);
+        if (typeof window !== 'undefined') await db.houseConfigs.put(res);
+        return res;
+    } else {
+        // purely offline creation stub
+        const tempId = -Math.floor(Math.random() * 100000);
+        const stub = { id: tempId, ...data } as HouseConfig;
+        if (typeof window !== 'undefined') {
+            await db.houseConfigs.put(stub);
+            await syncEngine.enqueue('/house-config', 'POST', data);
+        }
+        return stub;
+    }
+  },
+  update: async (id: number, data: Partial<HouseConfig>) => {
+    if (typeof window !== 'undefined') {
+        const existing = await db.houseConfigs.get(id);
+        if (existing) await db.houseConfigs.put({ ...existing, ...data });
+        await syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
+    }
+    if (navigator.onLine) return apiPatch<HouseConfig>(`/house-config/${id}`, data).catch(console.error);
+    return data;
+  },
   reorder: (orderedIds: number[]) => apiPatch('/house-config/reorder', { orderedIds }),
-  delete: (id: number) => apiDelete(`/house-config/${id}`),
+  delete: async (id: number) => {
+    if (typeof window !== 'undefined') {
+        await db.houseConfigs.delete(id);
+        await syncEngine.enqueue(`/house-config/${id}`, 'DELETE');
+    }
+    if (navigator.onLine) return apiDelete(`/house-config/${id}`).catch(console.error);
+    return null;
+  },
 };
 
 // ─── House Balance ────────────────────────────────────────────────────────────
@@ -228,7 +291,11 @@ export const billsApi = {
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 export const usersApi = {
-  list: (role?: string) => apiGet<User[]>(`/users${role ? `?role=${role}` : ''}`),
+  list: async (role?: string) => {
+    const data = await apiGet<User[]>(`/users${role ? `?role=${role}` : ''}`);
+    if (typeof window !== 'undefined') await db.users.bulkPut(data);
+    return data;
+  },
   verify: (uuid: string, isVerified: boolean) =>
     apiPatch(`/users/${uuid}/verify`, { isVerified }),
   delete: (uuid: string) => apiDelete(`/users/${uuid}`),
