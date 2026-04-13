@@ -1,10 +1,11 @@
-﻿"use client"
+"use client"
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import { AppSidebar } from "@/components/dashboard/admin/app-sidebar"
 import { SiteHeader } from "@/components/dashboard/admin/site-header"
+import { AdminAlertsPanel } from "@/components/dashboard/admin/admin-alerts-panel"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { clearSessionAuth, getSessionAuth, type SessionAuth } from "@/lib/auth"
 
@@ -78,6 +79,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
           todayText={todayText}
           todayShortText={todayShortText}
           onLogout={logout}
+          actions={<AdminAlertsPanel />}
         />
         <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
           {children}

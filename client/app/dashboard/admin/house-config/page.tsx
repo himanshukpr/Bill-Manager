@@ -258,11 +258,11 @@ export default function AdminHouseConfigPage() {
 
     incrementPending()
     try {
-      const newSupplierId = shift === 'evening' ? '' : current.supplierId
+      const newSupplierId = shift === 'evening' ? null : (current.supplierId || null)
       if (current.configId) {
-        await houseConfigApi.update(current.configId, { shift, supplierId: newSupplierId })
+        await houseConfigApi.update(current.configId, { shift, supplierId: newSupplierId as any })
       } else {
-        await houseConfigApi.create({ houseId, shift, supplierId: newSupplierId, position: 0 })
+        await houseConfigApi.create({ houseId, shift, supplierId: newSupplierId as any, position: 0 })
       }
       decrementPending(false)
     } catch {
@@ -277,10 +277,11 @@ export default function AdminHouseConfigPage() {
 
     incrementPending()
     try {
+      const finalSupplierId = supplierId || null
       if (current.configId) {
-        await houseConfigApi.update(current.configId, { supplierId })
+        await houseConfigApi.update(current.configId, { supplierId: finalSupplierId as any })
       } else {
-        await houseConfigApi.create({ houseId, shift: current.shift, supplierId, position: 0 })
+        await houseConfigApi.create({ houseId, shift: current.shift, supplierId: finalSupplierId as any, position: 0 })
       }
       decrementPending(false)
     } catch {

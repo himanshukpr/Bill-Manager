@@ -18,7 +18,6 @@ interface SupplierSidebarProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
-  { title: "Daily Alerts", url: "/dashboard/supplier/daily-alerts", icon: Bell },
 ]
 
 export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLogout }: SupplierSidebarProps) {
