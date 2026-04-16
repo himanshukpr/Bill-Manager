@@ -150,6 +150,7 @@ export default function DeliveryPage() {
     const [editingItems, setEditingItems] = useState<DeliveryItemForm[]>([])
     const [editingNotes, setEditingNotes] = useState('')
     const [editingSaving, setEditingSaving] = useState(false)
+    const [isMapExpanded, setIsMapExpanded] = useState(false)
 
     // AUTH
     useEffect(() => {
@@ -651,6 +652,13 @@ export default function DeliveryPage() {
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
+    const locationSeed = `${currentHouse.houseNo}|${currentHouse.area ?? ''}`
+    const mapHash = Array.from(locationSeed).reduce(
+        (acc, char) => ((acc << 5) - acc + char.charCodeAt(0)) | 0,
+        0,
+    )
+    const mapX = 20 + (Math.abs(mapHash) % 60)
+    const mapY = 18 + (Math.abs(mapHash >> 3) % 60)
 
     return (
         <div className="max-w-md mx-auto p-4 space-y-4">
@@ -691,58 +699,74 @@ export default function DeliveryPage() {
                 </Button>
             </div> */}
 
-            {/* PROGRESS BAR */}
-            <div className="w-full bg-gray-200 h-2 rounded-full">
-                <div
-                    className="bg-green-500 h-2 rounded-full"
-                    style={{ width: `${((currentIndex + 1) / houses.length) * 100}%` }}
-                />
-            </div>
-
+            <div className="space-y-0">
             {/* HOUSE CARD */}
-            <div className="bg-card p-5 rounded-2xl">
-                <h1 className="text-3xl font-bold">{currentHouse.houseNo}</h1>
+            <div className="bg-card p-5 rounded-t-2xl rounded-b-none">
+                <div className="grid grid-cols-[minmax(0,1fr)_120px] items-stretch gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
+                    <div className="grid grid-cols-2 gap-3 rounded-xl border border-border/70 bg-muted/20 p-3">
+                            <div>
+                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                <h1 className="mt-1 text-2xl font-bold leading-none">{currentHouse.houseNo}</h1>
+                            </div>
+                            <div>
+                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
+                                {isCompleted ? (
+                                    <p className="mt-1 font-semibold text-green-600">Delivered</p>
+                                ) : (
+                                    <p className="mt-1 font-semibold text-yellow-600">Pending</p>
+                                )}
+                            </div>
+                            <div className="col-span-2 flex items-center gap-2 text-sm">
+                                <MapPin className="h-4 w-4" />
+                                <span>{currentHouse.area || 'Area not set'}</span>
+                            </div>
+                            <div className="col-span-2 flex items-center gap-2 text-sm">
+                                <Phone className="h-4 w-4" />
+                                <span>{currentHouse.phoneNo || 'Phone not set'}</span>
+                            </div>
+                    </div>
 
-                <div className="flex gap-2 mt-2">
-                    <MapPin className="h-4 w-4" />
-                    {currentHouse.area}
-                </div>
+                    <button
+                        type="button"
+                        onClick={() => setIsMapExpanded(true)}
+                        className="relative h-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-2 text-left"
+                    >
+                        <div className="absolute left-[10%] top-[28%] h-px w-[78%] bg-foreground/15" />
+                        <div className="absolute left-[20%] top-[12%] h-[76%] w-px bg-foreground/15" />
+                        <div
+                            className="absolute -translate-x-1/2 -translate-y-1/2"
+                            style={{ left: `${mapX}%`, top: `${mapY}%` }}
+                        >
+                            <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_6px_rgba(16,185,129,0.2)]" />
+                        </div>
+                        <div className="absolute bottom-2 left-2 right-2 rounded-md bg-background/85 px-2 py-1 text-[11px] font-medium">
+                            Tap to expand map
+                        </div>
+                    </button>
 
-                <div className="mt-2">
-                    <Phone className="inline mr-2" />
-                    {currentHouse.phoneNo}
-                </div>
+                    <div className="col-span-2 flex flex-wrap gap-2">
+                        {(() => {
+                            const buffalo = getEffectiveRate(currentHouse, 'buffalo')
+                            const cow = getEffectiveRate(currentHouse, 'cow')
 
-                <div className="mt-3 flex gap-2">
-                    {(() => {
-                        const buffalo = getEffectiveRate(currentHouse, 'buffalo')
-                        const cow = getEffectiveRate(currentHouse, 'cow')
-
-                        return (
-                            <>
-                                <Badge>
-                                    Buffalo ₹{buffalo.rate}/L
-                                    {buffalo.source === 'global' ? ' (Rate List)' : ''}
-                                </Badge>
-                                <Badge>
-                                    Cow ₹{cow.rate}/L
-                                    {cow.source === 'global' ? ' (Rate List)' : ''}
-                                </Badge>
-                            </>
-                        )
-                    })()}
-                </div>
-
-                <div className="mt-3">
-                    {isCompleted ? (
-                        <span className="text-green-600 font-semibold">Delivered</span>
-                    ) : (
-                        <span className="text-yellow-600 font-semibold">Pending</span>
-                    )}
+                            return (
+                                <>
+                                    <Badge>
+                                        Buffalo ₹{buffalo.rate}/L
+                                        {buffalo.source === 'global' ? ' (Rate List)' : ''}
+                                    </Badge>
+                                    <Badge>
+                                        Cow ₹{cow.rate}/L
+                                        {cow.source === 'global' ? ' (Rate List)' : ''}
+                                    </Badge>
+                                </>
+                            )
+                        })()}
+                    </div>
                 </div>
             </div>
 
-            <div className="bg-card p-5 rounded-2xl space-y-3">
+            <div className="hidden bg-card p-5 rounded-2xl space-y-3">
                 <p className="text-sm font-semibold">Today&apos;s Delivery Records</p>
                 {logsLoading ? (
                     <Skeleton className="h-20 w-full" />
@@ -934,8 +958,9 @@ export default function DeliveryPage() {
             </div>
 
             {/* FORM */}
+            <div className="bg-card rounded-b-2xl rounded-t-none overflow-hidden">
             {!isCompleted && (
-                <div className="bg-card p-5 rounded-2xl space-y-4">
+                <div className="p-5 space-y-4 border-t border-border/40">
 
                     {deliveryItems.map((item, idx) => {
                         const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
@@ -1015,10 +1040,39 @@ export default function DeliveryPage() {
             )}
 
             {/* ACTION */}
-            {/* ACTION */}
-            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full">
+            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full rounded-none rounded-b-2xl">
                 {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
             </Button>
+            </div>
+            </div>
+
+            <Dialog open={isMapExpanded} onOpenChange={setIsMapExpanded}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>House Location Preview</DialogTitle>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                        <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-sm">
+                            <p className="font-semibold">{currentHouse.houseNo}</p>
+                            <p className="text-muted-foreground">{currentHouse.area || 'Area not set'}</p>
+                        </div>
+
+                        <div className="relative min-h-[280px] overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.15),rgba(15,23,42,0.02))]">
+                            <div className="absolute left-[8%] top-[20%] h-px w-[84%] bg-foreground/20" />
+                            <div className="absolute left-[14%] top-[56%] h-px w-[70%] bg-foreground/20" />
+                            <div className="absolute left-[24%] top-[8%] h-[82%] w-px bg-foreground/20" />
+                            <div className="absolute left-[72%] top-[12%] h-[72%] w-px bg-foreground/20" />
+                            <div
+                                className="absolute -translate-x-1/2 -translate-y-1/2"
+                                style={{ left: `${mapX}%`, top: `${mapY}%` }}
+                            >
+                                <div className="h-3 w-3 rounded-full bg-emerald-500 shadow-[0_0_0_10px_rgba(16,185,129,0.2)]" />
+                            </div>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
