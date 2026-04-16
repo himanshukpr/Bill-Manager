@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
     ChevronLeft,
     ChevronRight,
+    Maximize2,
     MapPin,
     Phone,
     Rows3,
@@ -48,6 +49,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table'
+import { LocationRouteMap } from '@/components/dashboard/supplier/location-route-map'
 import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
@@ -60,6 +62,8 @@ const emptyDeliveryItem: DeliveryItemForm = {
     milkType: 'buffalo',
     qty: '',
 }
+
+const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
 
 type MilkType = DeliveryItemForm['milkType']
 
@@ -151,6 +155,8 @@ export default function DeliveryPage() {
     const [editingNotes, setEditingNotes] = useState('')
     const [editingSaving, setEditingSaving] = useState(false)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
+    const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
+    const [miniMapLoading, setMiniMapLoading] = useState(false)
 
     // AUTH
     useEffect(() => {
@@ -212,6 +218,64 @@ export default function DeliveryPage() {
     }, [loadHouses])
 
     const currentHouse = houses[currentIndex]
+
+    useEffect(() => {
+        if (!currentHouse) return
+
+        let active = true
+        const query = `${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`.trim()
+
+        const loadMiniMap = async () => {
+            setMiniMapLoading(true)
+            try {
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`,
+                    {
+                        headers: {
+                            Accept: 'application/json',
+                        },
+                    },
+                )
+
+                if (!response.ok) throw new Error('Geocoding failed')
+
+                const result = (await response.json()) as Array<{ lat: string; lon: string }>
+                if (!active || result.length === 0) {
+                    setMiniMapCenter(DEFAULT_MAP_CENTER)
+                    return
+                }
+
+                const lat = Number(result[0].lat)
+                const lon = Number(result[0].lon)
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                    setMiniMapCenter(DEFAULT_MAP_CENTER)
+                    return
+                }
+
+                setMiniMapCenter({ lat, lon })
+            } catch {
+                if (active) setMiniMapCenter(DEFAULT_MAP_CENTER)
+            } finally {
+                if (active) setMiniMapLoading(false)
+            }
+        }
+
+        void loadMiniMap()
+
+        return () => {
+            active = false
+        }
+    }, [currentHouse?.id])
+
+    const miniMapEmbedUrl = useMemo(() => {
+        const delta = 0.0075
+        const left = miniMapCenter.lon - delta
+        const right = miniMapCenter.lon + delta
+        const top = miniMapCenter.lat + delta
+        const bottom = miniMapCenter.lat - delta
+
+        return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${miniMapCenter.lat}%2C${miniMapCenter.lon}`
+    }, [miniMapCenter])
 
     const searchedAllocatedHouses = useMemo(() => {
         const query = houseSearch.trim().toLowerCase()
@@ -652,13 +716,6 @@ export default function DeliveryPage() {
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
-    const locationSeed = `${currentHouse.houseNo}|${currentHouse.area ?? ''}`
-    const mapHash = Array.from(locationSeed).reduce(
-        (acc, char) => ((acc << 5) - acc + char.charCodeAt(0)) | 0,
-        0,
-    )
-    const mapX = 20 + (Math.abs(mapHash) % 60)
-    const mapY = 18 + (Math.abs(mapHash >> 3) % 60)
 
     return (
         <div className="max-w-md mx-auto p-4 space-y-4">
@@ -731,16 +788,23 @@ export default function DeliveryPage() {
                         onClick={() => setIsMapExpanded(true)}
                         className="relative h-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-2 text-left"
                     >
-                        <div className="absolute left-[10%] top-[28%] h-px w-[78%] bg-foreground/15" />
-                        <div className="absolute left-[20%] top-[12%] h-[76%] w-px bg-foreground/15" />
-                        <div
-                            className="absolute -translate-x-1/2 -translate-y-1/2"
-                            style={{ left: `${mapX}%`, top: `${mapY}%` }}
-                        >
-                            <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_6px_rgba(16,185,129,0.2)]" />
+                        <div className="absolute inset-0 pointer-events-none">
+                            <iframe
+                                title="Mini map preview"
+                                src={miniMapEmbedUrl}
+                                className="h-full w-full border-0"
+                                loading="lazy"
+                                referrerPolicy="no-referrer-when-downgrade"
+                            />
                         </div>
-                        <div className="absolute bottom-2 left-2 right-2 rounded-md bg-background/85 px-2 py-1 text-[11px] font-medium">
-                            Tap to expand map
+                        <div className="absolute inset-0 bg-emerald-900/10" />
+                        {miniMapLoading ? (
+                            <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
+                                Loading map...
+                            </div>
+                        ) : null}
+                        <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
+                            <Maximize2 className="h-3.5 w-3.5 text-foreground" />
                         </div>
                     </button>
 
@@ -1047,9 +1111,9 @@ export default function DeliveryPage() {
             </div>
 
             <Dialog open={isMapExpanded} onOpenChange={setIsMapExpanded}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-3xl">
                     <DialogHeader>
-                        <DialogTitle>House Location Preview</DialogTitle>
+                        <DialogTitle>House Location & Route</DialogTitle>
                     </DialogHeader>
 
                     <div className="space-y-3">
@@ -1058,18 +1122,11 @@ export default function DeliveryPage() {
                             <p className="text-muted-foreground">{currentHouse.area || 'Area not set'}</p>
                         </div>
 
-                        <div className="relative min-h-[280px] overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.15),rgba(15,23,42,0.02))]">
-                            <div className="absolute left-[8%] top-[20%] h-px w-[84%] bg-foreground/20" />
-                            <div className="absolute left-[14%] top-[56%] h-px w-[70%] bg-foreground/20" />
-                            <div className="absolute left-[24%] top-[8%] h-[82%] w-px bg-foreground/20" />
-                            <div className="absolute left-[72%] top-[12%] h-[72%] w-px bg-foreground/20" />
-                            <div
-                                className="absolute -translate-x-1/2 -translate-y-1/2"
-                                style={{ left: `${mapX}%`, top: `${mapY}%` }}
-                            >
-                                <div className="h-3 w-3 rounded-full bg-emerald-500 shadow-[0_0_0_10px_rgba(16,185,129,0.2)]" />
-                            </div>
-                        </div>
+                        <LocationRouteMap
+                            searchQuery={`${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`}
+                            houseNo={currentHouse.houseNo}
+                            area={currentHouse.area ?? ''}
+                        />
                     </div>
                 </DialogContent>
             </Dialog>
