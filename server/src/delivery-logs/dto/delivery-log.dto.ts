@@ -53,3 +53,21 @@ export class CreateDeliveryLogDto {
     @IsString()
     note?: string;
 }
+
+export class UpdateDeliveryLogDto {
+    @IsArray()
+    @IsOptional()
+    @ValidateNested({ each: true })
+    @Type(() => DeliveryItemDto)
+    items?: DeliveryItemDto[];
+
+    @Type(() => Number)
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    currentBalance?: number;
+
+    @IsOptional()
+    @IsString()
+    note?: string;
+}

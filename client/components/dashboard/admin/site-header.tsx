@@ -1,5 +1,6 @@
 'use client'
 
+import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useEffect, useState } from "react"
@@ -13,9 +14,10 @@ interface SiteHeaderProps {
     todayText?: string
     todayShortText?: string
     onLogout?: () => void
+    actions?: React.ReactNode
 }
 
-export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onLogout }: SiteHeaderProps) {
+export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onLogout, actions }: SiteHeaderProps) {
     const { theme, resolvedTheme, setTheme } = useTheme()
     const [mounted, setMounted] = useState(false)
 
@@ -52,6 +54,7 @@ export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onL
             </div>
 
             <div className="flex shrink-0 items-center gap-2 px-4 sm:gap-2 sm:px-4 lg:px-6">
+                {actions}
                 {mounted && (
                     <Button
                         variant="ghost"
@@ -67,21 +70,6 @@ export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onL
                             <Moon className="h-4 w-4 text-neutral-700" />
                         )}
                     </Button>
-                )}
-                {onLogout && (
-                    <LogoutConfirmButton
-                        onConfirm={onLogout}
-                        trigger={({ onClick }) => (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={onClick}
-                                className="h-11 px-4 text-base text-red-600 hover:bg-red-50 hover:text-red-700 sm:h-9 sm:px-3 sm:text-sm"
-                            >
-                                Logout
-                            </Button>
-                        )}
-                    />
                 )}
             </div>
         </header>
