@@ -8,7 +8,6 @@ import {
     Settings,
     Home,
     ArrowRight,
-    MapPin,
 } from 'lucide-react'
 
 import { Card } from '@/components/ui/card'
@@ -78,25 +77,6 @@ export default function SupplierPage() {
                     <Button asChild variant="outline" className="mt-5 w-full justify-between">
                         <Link href="/dashboard/supplier/houses">
                             Open Routes
-                            <ArrowRight className="h-4 w-4" />
-                        </Link>
-                    </Button>
-                </Card>
-
-                <Card className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-start justify-between gap-4">
-                        <div>
-                            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Location Preview</p>
-                            <h2 className="mt-2 text-xl font-bold">Open Map Locator</h2>
-                            <p className="mt-1 text-sm text-muted-foreground">Enter house no. and area to preview the location on a responsive map view.</p>
-                        </div>
-                        <div className="rounded-xl bg-amber-500/15 p-3">
-                            <MapPin className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-                        </div>
-                    </div>
-                    <Button asChild variant="outline" className="mt-5 w-full justify-between">
-                        <Link href="/dashboard/supplier/location">
-                            Open Location
                             <ArrowRight className="h-4 w-4" />
                         </Link>
                     </Button>

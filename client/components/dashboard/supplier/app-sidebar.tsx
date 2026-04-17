@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Home, List, MapPin } from "lucide-react"
+import { Home, List } from "lucide-react"
 import { NavMain } from "@/components/dashboard/shared/nav-main"
 import { NavUser } from "@/components/dashboard/shared/nav-user"
 import {
@@ -18,7 +18,6 @@ interface SupplierSidebarProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
-  { title: "Location Map", url: "/dashboard/supplier/location", icon: MapPin },
 ]
 
 export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLogout }: SupplierSidebarProps) {

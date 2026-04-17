@@ -24,6 +24,7 @@ model House {
   id               Int           @id @default(autoincrement())
   houseNo          String        @unique @map("house_no")
   area             String?
+  location         String?
   phoneNo          String        @map("phone_no")
   alternativePhone String?       @map("alternative_phone")
   description      String?

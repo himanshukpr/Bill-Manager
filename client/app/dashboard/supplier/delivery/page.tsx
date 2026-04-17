@@ -49,7 +49,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table'
-import { LocationRouteMap } from '@/components/dashboard/supplier/location-route-map'
+import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
 import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
@@ -121,6 +121,21 @@ function isSameLocalDate(left: Date, right: Date): boolean {
         left.getMonth() === right.getMonth() &&
         left.getDate() === right.getDate()
     )
+}
+
+function parseHouseLocation(location?: string): { lat: number; lon: number } | null {
+    if (!location) return null
+
+    const match = location.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/)
+    if (!match) return null
+
+    const lat = Number(match[1])
+    const lon = Number(match[2])
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null
+
+    return { lat, lon }
 }
 
 export default function DeliveryPage() {
@@ -223,7 +238,14 @@ export default function DeliveryPage() {
         if (!currentHouse) return
 
         let active = true
+        const storedLocation = parseHouseLocation(currentHouse.location)
         const query = `${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`.trim()
+
+        if (storedLocation) {
+            setMiniMapCenter(storedLocation)
+            setMiniMapLoading(false)
+            return
+        }
 
         const loadMiniMap = async () => {
             setMiniMapLoading(true)
@@ -265,7 +287,28 @@ export default function DeliveryPage() {
         return () => {
             active = false
         }
-    }, [currentHouse?.id])
+    }, [currentHouse?.id, currentHouse?.location])
+
+    const handleLocationSaved = useCallback(
+        (coords: { latitude: number; longitude: number }) => {
+            if (!currentHouse) return
+
+            const location = `${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`
+            setMiniMapCenter({ lat: coords.latitude, lon: coords.longitude })
+
+            setHouses((prev) =>
+                prev.map((house) =>
+                    house.id === currentHouse.id
+                        ? {
+                              ...house,
+                              location,
+                          }
+                        : house,
+                ),
+            )
+        },
+        [currentHouse],
+    )
 
     const miniMapEmbedUrl = useMemo(() => {
         const delta = 0.0075
@@ -1126,6 +1169,9 @@ export default function DeliveryPage() {
                             searchQuery={`${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`}
                             houseNo={currentHouse.houseNo}
                             area={currentHouse.area ?? ''}
+                            houseId={currentHouse.id}
+                            storedLocation={currentHouse.location}
+                            onLocationSaved={handleLocationSaved}
                         />
                     </div>
                 </DialogContent>
