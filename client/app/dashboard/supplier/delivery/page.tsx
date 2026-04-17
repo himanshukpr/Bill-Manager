@@ -733,23 +733,6 @@ export default function DeliveryPage() {
                 </Button>
             </div>
 
-            {/* HEADER NAV */}
-            <div className="flex items-center justify-between">
-                <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
-                    <ChevronLeft />
-                </Button>
-
-                <div className="text-center">
-                    <p className="text-sm font-semibold">
-                        {currentIndex + 1} / {houses.length}
-                    </p>
-                </div>
-
-                <Button variant="ghost" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
-                    <ChevronRight />
-                </Button>
-            </div>
-
             {/* <div className="flex justify-end">
                 <Button asChild variant="outline" size="sm">
                     <Link href="/dashboard/supplier/rates">Rate List</Link>
@@ -758,9 +741,35 @@ export default function DeliveryPage() {
 
             <div className="space-y-0">
             {/* HOUSE CARD */}
-            <div className="bg-card p-5 rounded-t-2xl rounded-b-none">
-                <div className="grid grid-cols-[minmax(0,1fr)_120px] items-stretch gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
-                    <div className="grid grid-cols-2 gap-3 rounded-xl border border-border/70 bg-muted/20 p-3">
+            <div className="bg-card p-3 sm:p-4 rounded-t-2xl rounded-b-none space-y-3">
+                <button
+                    type="button"
+                    onClick={() => setIsMapExpanded(true)}
+                    className="relative h-56 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-2 text-left sm:h-60"
+                >
+                    <div className="absolute inset-0 pointer-events-none">
+                        <iframe
+                            title="Mini map preview"
+                            src={miniMapEmbedUrl}
+                            className="h-full w-full border-0"
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                        />
+                    </div>
+                    <div className="absolute inset-0 bg-emerald-900/10" />
+                    {miniMapLoading ? (
+                        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
+                            Loading map...
+                        </div>
+                    ) : null}
+                    <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
+                        <Maximize2 className="h-3.5 w-3.5 text-foreground" />
+                    </div>
+                </button>
+
+                <div className="grid grid-cols-3 gap-3 rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <div className="col-span-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
                                 <h1 className="mt-1 text-2xl font-bold leading-none">{currentHouse.houseNo}</h1>
@@ -773,55 +782,31 @@ export default function DeliveryPage() {
                                     <p className="mt-1 font-semibold text-yellow-600">Pending</p>
                                 )}
                             </div>
-                            <div className="col-span-2 flex items-center gap-2 text-sm">
-                                <MapPin className="h-4 w-4" />
-                                <span>{currentHouse.area || 'Area not set'}</span>
-                            </div>
-                            <div className="col-span-2 flex items-center gap-2 text-sm">
-                                <Phone className="h-4 w-4" />
-                                <span>{currentHouse.phoneNo || 'Phone not set'}</span>
-                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-sm">
+                            <MapPin className="h-4 w-4" />
+                            <span>{currentHouse.area || 'Area not set'}</span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-sm">
+                            <Phone className="h-4 w-4" />
+                            <span>{currentHouse.phoneNo || 'Phone not set'}</span>
+                        </div>
                     </div>
 
-                    <button
-                        type="button"
-                        onClick={() => setIsMapExpanded(true)}
-                        className="relative h-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-2 text-left"
-                    >
-                        <div className="absolute inset-0 pointer-events-none">
-                            <iframe
-                                title="Mini map preview"
-                                src={miniMapEmbedUrl}
-                                className="h-full w-full border-0"
-                                loading="lazy"
-                                referrerPolicy="no-referrer-when-downgrade"
-                            />
-                        </div>
-                        <div className="absolute inset-0 bg-emerald-900/10" />
-                        {miniMapLoading ? (
-                            <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
-                                Loading map...
-                            </div>
-                        ) : null}
-                        <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
-                            <Maximize2 className="h-3.5 w-3.5 text-foreground" />
-                        </div>
-                    </button>
-
-                    <div className="col-span-2 flex flex-wrap gap-2">
+                    <div className="col-span-1 flex flex-col gap-2 justify-center">
                         {(() => {
                             const buffalo = getEffectiveRate(currentHouse, 'buffalo')
                             const cow = getEffectiveRate(currentHouse, 'cow')
 
                             return (
                                 <>
-                                    <Badge>
+                                    <Badge className="w-full justify-center py-1 text-xs">
                                         Buffalo ₹{buffalo.rate}/L
-                                        {buffalo.source === 'global' ? ' (Rate List)' : ''}
                                     </Badge>
-                                    <Badge>
+                                    <Badge className="w-full justify-center py-1 text-xs">
                                         Cow ₹{cow.rate}/L
-                                        {cow.source === 'global' ? ' (Rate List)' : ''}
                                     </Badge>
                                 </>
                             )
@@ -1022,19 +1007,16 @@ export default function DeliveryPage() {
             </div>
 
             {/* FORM */}
-            <div className="bg-card rounded-b-2xl rounded-t-none overflow-hidden">
+            <div className="bg-card rounded-t-none overflow-hidden">
             {!isCompleted && (
-                <div className="p-5 space-y-4 border-t border-border/40">
-
+                <div className="p-3 space-y-2 border-t border-border/40">
                     {deliveryItems.map((item, idx) => {
                         const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
                         const rate = effectiveRate.rate
-
                         const qty = Number(item.qty)
                         const amount = qty > 0 ? qty * rate : 0
-
                         return (
-                            <div key={idx} className="grid grid-cols-12 gap-2">
+                            <div key={idx} className="grid grid-cols-12 gap-1">
 
                                 <div className="col-span-4">
                                     <Select
@@ -1064,10 +1046,9 @@ export default function DeliveryPage() {
                                     />
                                 </div>
 
-                                <div className="col-span-3 text-sm">
-                                    ₹{rate}/L
-                                    {effectiveRate.source === 'global' ? <div className="text-xs text-muted-foreground">Rate List</div> : null}
-                                    {qty > 0 && <div>₹{amount}</div>}
+                                <div className="col-span-3 text-xs">
+                                    <span>₹{rate}/L</span>
+                                    {qty > 0 && <span className="block">₹{amount}</span>}
                                 </div>
 
                                 <div className="col-span-1">
@@ -1081,24 +1062,17 @@ export default function DeliveryPage() {
                         )
                     })}
 
-                    <Button onClick={addItem}>
-                        <Plus className="mr-2" /> Add Item
+                    <Button onClick={addItem} size="sm" className="text-xs">
+                        <Plus className="mr-1 h-3 w-3" /> Add Item
                     </Button>
-
-                    <div className="text-lg font-bold">
+                    <div className="text-sm font-bold">
                         Total: ₹{currentDeliveryTotal}
                     </div>
-
-                    <Input
-                        placeholder="Override balance"
-                        value={currentBalance}
-                        onChange={(e) => setCurrentBalance(e.target.value)}
-                    />
-
                     <Textarea
                         placeholder="Notes"
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
+                        className="min-h-16 text-xs"
                     />
                 </div>
             )}
@@ -1107,6 +1081,22 @@ export default function DeliveryPage() {
             <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full rounded-none rounded-b-2xl">
                 {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
             </Button>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+                <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
+                    <ChevronLeft />
+                </Button>
+
+                <div className="text-center">
+                    <p className="text-sm font-semibold">
+                        {currentIndex + 1} / {houses.length}
+                    </p>
+                </div>
+
+                <Button variant="ghost" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
+                    <ChevronRight />
+                </Button>
             </div>
             </div>
 
