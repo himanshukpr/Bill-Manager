@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { HousesService } from './houses.service';
-import { CreateHouseDto, UpdateHouseDto } from './dto/house.dto';
+import { CreateHouseDto, UpdateHouseDto, UpdateHouseLocationDto } from './dto/house.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -41,6 +41,14 @@ export class HousesController {
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHouseDto) {
     return this.housesService.update(id, dto);
+  }
+
+  @Patch(':id/location')
+  updateLocation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateHouseLocationDto,
+  ) {
+    return this.housesService.updateLocation(id, dto);
   }
 
   @Delete(':id')

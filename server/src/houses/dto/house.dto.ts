@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, Min } from 'class-validator';
+import { IsString, IsOptional, IsNumber, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PartialType } from '@nestjs/mapped-types';
 
@@ -43,3 +43,17 @@ export class CreateHouseDto {
 }
 
 export class UpdateHouseDto extends PartialType(CreateHouseDto) {}
+
+export class UpdateHouseLocationDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude: number;
+}

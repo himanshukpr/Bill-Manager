@@ -1,218 +1,292 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, MapPin, Route } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import maplibregl from 'maplibre-gl'
+import Map, { Marker, NavigationControl, type MapRef } from 'react-map-gl/maplibre'
+import { Loader2, MapPin, Navigation, Save } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { housesApi } from '@/lib/api'
+import { clearSessionAuth } from '@/lib/auth'
 
 type LatLng = [number, number]
-
-type RouteSummary = {
-  distanceMeters: number
-  durationSeconds: number
-}
 
 type LocationRouteMapProps = {
   searchQuery: string
   houseNo: string
   area: string
+  houseId?: number
+  storedLocation?: string
+  onLocationSaved?: (coords: { latitude: number; longitude: number }) => void
 }
 
-const DEFAULT_CENTER: LatLng = [28.6139, 77.209]
-
-function formatDistance(distanceMeters: number): string {
-  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`
-  return `${(distanceMeters / 1000).toFixed(2)} km`
+type ViewState = {
+  latitude: number
+  longitude: number
+  zoom: number
 }
 
-function formatDuration(durationSeconds: number): string {
-  const totalMinutes = Math.max(1, Math.round(durationSeconds / 60))
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-
-  if (hours <= 0) return `${minutes} min`
-  return `${hours}h ${minutes}m`
+type LocationErrorLike = {
+  code?: number
 }
 
-export function LocationRouteMap({ searchQuery, houseNo, area }: LocationRouteMapProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const mapRef = useRef<import('leaflet').Map | null>(null)
-  const leafletRef = useRef<typeof import('leaflet') | null>(null)
-  const originRef = useRef<LatLng | null>(null)
-  const originMarkerRef = useRef<import('leaflet').CircleMarker | null>(null)
-  const destinationMarkerRef = useRef<import('leaflet').CircleMarker | null>(null)
-  const routeLineRef = useRef<import('leaflet').Polyline | null>(null)
+const DEFAULT_VIEW: ViewState = {
+  latitude: 28.6139,
+  longitude: 77.209,
+  zoom: 12,
+}
 
-  const [mapReady, setMapReady] = useState(false)
-  const [geocoding, setGeocoding] = useState(false)
-  const [routing, setRouting] = useState(false)
-  const [status, setStatus] = useState('Enter house details and click Show on Map.')
-  const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null)
+const TARGET_ACCURACY_METERS = 20
+const MAX_ACCEPTABLE_ACCURACY_METERS = 45
 
-  const orsKey = process.env.NEXT_PUBLIC_ORS_API_KEY?.trim() ?? ''
-
-  const clearRouteVisuals = useCallback(() => {
-    if (routeLineRef.current) {
-      routeLineRef.current.remove()
-      routeLineRef.current = null
-    }
-
-    if (destinationMarkerRef.current) {
-      destinationMarkerRef.current.remove()
-      destinationMarkerRef.current = null
-    }
-
-    setRouteSummary(null)
-  }, [])
-
-  const buildRoute = useCallback(
-    async (destination: LatLng) => {
-      const map = mapRef.current
-      const L = leafletRef.current
-      const origin = originRef.current
-
-      if (!map || !L) return
-
-      clearRouteVisuals()
-
-      destinationMarkerRef.current = L.circleMarker(destination, {
-        radius: 7,
-        weight: 2,
-        color: '#f97316',
-        fillColor: '#fb923c',
-        fillOpacity: 0.9,
-      }).addTo(map)
-
-      if (!origin) {
-        setStatus('Pin a house location first, then click the map to route.')
-        return
-      }
-
-      if (!orsKey || orsKey === 'your_openrouteservice_key_here') {
-        setStatus('Route key missing. Add NEXT_PUBLIC_ORS_API_KEY in .env to enable click-to-route.')
-        return
-      }
-
-      setRouting(true)
-      setStatus('Building route...')
-
-      try {
-        const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-          method: 'POST',
-          headers: {
-            Authorization: orsKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            coordinates: [
-              [origin[1], origin[0]],
-              [destination[1], destination[0]],
-            ],
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error('OpenRouteService request failed')
-        }
-
-        const data = await response.json()
-        const feature = data?.features?.[0]
-        const coordinates: number[][] = feature?.geometry?.coordinates
-
-        if (!Array.isArray(coordinates) || coordinates.length < 2) {
-          throw new Error('No route geometry returned')
-        }
-
-        const routeLatLngs = coordinates.map((coordinate) => [coordinate[1], coordinate[0]] as LatLng)
-
-        routeLineRef.current = L.polyline(routeLatLngs, {
-          weight: 5,
-          opacity: 0.9,
-          color: '#2563eb',
-        }).addTo(map)
-
-        map.fitBounds(routeLineRef.current.getBounds(), { padding: [24, 24] })
-
-        const summary = feature?.properties?.summary
-        const distance = Number(summary?.distance ?? 0)
-        const duration = Number(summary?.duration ?? 0)
-
-        if (distance > 0 && duration > 0) {
-          setRouteSummary({ distanceMeters: distance, durationSeconds: duration })
-        }
-
-        setStatus('Route ready. Click another point to update.')
-      } catch {
-        setStatus('Could not build route. Check ORS key and network.')
-      } finally {
-        setRouting(false)
-      }
+const MAP_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: 'Map data © OpenStreetMap contributors',
     },
-    [clearRouteVisuals, orsKey],
-  )
+  },
+  layers: [
+    {
+      id: 'osm-tiles',
+      type: 'raster',
+      source: 'osm',
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+} as any
 
-  useEffect(() => {
-    let mounted = true
+function parseCoordinateQuery(query: string): LatLng | null {
+  const match = query.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/)
 
-    const initializeMap = async () => {
-      if (!containerRef.current || mapRef.current) return
+  if (!match) return null
 
-      const L = await import('leaflet')
-      if (!mounted || !containerRef.current) return
+  const latitude = Number(match[1])
+  const longitude = Number(match[2])
 
-      leafletRef.current = L
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null
 
-      const map = L.map(containerRef.current, {
-        center: DEFAULT_CENTER,
-        zoom: 12,
-        zoomControl: true,
-      })
+  return [latitude, longitude]
+}
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map)
+async function getBestCurrentPosition(): Promise<GeolocationPosition> {
+  if (!navigator.geolocation) {
+    throw new Error('Geolocation is not supported on this device.')
+  }
 
-      map.on('click', (event: import('leaflet').LeafletMouseEvent) => {
-        void buildRoute([event.latlng.lat, event.latlng.lng])
-      })
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    let best: GeolocationPosition | null = null
+    let settled = false
 
-      mapRef.current = map
-      setMapReady(true)
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      fn()
     }
 
-    void initializeMap()
+    const startedAt = Date.now()
 
-    return () => {
-      mounted = false
-      if (mapRef.current) {
-        mapRef.current.remove()
-        mapRef.current = null
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const nextAccuracy = position.coords.accuracy ?? Number.POSITIVE_INFINITY
+        const bestAccuracy = best?.coords.accuracy ?? Number.POSITIVE_INFINITY
+
+        if (!best || nextAccuracy < bestAccuracy) {
+          best = position
+        }
+
+        // Resolve early if we got a strong GPS fix.
+        if (nextAccuracy <= TARGET_ACCURACY_METERS) {
+          navigator.geolocation.clearWatch(watchId)
+          finish(() => resolve(position))
+          return
+        }
+
+        // If we already waited long enough, settle on the best known point.
+        const waitedMs = Date.now() - startedAt
+        if (waitedMs >= 15000 && best) {
+          navigator.geolocation.clearWatch(watchId)
+          finish(() => resolve(best as GeolocationPosition))
+        }
+      },
+      (error) => {
+        navigator.geolocation.clearWatch(watchId)
+        finish(() => reject(error))
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 20000,
+      },
+    )
+
+    setTimeout(() => {
+      navigator.geolocation.clearWatch(watchId)
+      if (best) {
+        finish(() => resolve(best as GeolocationPosition))
+        return
       }
+
+      finish(() => reject(new Error('Timed out while fetching current location.')))
+    }, 20000)
+  })
+}
+
+export function LocationRouteMap({
+  searchQuery,
+  houseNo,
+  area: _area,
+  houseId,
+  storedLocation,
+  onLocationSaved,
+}: LocationRouteMapProps) {
+  const router = useRouter()
+  const mapRef = useRef<MapRef | null>(null)
+  const [viewState, setViewState] = useState<ViewState>(DEFAULT_VIEW)
+  const [targetLocation, setTargetLocation] = useState<LatLng | null>(null)
+  const [locating, setLocating] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [openingDirections, setOpeningDirections] = useState(false)
+  const [status, setStatus] = useState('')
+
+  const saveCurrentLocation = useCallback(async () => {
+    if (!houseId) {
+      setStatus('Cannot save: house ID is missing.')
+      return
     }
-  }, [buildRoute])
+
+    if (!navigator.geolocation) {
+      setStatus('Geolocation is not supported on this device.')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const position = await getBestCurrentPosition()
+
+      const coords = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      }
+
+      const accuracy = Math.round(position.coords.accuracy ?? 0)
+      if (accuracy > 0 && accuracy > MAX_ACCEPTABLE_ACCURACY_METERS) {
+        setStatus(`Location not precise enough (${accuracy}m). Move to open sky and try again.`)
+        return
+      }
+
+      await housesApi.updateLocation(houseId, coords)
+
+      setTargetLocation([coords.latitude, coords.longitude])
+      setViewState((prev) => ({
+        ...prev,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        zoom: 16,
+      }))
+
+      setStatus(`✓ Location saved for House ${houseNo}${accuracy > 0 ? ` (${accuracy}m accuracy)` : ''}`)
+      onLocationSaved?.(coords)
+    } catch (error) {
+      if (error instanceof Error && /unauthorized|forbidden|jwt|token/i.test(error.message)) {
+        clearSessionAuth()
+        setStatus('Session expired. Please login again.')
+        router.replace('/')
+        return
+      }
+
+      const code = (error as LocationErrorLike)?.code
+
+      if (code === 1) {
+        setStatus('Location permission denied. Please allow access and try again.')
+      } else if (code === 2) {
+        setStatus('Location unavailable. Turn on GPS and try again.')
+      } else if (code === 3) {
+        setStatus('Location request timed out. Please retry in open sky.')
+      } else {
+        setStatus('Could not fetch accurate location. Please try again.')
+      }
+    } finally {
+      setSaving(false)
+    }
+  }, [houseId, houseNo, onLocationSaved])
+
+  const openDirections = useCallback(() => {
+    if (!targetLocation) {
+      setStatus('No saved location found for this house.')
+      return
+    }
+
+    setOpeningDirections(true)
+
+    try {
+      const [lat, lng] = targetLocation
+      const destination = `${lat},${lng}`
+      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`
+      window.open(mapsUrl, '_blank', 'noopener,noreferrer')
+      setStatus('Opening Google Maps directions...')
+    } finally {
+      setOpeningDirections(false)
+    }
+  }, [targetLocation])
 
   useEffect(() => {
-    if (!mapReady || !searchQuery.trim()) return
+    const query = searchQuery.trim()
+    const savedCoordinates = parseCoordinateQuery(storedLocation ?? '')
+
+    if (savedCoordinates) {
+      setTargetLocation(savedCoordinates)
+      setViewState((prev) => ({
+        ...prev,
+        latitude: savedCoordinates[0],
+        longitude: savedCoordinates[1],
+        zoom: 16,
+      }))
+      setStatus('Saved house location loaded.')
+      return
+    }
+
+    if (!query) {
+      setTargetLocation(null)
+      setStatus('No saved house location found.')
+      return
+    }
+
+    const directCoords = parseCoordinateQuery(query)
+    if (directCoords) {
+      setTargetLocation(directCoords)
+      setViewState((prev) => ({
+        ...prev,
+        latitude: directCoords[0],
+        longitude: directCoords[1],
+        zoom: 16,
+      }))
+      setStatus('House location loaded.')
+      return
+    }
 
     let active = true
 
     const locateAddress = async () => {
-      const map = mapRef.current
-      const L = leafletRef.current
-
-      if (!map || !L) return
-
-      setGeocoding(true)
+      setLocating(true)
       setStatus('Locating house...')
 
       try {
-        const query = encodeURIComponent(searchQuery)
-        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${query}`, {
-          headers: {
-            Accept: 'application/json',
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`,
+          {
+            headers: {
+              Accept: 'application/json',
+            },
           },
-        })
+        )
 
         if (!response.ok) {
           throw new Error('Nominatim request failed')
@@ -223,42 +297,29 @@ export function LocationRouteMap({ searchQuery, houseNo, area }: LocationRouteMa
           throw new Error('No location found')
         }
 
-        const lat = Number(result[0].lat)
-        const lon = Number(result[0].lon)
+        const latitude = Number(result[0].lat)
+        const longitude = Number(result[0].lon)
 
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
           throw new Error('Invalid coordinates')
         }
 
-        originRef.current = [lat, lon]
-
-        if (originMarkerRef.current) {
-          originMarkerRef.current.remove()
-          originMarkerRef.current = null
-        }
-
-        clearRouteVisuals()
-
-        originMarkerRef.current = L.circleMarker([lat, lon], {
-          radius: 7,
-          weight: 2,
-          color: '#059669',
-          fillColor: '#10b981',
-          fillOpacity: 0.9,
-        })
-          .addTo(map)
-          .bindTooltip(`House ${houseNo}${area ? ` - ${area}` : ''}`, { direction: 'top' })
-
-        map.setView([lat, lon], 15)
-        setStatus('House pinned. Click anywhere on map to build route.')
+        const resolvedTarget: LatLng = [latitude, longitude]
+        setTargetLocation(resolvedTarget)
+        setViewState((prev) => ({
+          ...prev,
+          latitude,
+          longitude,
+          zoom: 15,
+        }))
+        setStatus('House location loaded.')
       } catch {
         if (!active) return
-        originRef.current = null
-        clearRouteVisuals()
-        setStatus('Could not locate this house/area. Try a more specific area name.')
+        setTargetLocation(null)
+        setStatus('Could not locate this house. Save location from current position.')
       } finally {
         if (active) {
-          setGeocoding(false)
+          setLocating(false)
         }
       }
     }
@@ -268,45 +329,56 @@ export function LocationRouteMap({ searchQuery, houseNo, area }: LocationRouteMa
     return () => {
       active = false
     }
-  }, [area, clearRouteVisuals, houseNo, mapReady, searchQuery])
+  }, [searchQuery, storedLocation])
 
-  const stateText = useMemo(() => {
-    if (geocoding) return 'Locating'
-    if (routing) return 'Routing'
-    return 'Ready'
-  }, [geocoding, routing])
+  const isBusy = useMemo(() => saving || locating || openingDirections, [saving, locating, openingDirections])
 
   return (
-    <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
-        <div ref={containerRef} className="h-[360px] w-full" />
-      </div>
+    <div className="space-y-3">
+      <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card">
+        <div className="h-[68vh] min-h-[420px] max-h-[700px] w-full">
+          <Map
+            ref={mapRef}
+            mapLib={maplibregl}
+            mapStyle={MAP_STYLE}
+            {...viewState}
+            onMove={(event) => setViewState(event.viewState)}
+            style={{ width: '100%', height: '100%' }}
+          >
+            <NavigationControl position="top-right" />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className="gap-1.5">
-          {geocoding || routing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
-          {stateText}
-        </Badge>
-        <Badge variant="secondary" className="gap-1.5">
-          <Route className="h-3.5 w-3.5" />
-          Click map to route
-        </Badge>
-      </div>
+            {targetLocation ? (
+              <Marker longitude={targetLocation[1]} latitude={targetLocation[0]} anchor="bottom">
+                <div className="rounded-full border border-emerald-600/40 bg-emerald-500 p-2 shadow-lg shadow-emerald-500/25">
+                  <MapPin className="h-4 w-4 text-white" />
+                </div>
+              </Marker>
+            ) : null}
+          </Map>
 
-      <p className="text-sm text-muted-foreground">{status}</p>
-
-      {routeSummary ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-border/70 bg-muted/25 p-3">
-            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Distance</p>
-            <p className="mt-1 text-sm font-semibold">{formatDistance(routeSummary.distanceMeters)}</p>
-          </div>
-          <div className="rounded-xl border border-border/70 bg-muted/25 p-3">
-            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Est. Duration</p>
-            <p className="mt-1 text-sm font-semibold">{formatDuration(routeSummary.durationSeconds)}</p>
-          </div>
+          {locating ? (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/25">
+              <div className="flex items-center gap-2 rounded-full bg-background/90 px-3 py-1 text-xs font-medium text-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Locating...
+              </div>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Button onClick={saveCurrentLocation} disabled={isBusy || !houseId} className="gap-2">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {saving ? 'Saving...' : 'Save Location'}
+        </Button>
+        <Button variant="outline" onClick={openDirections} disabled={isBusy || !targetLocation} className="gap-2">
+          {openingDirections ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
+          Directions
+        </Button>
+      </div>
+
+      {status ? <p className="text-xs text-muted-foreground">{status}</p> : null}
     </div>
   )
 }

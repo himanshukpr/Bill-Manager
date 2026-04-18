@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { LocationRouteMap } from '@/components/dashboard/supplier/location-route-map'
+import { housesApi, type House } from '@/lib/api'
 
 type LocationForm = {
   houseNo: string
@@ -28,6 +29,9 @@ export default function SupplierLocationPage() {
   })
   const [submitted, setSubmitted] = useState<LocationForm | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [house, setHouse] = useState<House | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [savedLocation, setSavedLocation] = useState(false)
 
   useEffect(() => {
     const session = getSessionAuth()
@@ -40,7 +44,7 @@ export default function SupplierLocationPage() {
     setReady(true)
   }, [router])
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const next = {
       houseNo: form.houseNo.trim(),
@@ -48,12 +52,39 @@ export default function SupplierLocationPage() {
     }
     setSubmitted(next)
     setSearchQuery(`${next.houseNo}, ${next.area}`)
+    setSavedLocation(false)
+
+    // Fetch the house to get its ID
+    setSearching(true)
+    try {
+      const houses = await housesApi.list()
+      const foundHouse = houses.find(
+        (h) => h.houseNo.toLowerCase() === next.houseNo.toLowerCase() &&
+               h.area?.toLowerCase() === next.area.toLowerCase()
+      )
+      if (foundHouse) {
+        setHouse(foundHouse)
+      } else {
+        setHouse(null)
+      }
+    } catch (error) {
+      console.error('Error fetching houses:', error)
+      setHouse(null)
+    } finally {
+      setSearching(false)
+    }
   }
 
   function handleReset() {
     setForm({ houseNo: '', area: '' })
     setSubmitted(null)
     setSearchQuery('')
+    setHouse(null)
+    setSavedLocation(false)
+  }
+
+  function handleLocationSaved() {
+    setSavedLocation(true)
   }
 
   if (!ready || !auth) {
@@ -149,12 +180,12 @@ export default function SupplierLocationPage() {
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Map preview</p>
               <h2 className="mt-2 text-xl font-bold">Leaflet Route Preview</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Powered by OpenStreetMap and OpenRouteService. Click on map after pinning a house to build route.
+                Powered by OpenStreetMap and OpenRouteService. Pin a house, then click the map to build route or save the location.
               </p>
             </div>
-            <Badge variant="outline" className="gap-1.5 whitespace-nowrap">
+            <Badge variant={savedLocation ? 'default' : 'outline'} className="gap-1.5 whitespace-nowrap">
               <Search className="h-3.5 w-3.5" />
-              {submitted ? 'Pinned' : 'Waiting'}
+              {savedLocation ? 'Saved' : submitted ? 'Pinned' : 'Waiting'}
             </Badge>
           </div>
 
@@ -163,6 +194,8 @@ export default function SupplierLocationPage() {
               searchQuery={searchQuery}
               houseNo={submitted?.houseNo ?? ''}
               area={submitted?.area ?? ''}
+              houseId={house?.id}
+              onLocationSaved={handleLocationSaved}
             />
           </div>
 
@@ -177,21 +210,29 @@ export default function SupplierLocationPage() {
             </div>
             <div className="rounded-2xl border border-border/70 bg-muted/25 p-4">
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Status</p>
-              <p className="mt-2 text-sm font-semibold">{submitted ? 'Preview ready' : 'Waiting for details'}</p>
+              <p className="mt-2 text-sm font-semibold">
+                {savedLocation ? '✓ Saved' : submitted ? (house ? 'Found & Ready' : 'House not found') : 'Waiting'}
+              </p>
             </div>
           </div>
 
           <div className="mt-5 rounded-2xl border border-border/70 bg-muted/30 p-4 sm:p-5">
             <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-amber-500/15 p-2.5">
-                <MapPin className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <div className={`rounded-xl p-2.5 ${savedLocation ? 'bg-emerald-500/15' : 'bg-amber-500/15'}`}>
+                <MapPin className={`h-4 w-4 ${savedLocation ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`} />
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold">
-                  {submitted ? `House ${submitted.houseNo}${submitted.area ? ` · ${submitted.area}` : ''}` : 'No location selected yet'}
+                  {savedLocation
+                    ? `✓ Location saved for House ${submitted?.houseNo}${submitted?.area ? ` · ${submitted.area}` : ''}`
+                    : submitted
+                      ? `House ${submitted.houseNo}${submitted.area ? ` · ${submitted.area}` : ''}`
+                      : 'No location selected yet'}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Pin a house first, then click anywhere on the map to generate route details.
+                  {savedLocation
+                    ? 'The house location has been saved and can be used for delivery routing.'
+                    : 'Pin a house on the map, then click the "Save Location" button to persist the GPS coordinates.'}
                 </p>
               </div>
             </div>
