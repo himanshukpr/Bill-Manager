@@ -4,7 +4,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateHouseDto, UpdateHouseDto } from './dto/house.dto';
+import { CreateHouseDto, UpdateHouseDto, UpdateHouseLocationDto } from './dto/house.dto';
 
 @Injectable()
 export class HousesService {
@@ -72,6 +72,22 @@ export class HousesService {
   async update(id: number, dto: UpdateHouseDto) {
     await this.findOne(id);
     return this.prisma.house.update({ where: { id }, data: dto });
+  }
+
+  async updateLocation(id: number, dto: UpdateHouseLocationDto) {
+    const location = `${dto.latitude.toFixed(6)},${dto.longitude.toFixed(6)}`;
+
+    try {
+      return await this.prisma.house.update({
+        where: { id },
+        data: { location },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2025') {
+        throw new NotFoundException(`House #${id} not found`);
+      }
+      throw error;
+    }
   }
 
   async remove(id: number) {

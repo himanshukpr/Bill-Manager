@@ -54,6 +54,7 @@ export type House = {
   id: number;
   houseNo: string;
   area?: string;
+  location?: string;
   phoneNo: string;
   alternativePhone?: string;
   description?: string;
@@ -194,6 +195,20 @@ export const housesApi = {
        await syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
     }
     return apiPatch<House>(`/houses/${id}`, data).catch(console.error);
+  },
+  updateLocation: async (id: number, data: { latitude: number; longitude: number }) => {
+    if (typeof window !== 'undefined') {
+      const existing = await db.houses.get(id)
+      if (existing) {
+        await db.houses.put({
+          ...existing,
+          location: `${data.latitude.toFixed(6)},${data.longitude.toFixed(6)}`,
+        })
+      }
+      await syncEngine.enqueue(`/houses/${id}/location`, 'PATCH', data)
+    }
+
+    return apiPatch<House>(`/houses/${id}/location`, data)
   },
   delete: async (id: number) => {
     if (typeof window !== 'undefined') {

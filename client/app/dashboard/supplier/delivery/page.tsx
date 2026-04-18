@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
     ChevronLeft,
     ChevronRight,
+    Maximize2,
     MapPin,
     Phone,
     Rows3,
@@ -48,6 +49,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table'
+import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
 import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
@@ -60,6 +62,8 @@ const emptyDeliveryItem: DeliveryItemForm = {
     milkType: 'buffalo',
     qty: '',
 }
+
+const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
 
 type MilkType = DeliveryItemForm['milkType']
 
@@ -119,6 +123,21 @@ function isSameLocalDate(left: Date, right: Date): boolean {
     )
 }
 
+function parseHouseLocation(location?: string): { lat: number; lon: number } | null {
+    if (!location) return null
+
+    const match = location.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/)
+    if (!match) return null
+
+    const lat = Number(match[1])
+    const lon = Number(match[2])
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null
+
+    return { lat, lon }
+}
+
 export default function DeliveryPage() {
     const router = useRouter()
 
@@ -150,6 +169,9 @@ export default function DeliveryPage() {
     const [editingItems, setEditingItems] = useState<DeliveryItemForm[]>([])
     const [editingNotes, setEditingNotes] = useState('')
     const [editingSaving, setEditingSaving] = useState(false)
+    const [isMapExpanded, setIsMapExpanded] = useState(false)
+    const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
+    const [miniMapLoading, setMiniMapLoading] = useState(false)
 
     // AUTH
     useEffect(() => {
@@ -211,6 +233,92 @@ export default function DeliveryPage() {
     }, [loadHouses])
 
     const currentHouse = houses[currentIndex]
+
+    useEffect(() => {
+        if (!currentHouse) return
+
+        let active = true
+        const storedLocation = parseHouseLocation(currentHouse.location)
+        const query = `${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`.trim()
+
+        if (storedLocation) {
+            setMiniMapCenter(storedLocation)
+            setMiniMapLoading(false)
+            return
+        }
+
+        const loadMiniMap = async () => {
+            setMiniMapLoading(true)
+            try {
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`,
+                    {
+                        headers: {
+                            Accept: 'application/json',
+                        },
+                    },
+                )
+
+                if (!response.ok) throw new Error('Geocoding failed')
+
+                const result = (await response.json()) as Array<{ lat: string; lon: string }>
+                if (!active || result.length === 0) {
+                    setMiniMapCenter(DEFAULT_MAP_CENTER)
+                    return
+                }
+
+                const lat = Number(result[0].lat)
+                const lon = Number(result[0].lon)
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                    setMiniMapCenter(DEFAULT_MAP_CENTER)
+                    return
+                }
+
+                setMiniMapCenter({ lat, lon })
+            } catch {
+                if (active) setMiniMapCenter(DEFAULT_MAP_CENTER)
+            } finally {
+                if (active) setMiniMapLoading(false)
+            }
+        }
+
+        void loadMiniMap()
+
+        return () => {
+            active = false
+        }
+    }, [currentHouse?.id, currentHouse?.location])
+
+    const handleLocationSaved = useCallback(
+        (coords: { latitude: number; longitude: number }) => {
+            if (!currentHouse) return
+
+            const location = `${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`
+            setMiniMapCenter({ lat: coords.latitude, lon: coords.longitude })
+
+            setHouses((prev) =>
+                prev.map((house) =>
+                    house.id === currentHouse.id
+                        ? {
+                              ...house,
+                              location,
+                          }
+                        : house,
+                ),
+            )
+        },
+        [currentHouse],
+    )
+
+    const miniMapEmbedUrl = useMemo(() => {
+        const delta = 0.0075
+        const left = miniMapCenter.lon - delta
+        const right = miniMapCenter.lon + delta
+        const top = miniMapCenter.lat + delta
+        const bottom = miniMapCenter.lat - delta
+
+        return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${miniMapCenter.lat}%2C${miniMapCenter.lon}`
+    }, [miniMapCenter])
 
     const searchedAllocatedHouses = useMemo(() => {
         const query = houseSearch.trim().toLowerCase()
@@ -668,81 +776,89 @@ export default function DeliveryPage() {
                 </Button>
             </div>
 
-            {/* HEADER NAV */}
-            <div className="flex items-center justify-between">
-                <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
-                    <ChevronLeft />
-                </Button>
-
-                <div className="text-center">
-                    <p className="text-sm font-semibold">
-                        {currentIndex + 1} / {houses.length}
-                    </p>
-                </div>
-
-                <Button variant="ghost" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
-                    <ChevronRight />
-                </Button>
-            </div>
-
             {/* <div className="flex justify-end">
                 <Button asChild variant="outline" size="sm">
                     <Link href="/dashboard/supplier/rates">Rate List</Link>
                 </Button>
             </div> */}
 
-            {/* PROGRESS BAR */}
-            <div className="w-full bg-gray-200 h-2 rounded-full">
-                <div
-                    className="bg-green-500 h-2 rounded-full"
-                    style={{ width: `${((currentIndex + 1) / houses.length) * 100}%` }}
-                />
-            </div>
-
+            <div className="space-y-0">
             {/* HOUSE CARD */}
-            <div className="bg-card p-5 rounded-2xl">
-                <h1 className="text-3xl font-bold">{currentHouse.houseNo}</h1>
+            <div className="bg-card p-3 sm:p-4 rounded-t-2xl rounded-b-none space-y-3">
+                <button
+                    type="button"
+                    onClick={() => setIsMapExpanded(true)}
+                    className="relative h-56 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-2 text-left sm:h-60"
+                >
+                    <div className="absolute inset-0 pointer-events-none">
+                        <iframe
+                            title="Mini map preview"
+                            src={miniMapEmbedUrl}
+                            className="h-full w-full border-0"
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                        />
+                    </div>
+                    <div className="absolute inset-0 bg-emerald-900/10" />
+                    {miniMapLoading ? (
+                        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
+                            Loading map...
+                        </div>
+                    ) : null}
+                    <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
+                        <Maximize2 className="h-3.5 w-3.5 text-foreground" />
+                    </div>
+                </button>
 
-                <div className="flex gap-2 mt-2">
-                    <MapPin className="h-4 w-4" />
-                    {currentHouse.area}
-                </div>
+                <div className="grid grid-cols-3 gap-3 rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <div className="col-span-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                <h1 className="mt-1 text-2xl font-bold leading-none">{currentHouse.houseNo}</h1>
+                            </div>
+                            <div>
+                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
+                                {isCompleted ? (
+                                    <p className="mt-1 font-semibold text-green-600">Delivered</p>
+                                ) : (
+                                    <p className="mt-1 font-semibold text-yellow-600">Pending</p>
+                                )}
+                            </div>
+                        </div>
 
-                <div className="mt-2">
-                    <Phone className="inline mr-2" />
-                    {currentHouse.phoneNo}
-                </div>
+                        <div className="flex items-center gap-2 text-sm">
+                            <MapPin className="h-4 w-4" />
+                            <span>{currentHouse.area || 'Area not set'}</span>
+                        </div>
 
-                <div className="mt-3 flex gap-2">
-                    {(() => {
-                        const buffalo = getEffectiveRate(currentHouse, 'buffalo')
-                        const cow = getEffectiveRate(currentHouse, 'cow')
+                        <div className="flex items-center gap-2 text-sm">
+                            <Phone className="h-4 w-4" />
+                            <span>{currentHouse.phoneNo || 'Phone not set'}</span>
+                        </div>
+                    </div>
 
-                        return (
-                            <>
-                                <Badge>
-                                    Buffalo ₹{buffalo.rate}/L
-                                    {buffalo.source === 'global' ? ' (Rate List)' : ''}
-                                </Badge>
-                                <Badge>
-                                    Cow ₹{cow.rate}/L
-                                    {cow.source === 'global' ? ' (Rate List)' : ''}
-                                </Badge>
-                            </>
-                        )
-                    })()}
-                </div>
+                    <div className="col-span-1 flex flex-col gap-2 justify-center">
+                        {(() => {
+                            const buffalo = getEffectiveRate(currentHouse, 'buffalo')
+                            const cow = getEffectiveRate(currentHouse, 'cow')
 
-                <div className="mt-3">
-                    {isCompleted ? (
-                        <span className="text-green-600 font-semibold">Delivered</span>
-                    ) : (
-                        <span className="text-yellow-600 font-semibold">Pending</span>
-                    )}
+                            return (
+                                <>
+                                    <Badge className="w-full justify-center py-1 text-xs">
+                                        Buffalo ₹{buffalo.rate}/L
+                                    </Badge>
+                                    <Badge className="w-full justify-center py-1 text-xs">
+                                        Cow ₹{cow.rate}/L
+                                    </Badge>
+                                </>
+                            )
+                        })()}
+                    </div>
                 </div>
             </div>
 
-            <div className="bg-card p-5 rounded-2xl space-y-3">
+            <div className="hidden bg-card p-5 rounded-2xl space-y-3">
                 <p className="text-sm font-semibold">Today&apos;s Delivery Records</p>
                 {logsLoading ? (
                     <Skeleton className="h-20 w-full" />
@@ -934,18 +1050,16 @@ export default function DeliveryPage() {
             </div>
 
             {/* FORM */}
+            <div className="bg-card rounded-t-none overflow-hidden">
             {!isCompleted && (
-                <div className="bg-card p-5 rounded-2xl space-y-4">
-
+                <div className="p-3 space-y-2 border-t border-border/40">
                     {deliveryItems.map((item, idx) => {
                         const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
                         const rate = effectiveRate.rate
-
                         const qty = Number(item.qty)
                         const amount = qty > 0 ? qty * rate : 0
-
                         return (
-                            <div key={idx} className="grid grid-cols-12 gap-2">
+                            <div key={idx} className="grid grid-cols-12 gap-1">
 
                                 <div className="col-span-4">
                                     <Select
@@ -975,10 +1089,9 @@ export default function DeliveryPage() {
                                     />
                                 </div>
 
-                                <div className="col-span-3 text-sm">
-                                    ₹{rate}/L
-                                    {effectiveRate.source === 'global' ? <div className="text-xs text-muted-foreground">Rate List</div> : null}
-                                    {qty > 0 && <div>₹{amount}</div>}
+                                <div className="col-span-3 text-xs">
+                                    <span>₹{rate}/L</span>
+                                    {qty > 0 && <span className="block">₹{amount}</span>}
                                 </div>
 
                                 <div className="col-span-1">
@@ -992,33 +1105,67 @@ export default function DeliveryPage() {
                         )
                     })}
 
-                    <Button onClick={addItem}>
-                        <Plus className="mr-2" /> Add Item
+                    <Button onClick={addItem} size="sm" className="text-xs">
+                        <Plus className="mr-1 h-3 w-3" /> Add Item
                     </Button>
-
-                    <div className="text-lg font-bold">
+                    <div className="text-sm font-bold">
                         Total: ₹{currentDeliveryTotal}
                     </div>
-
-                    <Input
-                        placeholder="Override balance"
-                        value={currentBalance}
-                        onChange={(e) => setCurrentBalance(e.target.value)}
-                    />
-
                     <Textarea
                         placeholder="Notes"
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
+                        className="min-h-16 text-xs"
                     />
                 </div>
             )}
 
             {/* ACTION */}
-            {/* ACTION */}
-            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full">
+            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full rounded-none rounded-b-2xl">
                 {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
             </Button>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+                <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
+                    <ChevronLeft />
+                </Button>
+
+                <div className="text-center">
+                    <p className="text-sm font-semibold">
+                        {currentIndex + 1} / {houses.length}
+                    </p>
+                </div>
+
+                <Button variant="ghost" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
+                    <ChevronRight />
+                </Button>
+            </div>
+            </div>
+
+            <Dialog open={isMapExpanded} onOpenChange={setIsMapExpanded}>
+                <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>House Location & Route</DialogTitle>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                        <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-sm">
+                            <p className="font-semibold">{currentHouse.houseNo}</p>
+                            <p className="text-muted-foreground">{currentHouse.area || 'Area not set'}</p>
+                        </div>
+
+                        <LocationRouteMap
+                            searchQuery={`${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`}
+                            houseNo={currentHouse.houseNo}
+                            area={currentHouse.area ?? ''}
+                            houseId={currentHouse.id}
+                            storedLocation={currentHouse.location}
+                            onLocationSaved={handleLocationSaved}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

@@ -1,6 +1,7 @@
 import { Geist_Mono, Nunito_Sans, Inter } from "next/font/google"
 
 import "./globals.css"
+import "maplibre-gl/dist/maplibre-gl.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils";
