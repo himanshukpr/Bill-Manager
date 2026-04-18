@@ -195,6 +195,7 @@ export default function SupplierLocationPage() {
               houseNo={submitted?.houseNo ?? ''}
               area={submitted?.area ?? ''}
               houseId={house?.id}
+              storedLocation={house?.location}
               onLocationSaved={handleLocationSaved}
             />
           </div>

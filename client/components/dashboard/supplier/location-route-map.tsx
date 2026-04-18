@@ -138,6 +138,21 @@ async function getBestCurrentPosition(): Promise<GeolocationPosition> {
   })
 }
 
+async function getFallbackCurrentPosition(): Promise<GeolocationPosition> {
+  if (!navigator.geolocation) {
+    throw new Error('Geolocation is not supported on this device.')
+  }
+
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      // Use cached/network-assisted location as fallback when high-accuracy GPS is unstable.
+      enableHighAccuracy: false,
+      maximumAge: 120000,
+      timeout: 10000,
+    })
+  })
+}
+
 export function LocationRouteMap({
   searchQuery,
   houseNo,
@@ -154,6 +169,7 @@ export function LocationRouteMap({
   const [saving, setSaving] = useState(false)
   const [openingDirections, setOpeningDirections] = useState(false)
   const [status, setStatus] = useState('')
+  const [hasPersistedLocation, setHasPersistedLocation] = useState(false)
 
   const saveCurrentLocation = useCallback(async () => {
     if (!houseId) {
@@ -169,7 +185,7 @@ export function LocationRouteMap({
     setSaving(true)
 
     try {
-      const position = await getBestCurrentPosition()
+      const position = await getBestCurrentPosition().catch(async () => getFallbackCurrentPosition())
 
       const coords = {
         latitude: position.coords.latitude,
@@ -177,14 +193,12 @@ export function LocationRouteMap({
       }
 
       const accuracy = Math.round(position.coords.accuracy ?? 0)
-      if (accuracy > 0 && accuracy > MAX_ACCEPTABLE_ACCURACY_METERS) {
-        setStatus(`Location not precise enough (${accuracy}m). Move to open sky and try again.`)
-        return
-      }
+      const lowAccuracy = accuracy > 0 && accuracy > MAX_ACCEPTABLE_ACCURACY_METERS
 
       await housesApi.updateLocation(houseId, coords)
 
       setTargetLocation([coords.latitude, coords.longitude])
+      setHasPersistedLocation(true)
       setViewState((prev) => ({
         ...prev,
         latitude: coords.latitude,
@@ -192,7 +206,11 @@ export function LocationRouteMap({
         zoom: 16,
       }))
 
-      setStatus(`✓ Location saved for House ${houseNo}${accuracy > 0 ? ` (${accuracy}m accuracy)` : ''}`)
+      setStatus(
+        `✓ Location ${hasPersistedLocation ? 'updated' : 'saved'} for House ${houseNo}${
+          accuracy > 0 ? ` (${accuracy}m accuracy)` : ''
+        }${lowAccuracy ? ' - accuracy is low; move to open sky and update again for better precision.' : ''}`,
+      )
       onLocationSaved?.(coords)
     } catch (error) {
       if (error instanceof Error && /unauthorized|forbidden|jwt|token/i.test(error.message)) {
@@ -211,12 +229,12 @@ export function LocationRouteMap({
       } else if (code === 3) {
         setStatus('Location request timed out. Please retry in open sky.')
       } else {
-        setStatus('Could not fetch accurate location. Please try again.')
+        setStatus('Could not fetch your current location. Turn on GPS/location services and try again.')
       }
     } finally {
       setSaving(false)
     }
-  }, [houseId, houseNo, onLocationSaved])
+  }, [houseId, houseNo, hasPersistedLocation, onLocationSaved])
 
   const openDirections = useCallback(() => {
     if (!targetLocation) {
@@ -243,6 +261,7 @@ export function LocationRouteMap({
 
     if (savedCoordinates) {
       setTargetLocation(savedCoordinates)
+      setHasPersistedLocation(true)
       setViewState((prev) => ({
         ...prev,
         latitude: savedCoordinates[0],
@@ -255,6 +274,7 @@ export function LocationRouteMap({
 
     if (!query) {
       setTargetLocation(null)
+      setHasPersistedLocation(false)
       setStatus('No saved house location found.')
       return
     }
@@ -370,7 +390,7 @@ export function LocationRouteMap({
       <div className="grid grid-cols-2 gap-2">
         <Button onClick={saveCurrentLocation} disabled={isBusy || !houseId} className="gap-2">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {saving ? 'Saving...' : 'Save Location'}
+          {saving ? (hasPersistedLocation ? 'Updating...' : 'Saving...') : hasPersistedLocation ? 'Update Location' : 'Save Location'}
         </Button>
         <Button variant="outline" onClick={openDirections} disabled={isBusy || !targetLocation} className="gap-2">
           {openingDirections ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
