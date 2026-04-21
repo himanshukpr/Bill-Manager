@@ -3,6 +3,66 @@ import { db } from './db';
 import { syncEngine } from './sync-engine';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const DEFAULT_CACHE_FRESH_MS = 20_000;
+const revalidationLocks = new Map<string, Promise<void>>();
+
+const CACHE_INVALIDATION: Record<string, string[]> = {
+  houses: ['/houses', '/house-config', '/house-balance', '/bills', '/delivery-logs'],
+  'house-config': ['/house-config', '/houses'],
+  'house-balance': ['/house-balance', '/houses', '/bills'],
+  bills: ['/bills', '/house-balance', '/houses'],
+  users: ['/users', '/house-config'],
+  'product-rates': ['/product-rates', '/delivery-logs', '/bills'],
+  'delivery-logs': ['/delivery-logs', '/house-balance', '/bills', '/houses'],
+};
+
+function isBrowser() {
+  return typeof window !== 'undefined';
+}
+
+function isOnline() {
+  return isBrowser() && navigator.onLine;
+}
+
+function getResource(path: string): string {
+  const clean = path.split('?')[0] ?? path;
+  const [first = ''] = clean.split('/').filter(Boolean);
+  return first;
+}
+
+async function readCache<T>(cacheKey: string): Promise<T | null> {
+  if (!isBrowser()) return null;
+
+  const entry = await db.queryCache.get(cacheKey);
+  if (!entry) return null;
+
+  try {
+    return JSON.parse(entry.payload) as T;
+  } catch {
+    await db.queryCache.delete(cacheKey);
+    return null;
+  }
+}
+
+async function writeCache<T>(cacheKey: string, data: T): Promise<void> {
+  if (!isBrowser()) return;
+
+  await db.queryCache.put({
+    key: cacheKey,
+    payload: JSON.stringify(data),
+    updatedAt: Date.now(),
+  });
+}
+
+async function invalidateCache(path: string): Promise<void> {
+  if (!isBrowser()) return;
+
+  const resource = getResource(path);
+  const prefixes = CACHE_INVALIDATION[resource] ?? [`/${resource}`];
+  await Promise.all(
+    prefixes.map((prefix) => db.queryCache.where('key').startsWith(`GET:${prefix}`).delete()),
+  );
+}
 
 // ─── Generic fetch helpers ────────────────────────────────────────────────────
 
@@ -15,11 +75,68 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-async function apiGet<T>(path: string): Promise<T> {
+async function requestGet<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
   });
   return handleResponse<T>(res);
+}
+
+async function revalidateGet<T>(
+  path: string,
+  cacheKey: string,
+  onData?: (data: T) => Promise<void> | void,
+): Promise<void> {
+  if (!isOnline()) return;
+  if (revalidationLocks.has(cacheKey)) return;
+
+  const pending = (async () => {
+    try {
+      const latest = await requestGet<T>(path);
+      await writeCache(cacheKey, latest);
+      if (onData) await onData(latest);
+    } catch {
+      // Keep stale cache on background fetch failures.
+    } finally {
+      revalidationLocks.delete(cacheKey);
+    }
+  })();
+
+  revalidationLocks.set(cacheKey, pending);
+  await pending;
+}
+
+async function apiGet<T>(
+  path: string,
+  options?: {
+    cacheKey?: string;
+    freshMs?: number;
+    onData?: (data: T) => Promise<void> | void;
+  },
+): Promise<T> {
+  if (!isBrowser()) {
+    return requestGet<T>(path);
+  }
+
+  const cacheKey = options?.cacheKey ?? `GET:${path}`;
+  const freshMs = options?.freshMs ?? DEFAULT_CACHE_FRESH_MS;
+
+  const cached = await readCache<T>(cacheKey);
+  if (cached !== null) {
+    const entry = await db.queryCache.get(cacheKey);
+    if (options?.onData) await options.onData(cached);
+
+    if ((Date.now() - (entry?.updatedAt ?? 0) > freshMs) && isOnline()) {
+      void revalidateGet(path, cacheKey, options?.onData);
+    }
+
+    return cached;
+  }
+
+  const latest = await requestGet<T>(path);
+  await writeCache(cacheKey, latest);
+  if (options?.onData) await options.onData(latest);
+  return latest;
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
@@ -173,31 +290,38 @@ export type DeliveryLog = {
 // ─── Houses ───────────────────────────────────────────────────────────────────
 
 export const housesApi = {
-  list: async () => {
-    const data = await apiGet<House[]>('/houses');
-    if (typeof window !== 'undefined') await db.houses.bulkPut(data);
-    return data;
-  },
-  get: async (id: number) => {
-    const data = await apiGet<House>(`/houses/${id}`);
-    if (typeof window !== 'undefined') await db.houses.put(data);
-    return data;
-  },
+  list: async () =>
+    apiGet<House[]>('/houses', {
+      onData: async (data) => {
+        if (isBrowser()) await db.houses.bulkPut(data);
+      },
+    }),
+  get: async (id: number) =>
+    apiGet<House>(`/houses/${id}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.houses.put(data);
+      },
+    }),
   stats: () => apiGet<HouseStats>('/houses/stats'),
   create: async (data: Partial<House>) => {
     const res = await apiPost<House>('/houses', data);
-    if (typeof window !== 'undefined') await db.houses.put(res);
+    if (isBrowser()) {
+      await db.houses.put(res);
+      await invalidateCache('/houses');
+    }
     return res;
   },
   update: async (id: number, data: Partial<House>) => {
-    if (typeof window !== 'undefined') {
-       await db.houses.update(id, data);
+    if (isBrowser()) {
+       const existing = await db.houses.get(id);
+       if (existing) await db.houses.put({ ...existing, ...data });
+       await invalidateCache('/houses');
        await syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
     }
     return apiPatch<House>(`/houses/${id}`, data).catch(console.error);
   },
   updateLocation: async (id: number, data: { latitude: number; longitude: number }) => {
-    if (typeof window !== 'undefined') {
+    if (isBrowser()) {
       const existing = await db.houses.get(id)
       if (existing) {
         await db.houses.put({
@@ -205,14 +329,16 @@ export const housesApi = {
           location: `${data.latitude.toFixed(6)},${data.longitude.toFixed(6)}`,
         })
       }
+      await invalidateCache('/houses')
       await syncEngine.enqueue(`/houses/${id}/location`, 'PATCH', data)
     }
 
     return apiPatch<House>(`/houses/${id}/location`, data)
   },
   delete: async (id: number) => {
-    if (typeof window !== 'undefined') {
+    if (isBrowser()) {
        await db.houses.delete(id);
+       await invalidateCache('/houses');
        await syncEngine.enqueue(`/houses/${id}`, 'DELETE');
     }
     return apiDelete<House>(`/houses/${id}`).catch(console.error);
@@ -222,49 +348,68 @@ export const housesApi = {
 // ─── House Config ─────────────────────────────────────────────────────────────
 
 export const houseConfigApi = {
-  list: async (supplierId?: string) => {
-    const data = await apiGet<HouseConfig[]>(`/house-config${supplierId ? `?supplierId=${supplierId}` : ''}`);
-    if (typeof window !== 'undefined') await db.houseConfigs.bulkPut(data);
-    return data;
-  },
-  byHouse: async (houseId: number) => {
-    const data = await apiGet<HouseConfig[]>(`/house-config/house/${houseId}`);
-    if (typeof window !== 'undefined') await db.houseConfigs.bulkPut(data);
-    return data;
-  },
+  list: async (supplierId?: string) =>
+    apiGet<HouseConfig[]>(`/house-config${supplierId ? `?supplierId=${supplierId}` : ''}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.houseConfigs.bulkPut(data);
+      },
+    }),
+  byHouse: async (houseId: number) =>
+    apiGet<HouseConfig[]>(`/house-config/house/${houseId}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.houseConfigs.bulkPut(data);
+      },
+    }),
   create: async (data: Partial<HouseConfig>) => {
     // Attempt rapid optimistic update if possible, otherwise rely on backend first
-    if (navigator.onLine) {
+    if (isOnline()) {
         const res = await apiPost<HouseConfig>('/house-config', data);
-        if (typeof window !== 'undefined') await db.houseConfigs.put(res);
+        if (isBrowser()) {
+          await db.houseConfigs.put(res);
+          await invalidateCache('/house-config');
+        }
         return res;
     } else {
         // purely offline creation stub
         const tempId = -Math.floor(Math.random() * 100000);
         const stub = { id: tempId, ...data } as HouseConfig;
-        if (typeof window !== 'undefined') {
+        if (isBrowser()) {
             await db.houseConfigs.put(stub);
+            await invalidateCache('/house-config');
             await syncEngine.enqueue('/house-config', 'POST', data);
         }
         return stub;
     }
   },
   update: async (id: number, data: Partial<HouseConfig>) => {
-    if (typeof window !== 'undefined') {
+    if (isBrowser()) {
         const existing = await db.houseConfigs.get(id);
         if (existing) await db.houseConfigs.put({ ...existing, ...data });
+        await invalidateCache('/house-config');
         await syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
     }
-    if (navigator.onLine) return apiPatch<HouseConfig>(`/house-config/${id}`, data).catch(console.error);
+    if (isOnline()) return apiPatch<HouseConfig>(`/house-config/${id}`, data).catch(console.error);
     return data;
   },
-  reorder: (orderedIds: number[]) => apiPatch('/house-config/reorder', { orderedIds }),
+  reorder: async (orderedIds: number[]) => {
+    if (isBrowser()) {
+      await invalidateCache('/house-config');
+      await syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
+    }
+
+    if (isOnline()) {
+      return apiPatch('/house-config/reorder', { orderedIds }).catch(console.error);
+    }
+
+    return { orderedIds };
+  },
   delete: async (id: number) => {
-    if (typeof window !== 'undefined') {
+    if (isBrowser()) {
         await db.houseConfigs.delete(id);
+        await invalidateCache('/house-config');
         await syncEngine.enqueue(`/house-config/${id}`, 'DELETE');
     }
-    if (navigator.onLine) return apiDelete(`/house-config/${id}`).catch(console.error);
+    if (isOnline()) return apiDelete(`/house-config/${id}`).catch(console.error);
     return null;
   },
 };
@@ -275,10 +420,30 @@ export const balanceApi = {
   get: (houseId: number) => apiGet<HouseBalance>(`/house-balance/${houseId}`),
   payments: (houseId: number) => apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`),
   allPayments: () => apiGet<PaymentHistory[]>('/house-balance/payments'),
-  update: (houseId: number, data: { previousBalance?: number; currentBalance?: number }) =>
-    apiPatch<HouseBalance>(`/house-balance/${houseId}`, data),
-  record: (data: { houseId: number; amount: number; note?: string }) =>
-    apiPost('/house-balance/payment', data),
+  update: async (houseId: number, data: { previousBalance?: number; currentBalance?: number }) => {
+    if (isBrowser()) {
+      await invalidateCache('/house-balance');
+      await syncEngine.enqueue(`/house-balance/${houseId}`, 'PATCH', data);
+    }
+
+    if (isOnline()) {
+      return apiPatch<HouseBalance>(`/house-balance/${houseId}`, data);
+    }
+
+    return { houseId, ...(data as Record<string, unknown>) } as unknown as HouseBalance;
+  },
+  record: async (data: { houseId: number; amount: number; note?: string }) => {
+    if (isBrowser()) {
+      await invalidateCache('/house-balance');
+      await syncEngine.enqueue('/house-balance/payment', 'POST', data);
+    }
+
+    if (isOnline()) {
+      return apiPost('/house-balance/payment', data);
+    }
+
+    return { queued: true };
+  },
 };
 
 // ─── Bills ────────────────────────────────────────────────────────────────────
@@ -289,44 +454,114 @@ export const billsApi = {
     if (params?.houseId) q.set('houseId', String(params.houseId));
     if (params?.month) q.set('month', String(params.month));
     if (params?.year) q.set('year', String(params.year));
-    return apiGet<Bill[]>(`/bills${q.toString() ? `?${q}` : ''}`);
+    return apiGet<Bill[]>(`/bills${q.toString() ? `?${q}` : ''}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.bills.bulkPut(data);
+      },
+    });
   },
-  get: (id: number) => apiGet<Bill>(`/bills/${id}`),
+  get: (id: number) =>
+    apiGet<Bill>(`/bills/${id}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.bills.put(data);
+      },
+    }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
-  generate: (data: {
+  generate: async (data: {
     houseId: number;
     month: number;
     year: number;
     items: BillItem[];
     note?: string;
-  }) => apiPost<Bill>('/bills/generate', data),
-  delete: (id: number) => apiDelete(`/bills/${id}`),
+  }) => {
+    const res = await apiPost<Bill>('/bills/generate', data);
+    if (isBrowser()) {
+      await db.bills.put(res);
+      await invalidateCache('/bills');
+    }
+    return res;
+  },
+  delete: async (id: number) => {
+    if (isBrowser()) {
+      await db.bills.delete(id);
+      await invalidateCache('/bills');
+      await syncEngine.enqueue(`/bills/${id}`, 'DELETE');
+    }
+
+    if (isOnline()) {
+      return apiDelete(`/bills/${id}`).catch(console.error);
+    }
+
+    return null;
+  },
 };
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 export const usersApi = {
-  list: async (role?: string) => {
-    const data = await apiGet<User[]>(`/users${role ? `?role=${role}` : ''}`);
-    if (typeof window !== 'undefined') await db.users.bulkPut(data);
-    return data;
+  list: async (role?: string) =>
+    apiGet<User[]>(`/users${role ? `?role=${role}` : ''}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.users.bulkPut(data);
+      },
+    }),
+  verify: async (uuid: string, isVerified: boolean) => {
+    if (isBrowser()) {
+      await db.users.update(uuid, { isVerified });
+      await invalidateCache('/users');
+      await syncEngine.enqueue(`/users/${uuid}/verify`, 'PATCH', { isVerified });
+    }
+
+    if (isOnline()) {
+      return apiPatch(`/users/${uuid}/verify`, { isVerified });
+    }
+
+    return { uuid, isVerified };
   },
-  verify: (uuid: string, isVerified: boolean) =>
-    apiPatch(`/users/${uuid}/verify`, { isVerified }),
-  delete: (uuid: string) => apiDelete(`/users/${uuid}`),
+  delete: async (uuid: string) => {
+    if (isBrowser()) {
+      await db.users.delete(uuid);
+      await invalidateCache('/users');
+      await syncEngine.enqueue(`/users/${uuid}`, 'DELETE');
+    }
+
+    if (isOnline()) {
+      return apiDelete(`/users/${uuid}`).catch(console.error);
+    }
+
+    return null;
+  },
 };
 
 // ─── Product Rates ───────────────────────────────────────────────────────────
 
 export const productRatesApi = {
   list: () => apiGet<ProductRate[]>('/product-rates'),
-  create: (data: { name: string; unit?: string; rate: number; isActive?: boolean }) =>
-    apiPost<ProductRate>('/product-rates', data),
-  update: (
+  create: async (data: { name: string; unit?: string; rate: number; isActive?: boolean }) => {
+    const res = await apiPost<ProductRate>('/product-rates', data);
+    if (isBrowser()) await invalidateCache('/product-rates');
+    return res;
+  },
+  update: async (
     id: number,
     data: Partial<{ name: string; unit: string; rate: number; isActive: boolean }>,
-  ) => apiPatch<ProductRate>(`/product-rates/${id}`, data),
-  delete: (id: number) => apiDelete(`/product-rates/${id}`),
+  ) => {
+    const res = await apiPatch<ProductRate>(`/product-rates/${id}`, data);
+    if (isBrowser()) await invalidateCache('/product-rates');
+    return res;
+  },
+  delete: async (id: number) => {
+    if (isBrowser()) {
+      await invalidateCache('/product-rates');
+      await syncEngine.enqueue(`/product-rates/${id}`, 'DELETE');
+    }
+
+    if (isOnline()) {
+      return apiDelete(`/product-rates/${id}`).catch(console.error);
+    }
+
+    return null;
+  },
 };
 
 // ─── Delivery Logs ───────────────────────────────────────────────────────────
@@ -336,22 +571,68 @@ export const deliveryLogsApi = {
     const q = new URLSearchParams();
     if (params?.houseId) q.set('houseId', String(params.houseId));
     if (params?.shift) q.set('shift', params.shift);
-    return apiGet<DeliveryLog[]>(`/delivery-logs${q.toString() ? `?${q}` : ''}`);
+    return apiGet<DeliveryLog[]>(`/delivery-logs${q.toString() ? `?${q}` : ''}`, {
+      onData: async (data) => {
+        if (isBrowser()) await db.deliveryLogs.bulkPut(data);
+      },
+    });
   },
-  create: (data: {
+  create: async (data: {
     houseId: number;
     shift: 'morning' | 'evening';
     items: DeliveryLogItem[];
     currentBalance?: number;
     note?: string;
-  }) => apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data),
-  update: (
+  }) => {
+    const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
+    if (isBrowser()) {
+      await db.deliveryLogs.put(res.log);
+      await invalidateCache('/delivery-logs');
+    }
+    return res;
+  },
+  update: async (
     id: number,
     data: {
       items?: DeliveryLogItem[];
       currentBalance?: number;
       note?: string;
     },
-  ) => apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data),
-  delete: (id: number) => apiDelete(`/delivery-logs/${id}`),
+  ) => {
+    if (isOnline()) {
+      const res = await apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data);
+      if (isBrowser()) {
+        await db.deliveryLogs.put(res);
+        await invalidateCache('/delivery-logs');
+      }
+      return res;
+    }
+
+    if (isBrowser()) {
+      const existing = await db.deliveryLogs.get(id);
+      if (existing) await db.deliveryLogs.put({ ...existing, ...data });
+      await invalidateCache('/delivery-logs');
+      await syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
+    }
+
+    return { id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog;
+  },
+  delete: async (id: number) => {
+    if (isOnline()) {
+      const res = await apiDelete(`/delivery-logs/${id}`);
+      if (isBrowser()) {
+        await db.deliveryLogs.delete(id);
+        await invalidateCache('/delivery-logs');
+      }
+      return res;
+    }
+
+    if (isBrowser()) {
+      await db.deliveryLogs.delete(id);
+      await invalidateCache('/delivery-logs');
+      await syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
+    }
+
+    return null;
+  },
 };

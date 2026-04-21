@@ -7,6 +7,15 @@ export type SyncAction = {
   method: 'POST' | 'PATCH' | 'DELETE';
   body?: any;
   createdAt: number;
+  attempts?: number;
+  nextRetryAt?: number;
+  lastError?: string;
+};
+
+export type QueryCacheEntry = {
+  key: string;
+  payload: string;
+  updatedAt: number;
 };
 
 export class BillManagerDB extends Dexie {
@@ -16,16 +25,18 @@ export class BillManagerDB extends Dexie {
   bills!: Table<Bill, number>;
   users!: Table<User, string>; // uuid is string
   syncQueue!: Table<SyncAction, number>;
+  queryCache!: Table<QueryCacheEntry, string>;
 
   constructor() {
     super('BillManagerDB');
-    this.version(1).stores({
+    this.version(2).stores({
       houses: 'id, houseNo, phoneNo',
       houseConfigs: 'id, houseId, shift, supplierId',
       deliveryLogs: 'id, houseId, supplierId, shift, deliveredAt',
       bills: 'id, houseId, month, year',
       users: 'uuid, username, role',
-      syncQueue: '++id, createdAt'
+      syncQueue: '++id, createdAt, nextRetryAt',
+      queryCache: 'key, updatedAt',
     });
   }
 }

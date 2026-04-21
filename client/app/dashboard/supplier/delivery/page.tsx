@@ -1015,10 +1015,10 @@ export default function DeliveryPage() {
                                     </div>
                                 ) : (
                                     // VIEW MODE
-                                    <div className="rounded-xl border border-border p-3">
-                                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                    <div className="rounded-xl border border-border p-3 space-y-3">
+                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                                             <span>{new Date(log.deliveredAt).toLocaleTimeString('en-IN')}</span>
-                                            <div className="flex gap-2 items-center">
+                                            <div className="flex items-center gap-2">
                                                 <span>Total ₹{Number(log.totalAmount).toLocaleString('en-IN')}</span>
                                                 <Button
                                                     variant="ghost"
@@ -1030,16 +1030,32 @@ export default function DeliveryPage() {
                                                 </Button>
                                             </div>
                                         </div>
-                                        <div className="mt-2 space-y-1 text-sm">
-                                            {log.items.map((item, idx) => (
-                                                <div key={`${log.id}-${idx}`} className="flex items-center justify-between">
-                                                    <span className="capitalize">{item.milkType} {item.qty}L x ₹{item.rate}</span>
-                                                    <span>₹{item.amount}</span>
-                                                </div>
-                                            ))}
+
+                                        <div className="overflow-hidden rounded-lg border border-border/70">
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead>Product</TableHead>
+                                                        <TableHead>Qty (L)</TableHead>
+                                                        <TableHead>Rate</TableHead>
+                                                        <TableHead>Amount</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {log.items.map((item, idx) => (
+                                                        <TableRow key={`${log.id}-${idx}`}>
+                                                            <TableCell className="capitalize">{item.milkType}</TableCell>
+                                                            <TableCell>{item.qty}</TableCell>
+                                                            <TableCell>₹{item.rate}/L</TableCell>
+                                                            <TableCell>₹{Number(item.amount).toLocaleString('en-IN')}</TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
                                         </div>
+
                                         {log.note ? (
-                                            <p className="mt-2 text-xs text-muted-foreground">Note: {log.note}</p>
+                                            <p className="text-xs text-muted-foreground">Note: {log.note}</p>
                                         ) : null}
                                     </div>
                                 )}
@@ -1051,66 +1067,94 @@ export default function DeliveryPage() {
 
             {/* FORM */}
             <div className="bg-card rounded-t-none overflow-hidden">
-            {!isCompleted && (
-                <div className="p-3 space-y-2 border-t border-border/40">
-                    {deliveryItems.map((item, idx) => {
-                        const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
-                        const rate = effectiveRate.rate
-                        const qty = Number(item.qty)
-                        const amount = qty > 0 ? qty * rate : 0
-                        return (
-                            <div key={idx} className="grid grid-cols-12 gap-1">
+                <div className="border-t border-border/40 p-3 space-y-3">
+                    <div className="overflow-hidden rounded-xl border border-border/70">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="w-[120px]">Product</TableHead>
+                                    <TableHead className="w-[110px]">Qty (L)</TableHead>
+                                    <TableHead className="w-[90px]">Rate</TableHead>
+                                    <TableHead className="w-[100px]">Amount</TableHead>
+                                    <TableHead className="w-[56px] text-right">Action</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {deliveryItems.map((item, idx) => {
+                                    const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
+                                    const rate = effectiveRate.rate
+                                    const qty = Number(item.qty)
+                                    const amount = qty > 0 ? qty * rate : 0
 
-                                <div className="col-span-4">
-                                    <Select
-                                        value={item.milkType}
-                                        onValueChange={(val) =>
-                                            updateDeliveryItem(idx, 'milkType', val)
-                                        }
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="buffalo">Buffalo</SelectItem>
-                                            <SelectItem value="cow">Cow</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
+                                    return (
+                                        <TableRow key={idx}>
+                                            <TableCell>
+                                                <Select
+                                                    value={item.milkType}
+                                                    onValueChange={(val) =>
+                                                        updateDeliveryItem(idx, 'milkType', val)
+                                                    }
+                                                >
+                                                    <SelectTrigger className="h-9">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="buffalo">Buffalo</SelectItem>
+                                                        <SelectItem value="cow">Cow</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </TableCell>
 
-                                <div className="col-span-4">
-                                    <Input
-                                        type="number"
-                                        placeholder="Litres"
-                                        value={item.qty}
-                                        onChange={(e) =>
-                                            updateDeliveryItem(idx, 'qty', e.target.value)
-                                        }
-                                    />
-                                </div>
+                                            <TableCell>
+                                                <Input
+                                                    type="number"
+                                                    placeholder="0"
+                                                    value={item.qty}
+                                                    onChange={(e) =>
+                                                        updateDeliveryItem(idx, 'qty', e.target.value)
+                                                    }
+                                                    className="h-9"
+                                                />
+                                            </TableCell>
 
-                                <div className="col-span-3 text-xs">
-                                    <span>₹{rate}/L</span>
-                                    {qty > 0 && <span className="block">₹{amount}</span>}
-                                </div>
+                                            <TableCell className="text-sm font-medium">
+                                                ₹{rate}/L
+                                            </TableCell>
 
-                                <div className="col-span-1">
-                                    {deliveryItems.length > 1 && (
-                                        <Button onClick={() => removeItem(idx)}>
-                                            <Trash2 size={16} />
-                                        </Button>
-                                    )}
-                                </div>
-                            </div>
-                        )
-                    })}
+                                            <TableCell className="text-sm font-semibold">
+                                                ₹{amount.toLocaleString('en-IN')}
+                                            </TableCell>
 
-                    <Button onClick={addItem} size="sm" className="text-xs">
-                        <Plus className="mr-1 h-3 w-3" /> Add Item
-                    </Button>
-                    <div className="text-sm font-bold">
-                        Total: ₹{currentDeliveryTotal}
+                                            <TableCell className="text-right">
+                                                {deliveryItems.length > 1 ? (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => removeItem(idx)}
+                                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </Button>
+                                                ) : (
+                                                    <span className="text-xs text-muted-foreground">-</span>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    )
+                                })}
+                            </TableBody>
+                        </Table>
                     </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Button onClick={addItem} size="sm" className="text-xs">
+                            <Plus className="mr-1 h-3 w-3" /> Add Item
+                        </Button>
+                        <div className="text-sm font-bold">
+                            Total: ₹{currentDeliveryTotal.toLocaleString('en-IN')}
+                        </div>
+                    </div>
+
                     <Textarea
                         placeholder="Notes"
                         value={notes}
@@ -1118,12 +1162,10 @@ export default function DeliveryPage() {
                         className="min-h-16 text-xs"
                     />
                 </div>
-            )}
 
-            {/* ACTION */}
-            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full rounded-none rounded-b-2xl">
-                {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
-            </Button>
+                <Button onClick={handleMarkDelivered} disabled={marking} className="w-full rounded-none rounded-b-2xl">
+                    {marking ? 'Saving...' : isCompleted ? 'Add Delivery' : 'Mark Delivered'}
+                </Button>
             </div>
 
             <div className="flex items-center justify-between px-1">
@@ -1141,6 +1183,7 @@ export default function DeliveryPage() {
                     <ChevronRight />
                 </Button>
             </div>
+
             </div>
 
             <Dialog open={isMapExpanded} onOpenChange={setIsMapExpanded}>
