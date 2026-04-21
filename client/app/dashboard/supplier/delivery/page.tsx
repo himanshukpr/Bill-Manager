@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     ChevronLeft,
@@ -23,7 +23,6 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import {
     houseConfigApi,
     housesApi,
@@ -161,14 +160,14 @@ export default function DeliveryPage() {
 
     const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
     const [currentBalance, setCurrentBalance] = useState('')
-    const [notes, setNotes] = useState('')
     const [marking, setMarking] = useState(false)
 
     // Edit log state (inline editing)
     const [editingLogId, setEditingLogId] = useState<number | null>(null)
     const [editingItems, setEditingItems] = useState<DeliveryItemForm[]>([])
-    const [editingNotes, setEditingNotes] = useState('')
     const [editingSaving, setEditingSaving] = useState(false)
+    const [sheetDirty, setSheetDirty] = useState(false)
+    const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
@@ -433,19 +432,28 @@ export default function DeliveryPage() {
         if (currentHouseLogs.length === 0) {
             setEditingLogId(null)
             setEditingItems([])
-            setEditingNotes('')
+            setSheetDirty(false)
             return
         }
 
-        const activeLog = currentHouseLogs[0]
-        setEditingLogId(activeLog.id)
-        setEditingItems(
-            activeLog.items.map((item: any) => ({
-                milkType: item.milkType,
-                qty: String(item.qty),
-            }))
-        )
-        setEditingNotes(activeLog.note || '')
+        const primaryLog = currentHouseLogs[0]
+        const grouped = new Map<MilkType, number>()
+
+        for (const log of currentHouseLogs) {
+            for (const item of log.items) {
+                const milkType = item.milkType as MilkType
+                grouped.set(milkType, (grouped.get(milkType) ?? 0) + Number(item.qty || 0))
+            }
+        }
+
+        const nextItems = Array.from(grouped.entries()).map(([milkType, qty]) => ({
+            milkType,
+            qty: String(qty),
+        }))
+
+        setEditingLogId(primaryLog.id)
+        setEditingItems(nextItems.length > 0 ? nextItems : [{ ...emptyDeliveryItem }])
+        setSheetDirty(false)
     }, [currentHouseLogs])
 
     const getEffectiveRate = (house: House | undefined, milkType: MilkType): { rate: number; source: 'house' | 'global' | 'none' } => {
@@ -480,24 +488,32 @@ export default function DeliveryPage() {
     const resetForm = () => {
         setDeliveryItems([{ ...emptyDeliveryItem }])
         setCurrentBalance('')
-        setNotes('')
     }
 
     // DELIVERY ITEMS
     const updateDeliveryItem = (idx: number, field: keyof DeliveryItemForm, value: string) => {
+        if (field === 'qty') {
+            const trimmed = value.trim()
+            setDeliveryItems((prev) => {
+                if (trimmed === '' && prev.length > 1) {
+                    return prev.filter((_, i) => i !== idx)
+                }
+                return prev.map((item, i) =>
+                    i === idx ? { ...item, qty: value } : item
+                )
+            })
+            return
+        }
+
         setDeliveryItems((prev) =>
             prev.map((item, i) =>
-                i === idx ? { ...item, [field]: value } : item
+                i === idx ? { ...item, milkType: value as MilkType } : item
             )
         )
     }
 
     const addItem = () => {
         setDeliveryItems((prev) => [...prev, { ...emptyDeliveryItem }])
-    }
-
-    const removeItem = (idx: number) => {
-        setDeliveryItems((prev) => prev.filter((_, i) => i !== idx))
     }
 
     // TOTAL CALCULATION
@@ -541,7 +557,6 @@ export default function DeliveryPage() {
                 shift: selectedShift,
                 items: payloadItems,
                 currentBalance: currentBalance ? Number(currentBalance) : undefined,
-                note: notes.trim() || undefined,
             })
 
             setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
@@ -564,115 +579,115 @@ export default function DeliveryPage() {
         }
     }
 
-    const cancelEdit = () => {
-        const activeLog = currentHouseLogs.find((log) => log.id === editingLogId) ?? currentHouseLogs[0]
-        if (!activeLog) return
+    const persistTodaySheet = useCallback(async () => {
+        if (!currentHouse || !selectedShift || editingItems.length === 0) return
 
-        setEditingItems(
-            activeLog.items.map((item: any) => ({
-                milkType: item.milkType,
-                qty: String(item.qty),
-            }))
-        )
-        setEditingNotes(activeLog.note || '')
-    }
+        const validItems = editingItems
+            .filter((item) => Number(item.qty) > 0)
+            .map((item) => {
+                const qty = Number(item.qty)
+                const { rate } = getEffectiveRate(currentHouse, item.milkType)
+                return {
+                    milkType: item.milkType,
+                    qty,
+                    rate,
+                    amount: qty * rate,
+                }
+            })
+            .filter((item) => item.rate > 0)
 
-    const handleUpdateLog = async () => {
-        if (!editingLogId || editingItems.length === 0) return
+        if (validItems.length === 0) return
 
         try {
             setEditingSaving(true)
 
-            const validItems = editingItems
-                .filter((item) => Number(item.qty) > 0)
-                .map((item) => {
-                    const { rate } = getEffectiveRate(currentHouse, item.milkType)
-                    const qty = Number(item.qty)
-                    return {
-                        milkType: item.milkType,
-                        qty,
-                        rate,
-                        amount: qty * rate,
-                    }
+            if (!editingLogId) {
+                const created = await deliveryLogsApi.create({
+                    houseId: currentHouse.id,
+                    shift: selectedShift,
+                    items: validItems,
                 })
 
-            if (validItems.length === 0) {
-                toast.error('At least one item with qty > 0 is required')
-                return
+                setEditingLogId(created.log.id)
+                setCurrentHouseLogs([created.log])
+                setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+            } else {
+                const updated = await deliveryLogsApi.update(editingLogId, {
+                    items: validItems as any,
+                })
+
+                const duplicateLogIds = currentHouseLogs
+                    .filter((log) => log.id !== editingLogId)
+                    .map((log) => log.id)
+
+                if (duplicateLogIds.length > 0) {
+                    await Promise.all(duplicateLogIds.map((logId) => deliveryLogsApi.delete(logId)))
+                }
+
+                setCurrentHouseLogs([updated as DeliveryLog])
             }
-
-            await deliveryLogsApi.update(editingLogId, {
-                items: validItems as any,
-                note: editingNotes.trim() || undefined,
-            })
-
-            toast.success('Delivery log updated')
-            cancelEdit()
-
-            // Reload logs
-            const refreshedLogs = await deliveryLogsApi.list({
-                houseId: currentHouse.id,
-                shift: selectedShift as 'morning' | 'evening',
-            })
-            const today = new Date()
-            setCurrentHouseLogs(
-                refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
-            )
         } catch (err: any) {
-            toast.error(err.message)
+            toast.error(err.message || 'Auto-save failed')
         } finally {
             setEditingSaving(false)
         }
-    }
+    }, [currentHouse, selectedShift, editingItems, editingLogId, currentHouseLogs])
 
-    const normalizeEditingItems = (items: DeliveryItemForm[]) =>
-        items
-            .map((item) => ({
-                milkType: item.milkType,
-                qty: Number(item.qty) || 0,
-            }))
-            .filter((item) => item.qty > 0)
+    useEffect(() => {
+        if (!sheetDirty) return
 
-    const activeEditingLog = currentHouseLogs.find((log) => log.id === editingLogId) ?? null
-    const activeEditingSnapshot = activeEditingLog
-        ? JSON.stringify({
-              items: activeEditingLog.items
-                  .map((item: any) => ({
-                      milkType: item.milkType,
-                      qty: Number(item.qty) || 0,
-                  }))
-                  .filter((item: any) => item.qty > 0),
-              note: activeEditingLog.note || '',
-          })
-        : ''
-    const currentEditingSnapshot = JSON.stringify({
-        items: normalizeEditingItems(editingItems),
-        note: editingNotes.trim(),
-    })
-    const hasPendingEditChanges = activeEditingLog
-        ? activeEditingSnapshot !== currentEditingSnapshot
-        : false
-
-    const handleDeleteLog = async (logId: number) => {
-        if (!confirm('Delete this delivery log?')) return
-
-        try {
-            await deliveryLogsApi.delete(logId)
-            toast.success('Delivery log deleted')
-
-            // Reload logs
-            const refreshedLogs = await deliveryLogsApi.list({
-                houseId: currentHouse.id,
-                shift: selectedShift as 'morning' | 'evening',
-            })
-            const today = new Date()
-            setCurrentHouseLogs(
-                refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
-            )
-        } catch (err: any) {
-            toast.error(err.message)
+        if (autoSaveTimerRef.current) {
+            clearTimeout(autoSaveTimerRef.current)
         }
+
+        autoSaveTimerRef.current = setTimeout(() => {
+            void persistTodaySheet().finally(() => setSheetDirty(false))
+        }, 700)
+
+        return () => {
+            if (autoSaveTimerRef.current) {
+                clearTimeout(autoSaveTimerRef.current)
+            }
+        }
+    }, [sheetDirty, persistTodaySheet])
+
+    const updateTodayRecordItem = (idx: number, field: keyof DeliveryItemForm, value: string) => {
+        if (field === 'qty') {
+            const trimmed = value.trim()
+            setEditingItems((prev) => {
+                if (trimmed === '' && prev.length > 1) {
+                    return prev.filter((_, i) => i !== idx)
+                }
+                return prev.map((item, i) =>
+                    i === idx ? { ...item, qty: value } : item,
+                )
+            })
+            setSheetDirty(true)
+            return
+        }
+
+        setEditingItems((prev) =>
+            prev.map((item, i) => (i === idx ? { ...item, milkType: value as MilkType } : item)),
+        )
+        setSheetDirty(true)
     }
+
+    const addTodayRecordItem = () => {
+        setEditingItems((prev) => [...prev, { ...emptyDeliveryItem }])
+        setSheetDirty(true)
+    }
+
+    const todaySheetTotal = useMemo(
+        () =>
+            editingItems
+                .filter((item) => Number(item.qty) > 0)
+                .reduce((sum, item) => {
+                    const qty = Number(item.qty)
+                    const { rate } = getEffectiveRate(currentHouse, item.milkType)
+                    return sum + qty * rate
+                }, 0),
+        [editingItems, currentHouse, globalRateMap],
+    )
 
     // SHIFT SELECTOR
     if (!selectedShift) {
@@ -858,214 +873,84 @@ export default function DeliveryPage() {
                 </div>
             </div>
 
-            <div className="hidden bg-card p-5 rounded-2xl space-y-3">
-                <p className="text-sm font-semibold">Today&apos;s Delivery Records</p>
+            <div className="bg-card p-4 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold">Today&apos;s Delivery Records</p>
+                    <p className="text-xs text-muted-foreground">
+                        {editingSaving ? 'Saving...' : sheetDirty ? 'Unsaved changes' : 'Auto-saved'}
+                    </p>
+                </div>
+
                 {logsLoading ? (
                     <Skeleton className="h-20 w-full" />
                 ) : currentHouseLogs.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No delivery records saved for this house yet.</p>
+                    <p className="text-sm text-muted-foreground">No delivery records saved for this house yet. Add first delivery below.</p>
                 ) : (
-                    <div className="space-y-3">
-                        {currentHouseLogs.map((log) => (
-                            <div key={log.id}>
-                                {editingLogId === log.id ? (
-                                    // INLINE EDIT MODE
-                                    <div className="rounded-xl border border-border bg-card p-4 shadow-sm space-y-4 sm:p-5">
-                                        <div className="flex items-center justify-between border-b border-border pb-3">
-                                            <div>
-                                                <div className="text-sm font-semibold text-foreground">Editing delivery</div>
-                                                <div className="text-xs text-muted-foreground">Update items, notes, or totals directly here</div>
-                                            </div>
-                                            <div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                                                {new Date(log.deliveredAt).toLocaleTimeString('en-IN')}
-                                            </div>
-                                        </div>
+                    <>
+                        <div className="overflow-hidden rounded-lg border border-border/70">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Product</TableHead>
+                                        <TableHead className="w-[120px]">Qty (L)</TableHead>
+                                        <TableHead>Rate</TableHead>
+                                        <TableHead>Amount</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {editingItems.map((item, idx) => {
+                                        const rate = getEffectiveRate(currentHouse, item.milkType).rate
+                                        const qty = Number(item.qty)
+                                        const amount = qty > 0 ? qty * rate : 0
 
-                                        <div className="space-y-3">
-                                            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery items</div>
+                                        return (
+                                            <TableRow key={idx}>
+                                                <TableCell>
+                                                    <Select
+                                                        value={item.milkType}
+                                                        onValueChange={(val) => updateTodayRecordItem(idx, 'milkType', val)}
+                                                    >
+                                                        <SelectTrigger className="h-9">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="buffalo">Buffalo</SelectItem>
+                                                            <SelectItem value="cow">Cow</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                </TableCell>
 
-                                        {editingItems.map((item, idx) => {
-                                            const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
-                                            const rate = effectiveRate.rate
-                                            const qty = Number(item.qty)
-                                            const amount = qty > 0 ? qty * rate : 0
+                                                <TableCell className="min-w-[120px]">
+                                                    <Input
+                                                        type="number"
+                                                        placeholder="0"
+                                                        value={item.qty}
+                                                        onChange={(e) => updateTodayRecordItem(idx, 'qty', e.target.value)}
+                                                        className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                    />
+                                                </TableCell>
 
-                                            return (
-                                                <div key={idx} className="rounded-lg border border-border bg-background p-3 space-y-2">
-                                                    <div className="flex items-center justify-between mb-2">
-                                                        <span className="text-xs font-semibold text-muted-foreground">Item {idx + 1}</span>
-                                                        {editingItems.length > 1 && (
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                onClick={() =>
-                                                                    setEditingItems((prev) =>
-                                                                        prev.filter((_, i) => i !== idx)
-                                                                    )
-                                                                }
-                                                                className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                                            >
-                                                                <Trash2 size={14} />
-                                                            </Button>
-                                                        )}
-                                                    </div>
+                                                <TableCell>₹{rate}/L</TableCell>
+                                                <TableCell>₹{amount.toLocaleString('en-IN')}</TableCell>
+                                            </TableRow>
+                                        )
+                                    })}
+                                </TableBody>
+                            </Table>
+                        </div>
 
-                                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                                        <div>
-                                                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Type</label>
-                                                            <Select
-                                                                value={item.milkType}
-                                                                onValueChange={(val) =>
-                                                                    setEditingItems((prev) =>
-                                                                        prev.map((it, i) =>
-                                                                            i === idx ? { ...it, milkType: val as MilkType } : it
-                                                                        )
-                                                                    )
-                                                                }
-                                                            >
-                                                                <SelectTrigger className="h-9 text-sm">
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    <SelectItem value="buffalo">Buffalo</SelectItem>
-                                                                    <SelectItem value="cow">Cow</SelectItem>
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </div>
-
-                                                        <div>
-                                                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Qty (L)</label>
-                                                            <Input
-                                                                type="number"
-                                                                placeholder="0"
-                                                                value={item.qty}
-                                                                onChange={(e) =>
-                                                                    setEditingItems((prev) =>
-                                                                        prev.map((it, i) =>
-                                                                            i === idx ? { ...it, qty: e.target.value } : it
-                                                                        )
-                                                                    )
-                                                                }
-                                                                className="h-9 text-sm"
-                                                            />
-                                                        </div>
-
-                                                        <div>
-                                                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Amount</label>
-                                                            <div className="flex items-center rounded-md border border-border bg-muted px-2 py-2 text-sm font-semibold text-foreground">
-                                                                ₹{amount.toLocaleString('en-IN')}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                                                        <span>Rate: ₹{rate}/L</span>
-                                                        {qty > 0 && <span className="font-semibold text-foreground">{qty}L × ₹{rate} = ₹{amount}</span>}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() =>
-                                                    setEditingItems((prev) => [...prev, { ...emptyDeliveryItem }])
-                                                }
-                                                className="w-full text-xs"
-                                            >
-                                                <Plus className="mr-2 h-4 w-4" /> Add Item
-                                            </Button>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</label>
-                                            <Input
-                                                placeholder="Optional delivery notes..."
-                                                value={editingNotes}
-                                                onChange={(e) => setEditingNotes(e.target.value)}
-                                                className="text-sm"
-                                            />
-                                        </div>
-
-                                        <div className="rounded-lg border border-border bg-muted/60 p-3">
-                                            <div className="mb-1 text-xs font-semibold text-muted-foreground">Total Amount</div>
-                                            <div className="text-2xl font-bold text-foreground">
-                                                ₹{editingItems
-                                                    .filter((item) => Number(item.qty) > 0)
-                                                    .reduce((sum, item) => {
-                                                        const { rate } = getEffectiveRate(currentHouse, item.milkType)
-                                                        return sum + Number(item.qty) * rate
-                                                    }, 0)
-                                                    .toLocaleString('en-IN')}
-                                            </div>
-                                        </div>
-
-                                        <div className="flex gap-2 pt-2">
-                                            {hasPendingEditChanges ? (
-                                                <Button
-                                                    onClick={handleUpdateLog}
-                                                    disabled={editingSaving}
-                                                    className="flex-1 text-sm font-semibold"
-                                                >
-                                                    {editingSaving ? 'Saving...' : 'Update'}
-                                                </Button>
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    // VIEW MODE
-                                    <div className="rounded-xl border border-border p-3 space-y-3">
-                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                                            <span>{new Date(log.deliveredAt).toLocaleTimeString('en-IN')}</span>
-                                            <div className="flex items-center gap-2">
-                                                <span>Total ₹{Number(log.totalAmount).toLocaleString('en-IN')}</span>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleDeleteLog(log.id)}
-                                                    className="text-red-500 hover:text-red-600"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </Button>
-                                            </div>
-                                        </div>
-
-                                        <div className="overflow-hidden rounded-lg border border-border/70">
-                                            <Table>
-                                                <TableHeader>
-                                                    <TableRow>
-                                                        <TableHead>Product</TableHead>
-                                                        <TableHead>Qty (L)</TableHead>
-                                                        <TableHead>Rate</TableHead>
-                                                        <TableHead>Amount</TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {log.items.map((item, idx) => (
-                                                        <TableRow key={`${log.id}-${idx}`}>
-                                                            <TableCell className="capitalize">{item.milkType}</TableCell>
-                                                            <TableCell>{item.qty}</TableCell>
-                                                            <TableCell>₹{item.rate}/L</TableCell>
-                                                            <TableCell>₹{Number(item.amount).toLocaleString('en-IN')}</TableCell>
-                                                        </TableRow>
-                                                    ))}
-                                                </TableBody>
-                                            </Table>
-                                        </div>
-
-                                        {log.note ? (
-                                            <p className="text-xs text-muted-foreground">Note: {log.note}</p>
-                                        ) : null}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
+                        <div className="flex items-center justify-between gap-3">
+                            <Button onClick={addTodayRecordItem} size="sm" variant="outline" className="text-xs">
+                                <Plus className="mr-1 h-3 w-3" /> Add Product
+                            </Button>
+                            <div className="text-sm font-semibold">Total: ₹{todaySheetTotal.toLocaleString('en-IN')}</div>
+                        </div>
+                    </>
                 )}
             </div>
 
-            {/* FORM */}
+            {/* FIRST DELIVERY FORM */}
+            {currentHouseLogs.length === 0 ? (
             <div className="bg-card rounded-t-none overflow-hidden">
                 <div className="border-t border-border/40 p-3 space-y-3">
                     <div className="overflow-hidden rounded-xl border border-border/70">
@@ -1076,7 +961,6 @@ export default function DeliveryPage() {
                                     <TableHead className="w-[110px]">Qty (L)</TableHead>
                                     <TableHead className="w-[90px]">Rate</TableHead>
                                     <TableHead className="w-[100px]">Amount</TableHead>
-                                    <TableHead className="w-[56px] text-right">Action</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1105,7 +989,7 @@ export default function DeliveryPage() {
                                                 </Select>
                                             </TableCell>
 
-                                            <TableCell>
+                                            <TableCell className="min-w-[120px]">
                                                 <Input
                                                     type="number"
                                                     placeholder="0"
@@ -1113,7 +997,7 @@ export default function DeliveryPage() {
                                                     onChange={(e) =>
                                                         updateDeliveryItem(idx, 'qty', e.target.value)
                                                     }
-                                                    className="h-9"
+                                                    className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
                                                 />
                                             </TableCell>
 
@@ -1123,21 +1007,6 @@ export default function DeliveryPage() {
 
                                             <TableCell className="text-sm font-semibold">
                                                 ₹{amount.toLocaleString('en-IN')}
-                                            </TableCell>
-
-                                            <TableCell className="text-right">
-                                                {deliveryItems.length > 1 ? (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => removeItem(idx)}
-                                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </Button>
-                                                ) : (
-                                                    <span className="text-xs text-muted-foreground">-</span>
-                                                )}
                                             </TableCell>
                                         </TableRow>
                                     )
@@ -1154,19 +1023,13 @@ export default function DeliveryPage() {
                             Total: ₹{currentDeliveryTotal.toLocaleString('en-IN')}
                         </div>
                     </div>
-
-                    <Textarea
-                        placeholder="Notes"
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        className="min-h-16 text-xs"
-                    />
                 </div>
 
                 <Button onClick={handleMarkDelivered} disabled={marking} className="w-full rounded-none rounded-b-2xl">
                     {marking ? 'Saving...' : isCompleted ? 'Add Delivery' : 'Mark Delivered'}
                 </Button>
             </div>
+            ) : null}
 
             <div className="flex items-center justify-between px-1">
                 <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
