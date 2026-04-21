@@ -66,6 +66,60 @@ const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
 
 type MilkType = DeliveryItemForm['milkType']
 
+type AlertDays = {
+    Monday: boolean
+    Tuesday: boolean
+    Wednesday: boolean
+    Thursday: boolean
+    Friday: boolean
+    Saturday: boolean
+    Sunday: boolean
+}
+
+type HouseAlert = {
+    id: string
+    text: string
+    schedule: AlertDays
+}
+
+const DAYS_BY_INDEX: Array<keyof AlertDays> = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+]
+
+function parseHouseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
+    if (!jsonStr) return []
+    const trimmed = jsonStr.trim()
+    if (!trimmed) return []
+
+    try {
+        const parsed = JSON.parse(trimmed)
+        return Array.isArray(parsed) ? parsed : []
+    } catch {
+        // Backward compatibility for legacy plain-text alert values.
+        return [
+            {
+                id: 'legacy-alert',
+                text: trimmed,
+                schedule: {
+                    Monday: true,
+                    Tuesday: true,
+                    Wednesday: true,
+                    Thursday: true,
+                    Friday: true,
+                    Saturday: true,
+                    Sunday: true,
+                },
+            },
+        ]
+    }
+}
+
 function normalizeProductName(name?: string | null): string {
     return (name ?? '').trim().toLowerCase()
 }
@@ -324,11 +378,20 @@ export default function DeliveryPage() {
         if (!query) return houses
 
         return houses.filter((house) => {
+            const configAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
+            const todayKey = DAYS_BY_INDEX[new Date().getDay()]
+            const alertText = configAlerts
+                .filter((alert) => alert.schedule?.[todayKey])
+                .map((alert) => alert.text.trim())
+                .filter(Boolean)
+                .join(', ')
+
             const searchable = [
                 house.houseNo,
                 house.area ?? '',
                 house.phoneNo,
                 allocatedHouseProducts[house.id] ?? '',
+                alertText,
             ]
 
             return searchable.some((value) => value.toLowerCase().includes(query))
@@ -736,7 +799,7 @@ export default function DeliveryPage() {
                 </div>
 
                 <Input
-                    placeholder="Search by house number, area, phone, or product"
+                    placeholder="Search by house number, area, phone, product, or alert"
                     value={houseSearch}
                     onChange={(event) => setHouseSearch(event.target.value)}
                 />
@@ -747,22 +810,33 @@ export default function DeliveryPage() {
                             <TableRow>
                                 <TableHead>House Number</TableHead>
                                 <TableHead>Products</TableHead>
+                                <TableHead>Daily Alert</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {searchedAllocatedHouses.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={2} className="text-center text-muted-foreground">
+                                    <TableCell colSpan={3} className="text-center text-muted-foreground">
                                         No houses match your search.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                searchedAllocatedHouses.map((house) => (
-                                    <TableRow key={house.id}>
-                                        <TableCell className="font-semibold">{house.houseNo}</TableCell>
-                                        <TableCell>{allocatedHouseProducts[house.id] ?? '_'}</TableCell>
-                                    </TableRow>
-                                ))
+                                searchedAllocatedHouses.map((house) => {
+                                    const allAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
+                                    const todayKey = DAYS_BY_INDEX[new Date().getDay()]
+                                    const todayAlerts = allAlerts
+                                        .filter((alert) => alert.schedule?.[todayKey])
+                                        .map((alert) => alert.text.trim())
+                                        .filter(Boolean)
+
+                                    return (
+                                        <TableRow key={house.id}>
+                                            <TableCell className="font-semibold">{house.houseNo}</TableCell>
+                                            <TableCell>{allocatedHouseProducts[house.id] ?? '_'}</TableCell>
+                                            <TableCell>{todayAlerts.length > 0 ? todayAlerts.join(', ') : '_'}</TableCell>
+                                        </TableRow>
+                                    )
+                                })
                             )}
                         </TableBody>
                     </Table>
