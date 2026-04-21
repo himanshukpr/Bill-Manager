@@ -2,7 +2,7 @@ import { getAuthHeader } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 // ─── Generic fetch helpers ────────────────────────────────────────────────────
 

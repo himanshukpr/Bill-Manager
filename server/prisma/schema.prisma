@@ -24,7 +24,6 @@ model House {
   id               Int           @id @default(autoincrement())
   houseNo          String        @unique @map("house_no")
   area             String?
-  location         String?
   phoneNo          String        @map("phone_no")
   alternativePhone String?       @map("alternative_phone")
   description      String?
@@ -34,6 +33,7 @@ model House {
   rate2            Decimal?      @map("rate2") @db.Decimal(10, 2)
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
+  location         String?
   bills            Bill[]
   deliveries       DeliveryLog[]
   balance          HouseBalance?

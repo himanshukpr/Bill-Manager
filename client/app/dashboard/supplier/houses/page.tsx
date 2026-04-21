@@ -335,13 +335,13 @@ export default function SupplierHousesPage() {
                 </div>
             </section>
 
-            <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-                <div className="mb-6">
+            <div className="rounded-2xl border border-border bg-card p-2 shadow-sm sm:p-6">
+                <div className="mb-6 sm:mb-8">
                     <h2 className="text-lg font-semibold mb-2">Drag Route Planner</h2>
-                    <p className="text-sm text-muted-foreground mb-4">
+                    {/* <p className="text-sm text-muted-foreground mb-2 sm:mb-4">
                         Dedicated sections: drag houses to rearrange order, then save each section.
-                    </p>
-                    <div className="mb-4 inline-flex rounded-xl border border-border/70 bg-muted/30 p-1">
+                    </p> */}
+                    <div className="mb-4 inline-flex rounded-xl border border-border/70 bg-muted/30 p-1 sm:mb-5">
                         <Button
                             type="button"
                             size="sm"
@@ -362,76 +362,81 @@ export default function SupplierHousesPage() {
                         </Button>
                     </div>
 
-                    <div className="grid gap-4">
+                    <div className="grid gap-3">
                         {plannerShift === 'morning' ? (
-                            <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
-                            <div className="mb-3 flex items-center justify-between">
-                                <p className="text-sm font-semibold">Morning Routes (Your Assigned)</p>
-                                <Button size="sm" onClick={saveMorningPlan} disabled={savingMorning || morningPlan.length === 0}>
-                                    <Check className="mr-1 h-4 w-4" /> {savingMorning ? 'Saving...' : 'Save Morning'}
-                                </Button>
-                            </div>
-                            {morningPlan.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">No morning routes assigned.</p>
-                            ) : (
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('morning', event)}>
-                                    <SortableContext items={morningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                                        <div className="space-y-2">
-                                            {morningPlan.map((config, idx) => {
-                                                const house = allHouses.find((h) => h.id === config.houseId)
-                                                return (
-                                                    <PlannerSortableItem
-                                                        key={config.id}
-                                                        id={config.id}
-                                                        idx={idx}
-                                                        title={`House ${house?.houseNo ?? config.houseId}`}
-                                                        area={house?.area}
-                                                        onMoveUp={() => movePlanItem('morning', idx, 'up')}
-                                                        onMoveDown={() => movePlanItem('morning', idx, 'down')}
-                                                        canMoveUp={idx > 0}
-                                                        canMoveDown={idx < morningPlan.length - 1}
-                                                    />
-                                                )
-                                            })}
-                                        </div>
-                                    </SortableContext>
-                                </DndContext>
-                            )}
+                            <div className="rounded-xl border border-border/70 bg-muted/20 p-2 sm:p-3">
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-sm font-semibold">Morning Routes (Your Assigned)</p>
+                                    <Button size="sm" className="w-full sm:w-auto" onClick={saveMorningPlan} disabled={savingMorning || morningPlan.length === 0}>
+                                        <Check className="mr-1 h-4 w-4" /> {savingMorning ? 'Saving...' : 'Save Morning'}
+                                    </Button>
+                                </div>
+                                {morningPlan.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No morning routes assigned.</p>
+                                ) : (
+                                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('morning', event)}>
+                                        <SortableContext items={morningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                                            <div className="space-y-1 sm:space-y-1.5">
+                                                {morningPlan.map((config, idx) => {
+                                                    const house = allHouses.find((h) => h.id === config.houseId)
+                                                    return (
+                                                        <PlannerSortableItem
+                                                            key={config.id}
+                                                            id={config.id}
+                                                            idx={idx}
+                                                            title={`House ${house?.houseNo ?? config.houseId}`}
+                                                            area={house?.area}
+                                                            onMoveUp={() => movePlanItem('morning', idx, 'up')}
+                                                            onMoveDown={() => movePlanItem('morning', idx, 'down')}
+                                                            canMoveUp={idx > 0}
+                                                            canMoveDown={idx < morningPlan.length - 1}
+                                                        />
+                                                    )
+                                                })}
+                                            </div>
+                                        </SortableContext>
+                                    </DndContext>
+                                )}
                             </div>
                         ) : (
-                            <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
-                            <div className="mb-3 flex items-center justify-between">
-                                <p className="text-sm font-semibold">Evening Routes (Shared)</p>
-                                <Button size="sm" onClick={saveEveningPlan} disabled={savingEvening || eveningPlan.length === 0 || !isEveningPlanChanged}>
-                                    <Check className="mr-1 h-4 w-4" /> {savingEvening ? 'Saving...' : 'Save Evening'}
-                                </Button>
-                            </div>
-                            {eveningPlan.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">No evening routes available.</p>
-                            ) : (
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('evening', event)}>
-                                    <SortableContext items={eveningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                                        <div className="space-y-2">
-                                            {eveningPlan.map((config, idx) => {
-                                                const house = allHouses.find((h) => h.id === config.houseId)
-                                                return (
-                                                    <PlannerSortableItem
-                                                        key={config.id}
-                                                        id={config.id}
-                                                        idx={idx}
-                                                        title={`House ${house?.houseNo ?? config.houseId}`}
-                                                        area={house?.area}
-                                                        onMoveUp={() => movePlanItem('evening', idx, 'up')}
-                                                        onMoveDown={() => movePlanItem('evening', idx, 'down')}
-                                                        canMoveUp={idx > 0}
-                                                        canMoveDown={idx < eveningPlan.length - 1}
-                                                    />
-                                                )
-                                            })}
-                                        </div>
-                                    </SortableContext>
-                                </DndContext>
-                            )}
+                            <div className="rounded-xl border border-border/70 bg-muted/20 p-2 sm:p-3">
+                                <div className="mb-2 flex items-start justify-between gap-3">
+                                    <p className="text-sm font-semibold">Evening Routes (Shared)</p>
+                                    <Button
+                                        size="sm"
+                                        className="h-8 shrink-0 px-3 text-xs"
+                                        onClick={saveEveningPlan}
+                                        disabled={savingEvening || eveningPlan.length === 0 || !isEveningPlanChanged}
+                                    >
+                                        <Check className="mr-1 h-4 w-4" /> {savingEvening ? 'Saving...' : 'Save Evening'}
+                                    </Button>
+                                </div>
+                                {eveningPlan.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No evening routes available.</p>
+                                ) : (
+                                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('evening', event)}>
+                                        <SortableContext items={eveningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                                            <div className="space-y-1 sm:space-y-1.5">
+                                                {eveningPlan.map((config, idx) => {
+                                                    const house = allHouses.find((h) => h.id === config.houseId)
+                                                    return (
+                                                        <PlannerSortableItem
+                                                            key={config.id}
+                                                            id={config.id}
+                                                            idx={idx}
+                                                            title={`House ${house?.houseNo ?? config.houseId}`}
+                                                            area={house?.area}
+                                                            onMoveUp={() => movePlanItem('evening', idx, 'up')}
+                                                            onMoveDown={() => movePlanItem('evening', idx, 'down')}
+                                                            canMoveUp={idx > 0}
+                                                            canMoveDown={idx < eveningPlan.length - 1}
+                                                        />
+                                                    )
+                                                })}
+                                            </div>
+                                        </SortableContext>
+                                    </DndContext>
+                                )}
                             </div>
                         )}
                     </div>
@@ -460,7 +465,7 @@ export default function SupplierHousesPage() {
                     </div>
                 )
             ) : (
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid gap-3 lg:grid-cols-2">
                     {houses.map((house) => {
                         const configs = house.configs ?? []
                         const morningConfigs = configs.filter((config) => config.shift === 'morning')
@@ -469,7 +474,7 @@ export default function SupplierHousesPage() {
                         const current = Number(house.balance?.currentBalance ?? 0)
 
                         return (
-                            <article key={house.id} className="group rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg">
+                            <article key={house.id} className="group rounded-2xl border border-border bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg">
                                 <div className="flex items-start justify-between gap-4">
                                     <div>
                                         <div className="flex flex-wrap items-center gap-2">
@@ -492,7 +497,7 @@ export default function SupplierHousesPage() {
                                     </div>
                                 </div>
 
-                                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                                <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
                                     <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
                                         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Balance</p>
                                         <div className="mt-3 space-y-2 text-sm">
@@ -517,7 +522,7 @@ export default function SupplierHousesPage() {
                                     </div>
                                 </div>
 
-                                <div className="mt-5 grid gap-3">
+                                <div className="mt-4 grid gap-2">
                                     <ConfigBlock title="Morning configs" items={morningConfigs} emptyText="No morning allocation for this house." />
                                     <ConfigBlock title="Evening configs" items={eveningConfigs} emptyText="No evening route configured for this house." />
                                 </div>
@@ -583,45 +588,51 @@ function PlannerSortableItem({
         <div
             ref={setNodeRef}
             style={style}
-            className={`touch-none select-none flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 transition-shadow ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''}`}
+            className={`w-full touch-none select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''}`}
         >
-            <button
-                type="button"
-                aria-label="Drag to reorder"
-                className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
-                {...attributes}
-                {...listeners}
-            >
-                <GripVertical className="h-4 w-4" />
-            </button>
-            <span className="min-w-8 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
-            <span className="flex-1 font-medium">{title}</span>
-            {area && <span className="text-xs text-muted-foreground">{area}</span>}
-            <div className="ml-auto flex items-center gap-1">
-                <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2 text-xs"
-                    onClick={onMoveUp}
-                    disabled={!canMoveUp}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onTouchStart={(event) => event.stopPropagation()}
-                >
-                    Up
-                </Button>
-                <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2 text-xs"
-                    onClick={onMoveDown}
-                    disabled={!canMoveDown}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onTouchStart={(event) => event.stopPropagation()}
-                >
-                    Down
-                </Button>
+            <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-1">
+                <div className="flex min-w-0 items-center gap-0.5">
+                    <button
+                        type="button"
+                        aria-label="Drag to reorder"
+                        className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
+                        {...attributes}
+                        {...listeners}
+                    >
+                        <GripVertical className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-6 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
+                    <div className="min-w-0">
+                        <p className="text-[14px] font-medium leading-tight break-words sm:text-[15px]">{title}</p>
+                        {area ? <p className="text-[10px] text-muted-foreground break-words sm:text-[11px]">{area}</p> : null}
+                    </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs"
+                        onClick={onMoveUp}
+                        disabled={!canMoveUp}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onTouchStart={(event) => event.stopPropagation()}
+                    >
+                        Up
+                    </Button>
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs"
+                        onClick={onMoveDown}
+                        disabled={!canMoveDown}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onTouchStart={(event) => event.stopPropagation()}
+                    >
+                        Down
+                    </Button>
+                </div>
             </div>
         </div>
     )

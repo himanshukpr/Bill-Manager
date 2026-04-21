@@ -1,7 +1,7 @@
 import { db } from './db';
 import { getAuthHeader } from './auth';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 class SyncEngine {
   private syncing = false;
