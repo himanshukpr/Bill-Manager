@@ -49,7 +49,7 @@ export default function SupplierPage() {
                         <div>
                             <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Primary Action</p>
                             <h2 className="mt-2 text-xl font-bold">Start Delivery Run</h2>
-                            <p className="mt-1 text-sm text-muted-foreground">Open delivery mode to mark houses and update balances quickly.</p>
+                            <p className="mt-1 text-sm text-muted-foreground"> Delivery mode to mark houses and update balances quickly.</p>
                         </div>
                         <div className="rounded-xl bg-emerald-500/15 p-3">
                             <Navigation className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
@@ -83,14 +83,7 @@ export default function SupplierPage() {
                 </Card>
             </div>
 
-            <div className="flex justify-start">
-                <Button asChild variant="ghost" className="gap-2">
-                    <Link href="/dashboard">
-                        <Home className="h-4 w-4" />
-                        Main Dashboard
-                    </Link>
-                </Button>
-            </div>
+        
         </div>
     )
 }

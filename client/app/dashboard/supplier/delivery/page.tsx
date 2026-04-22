@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, type TouchEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     ChevronLeft,
@@ -223,6 +223,7 @@ export default function DeliveryPage() {
     const [editingSaving, setEditingSaving] = useState(false)
     const [sheetDirty, setSheetDirty] = useState(false)
     const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
@@ -547,6 +548,31 @@ export default function DeliveryPage() {
             setCurrentIndex((i) => i - 1)
             resetForm()
         }
+    }
+
+    const handleNavTouchStart = (event: TouchEvent<HTMLDivElement>) => {
+        const touch = event.touches[0]
+        navSwipeStartRef.current = { x: touch.clientX, y: touch.clientY }
+    }
+
+    const handleNavTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
+        const start = navSwipeStartRef.current
+        navSwipeStartRef.current = null
+        if (!start) return
+
+        const touch = event.changedTouches[0]
+        const deltaX = touch.clientX - start.x
+        const deltaY = touch.clientY - start.y
+
+        if (Math.abs(deltaX) < 40) return
+        if (Math.abs(deltaX) < Math.abs(deltaY)) return
+
+        if (deltaX < 0) {
+            handleNext()
+            return
+        }
+
+        handlePrevious()
     }
 
     const resetForm = () => {
@@ -896,7 +922,8 @@ export default function DeliveryPage() {
     const isCompleted = completedHouses.has(currentHouse.id)
 
     return (
-        <div className="mx-auto flex h-[100dvh] max-w-md flex-col overflow-hidden px-2 py-2 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
+        <div className="mx-auto flex h-[100dvh] max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
+            
             <div className="flex shrink-0 items-center justify-between gap-1.5 py-0 sm:py-1">
                 <Badge variant="outline" className="capitalize">
                     {selectedShift} Shift
@@ -904,7 +931,7 @@ export default function DeliveryPage() {
                 <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 gap-1.5 px-2"
+                    className="h-7 gap-1.5 px-3 rounded-full"
                     onClick={() => setPanelView('allocated-houses')}
                 >
                     <Rows3 className="h-4 w-4" /> Switch View
@@ -945,8 +972,8 @@ export default function DeliveryPage() {
                     </div>
                 </button>
 
-                <div className="grid grid-cols-3 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:gap-3 sm:p-3">
-                    <div className="col-span-2 space-y-1.5">
+                <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
+                    <div className="space-y-1.5 sm:col-span-2">
                         <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
                             <div>
                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
@@ -969,18 +996,20 @@ export default function DeliveryPage() {
                         </div>
                     </div>
 
-                    <div className="col-span-1 flex flex-col justify-center gap-1 sm:gap-2">
+                    <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
                         {(() => {
                             const buffalo = getEffectiveRate(currentHouse, 'buffalo')
                             const cow = getEffectiveRate(currentHouse, 'cow')
 
                             return (
                                 <>
-                                    <Badge className="w-full justify-center py-0.5 text-[10px] sm:py-1 sm:text-[11px]">
-                                        Buffalo ₹{buffalo.rate}/L
+                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                        <span className="sm:hidden">Buf ₹{buffalo.rate}/L</span>
+                                        <span className="hidden sm:inline">Buffalo ₹{buffalo.rate}/L</span>
                                     </Badge>
-                                    <Badge className="w-full justify-center py-0.5 text-[10px] sm:py-1 sm:text-[11px]">
-                                        Cow ₹{cow.rate}/L
+                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                        <span className="sm:hidden">Cow ₹{cow.rate}/L</span>
+                                        <span className="hidden sm:inline">Cow ₹{cow.rate}/L</span>
                                     </Badge>
                                 </>
                             )
@@ -989,94 +1018,17 @@ export default function DeliveryPage() {
                 </div>
             </div>
 
-            <div className="bg-card p-4 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold">Today&apos;s Delivery Records</p>
-                    <p className="text-xs text-muted-foreground">
-                        {editingSaving ? 'Saving...' : sheetDirty ? 'Unsaved changes' : 'Auto-saved'}
-                    </p>
-                </div>
-
-                {logsLoading ? (
-                    <Skeleton className="h-20 w-full" />
-                ) : currentHouseLogs.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No delivery records saved for this house yet. Add first delivery below.</p>
-                ) : (
-                    <>
-                        <div className="overflow-hidden rounded-lg border border-border/70">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Product</TableHead>
-                                        <TableHead className="w-[120px]">Qty (L)</TableHead>
-                                        <TableHead>Rate</TableHead>
-                                        <TableHead>Amount</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {editingItems.map((item, idx) => {
-                                        const rate = getEffectiveRate(currentHouse, item.milkType).rate
-                                        const qty = Number(item.qty)
-                                        const amount = qty > 0 ? qty * rate : 0
-
-                                        return (
-                                            <TableRow key={idx}>
-                                                <TableCell>
-                                                    <Select
-                                                        value={item.milkType}
-                                                        onValueChange={(val) => updateTodayRecordItem(idx, 'milkType', val)}
-                                                    >
-                                                        <SelectTrigger className="h-9">
-                                                            <SelectValue />
-                                                        </SelectTrigger>
-                                                        <SelectContent>
-                                                            <SelectItem value="buffalo">Buffalo</SelectItem>
-                                                            <SelectItem value="cow">Cow</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                </TableCell>
-
-                                                <TableCell className="min-w-[120px]">
-                                                    <Input
-                                                        type="number"
-                                                        placeholder="0"
-                                                        value={item.qty}
-                                                        onChange={(e) => updateTodayRecordItem(idx, 'qty', e.target.value)}
-                                                        className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                    />
-                                                </TableCell>
-
-                                                <TableCell>₹{rate}/L</TableCell>
-                                                <TableCell>₹{amount.toLocaleString('en-IN')}</TableCell>
-                                            </TableRow>
-                                        )
-                                    })}
-                                </TableBody>
-                            </Table>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-3">
-                            <Button onClick={addTodayRecordItem} size="sm" variant="outline" className="text-xs">
-                                <Plus className="mr-1 h-3 w-3" /> Add Product
-                            </Button>
-                            <div className="text-sm font-semibold">Total: ₹{todaySheetTotal.toLocaleString('en-IN')}</div>
-                        </div>
-                    </>
-                )}
-            </div>
-
             {/* FIRST DELIVERY FORM */}
-            {currentHouseLogs.length === 0 ? (
             <div className="bg-card rounded-t-none overflow-hidden">
                 <div className="border-t border-border/40 p-3 space-y-3">
-                    <div className="overflow-hidden rounded-xl border border-border/70">
+                    <div className="overflow-x-auto rounded-xl border border-border/70">
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className="w-[120px]">Product</TableHead>
-                                    <TableHead className="w-[110px]">Qty (L)</TableHead>
-                                    <TableHead className="w-[90px]">Rate</TableHead>
-                                    <TableHead className="w-[100px]">Amount</TableHead>
+                                    <TableHead className="w-[90px] sm:w-[120px]">Product</TableHead>
+                                    <TableHead className="w-[96px] sm:w-[110px]">Qty (L)</TableHead>
+                                    <TableHead className="w-[74px] sm:w-[90px]">Rate</TableHead>
+                                    <TableHead className="hidden sm:table-cell sm:w-[100px]">Amount</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1105,7 +1057,7 @@ export default function DeliveryPage() {
                                                 </Select>
                                             </TableCell>
 
-                                            <TableCell className="min-w-[120px]">
+                                            <TableCell className="w-[96px] sm:min-w-[120px]">
                                                 <Input
                                                     type="number"
                                                     placeholder="0"
@@ -1121,7 +1073,7 @@ export default function DeliveryPage() {
                                                 ₹{rate}/L
                                             </TableCell>
 
-                                            <TableCell className="text-sm font-semibold">
+                                            <TableCell className="hidden text-sm font-semibold sm:table-cell">
                                                 ₹{amount.toLocaleString('en-IN')}
                                             </TableCell>
                                         </TableRow>
@@ -1146,9 +1098,15 @@ export default function DeliveryPage() {
                 {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
             </Button>
             </div>
-            ) : null}
 
-            <div className="flex shrink-0 items-center justify-between px-0.5 py-0.5">
+            <div
+                className="flex shrink-0 items-center justify-between px-0.5 py-0.5"
+                onTouchStart={handleNavTouchStart}
+                onTouchEnd={handleNavTouchEnd}
+                onTouchCancel={() => {
+                    navSwipeStartRef.current = null
+                }}
+            >
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handlePrevious} disabled={currentIndex === 0}>
                     <ChevronLeft />
                 </Button>
@@ -1185,6 +1143,7 @@ export default function DeliveryPage() {
                             houseId={currentHouse.id}
                             storedLocation={currentHouse.location}
                             onLocationSaved={handleLocationSaved}
+                            onBack={() => setIsMapExpanded(false)}
                         />
                     </div>
                 </DialogContent>
