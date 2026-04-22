@@ -495,14 +495,14 @@ export default function HousesPage() {
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto [&_[data-slot=input]]:h-11 [&_[data-slot=select-trigger]]:h-11 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
+        <DialogContent className="max-w-5xl max-h-[94dvh] overflow-y-auto [&_[data-slot=input]]:h-10 [&_[data-slot=select-trigger]]:h-10 [&_[data-slot=input]]:placeholder:text-[11px] sm:[&_[data-slot=input]]:placeholder:text-xs [&_[data-slot=input]]:placeholder:text-muted-foreground/70 [&_[data-slot=select-value]]:text-[11px] sm:[&_[data-slot=select-value]]:text-xs [&_[data-slot=select-value]]:text-muted-foreground/70 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit House' : 'Add New House'}</DialogTitle>
             <DialogDescription>
               {editingId ? 'Update house details below.' : 'Fill in the house details to add a new delivery location.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 py-2">
+          <div className="grid grid-cols-2 gap-2 py-1.5 sm:gap-4 sm:py-2 lg:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="house-houseNo">House No <span className="text-destructive">*</span></Label>
               <Input id="house-houseNo" value={form.houseNo} onChange={e => setForm(f => ({ ...f, houseNo: e.target.value }))} placeholder="e.g. A-101" />
@@ -549,15 +549,15 @@ export default function HousesPage() {
               <Label htmlFor="house-rate2">Rate 2 (₹/L)</Label>
               <Input id="house-rate2" type="number" min="0" step="0.5" value={form.rate2} onChange={e => setForm(f => ({ ...f, rate2: e.target.value }))} placeholder="e.g. 50" />
             </div>
-            <div className="lg:col-span-3 rounded-xl border border-border/70 bg-muted/20 p-4">
+            <div className="col-span-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4 lg:col-span-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Delivery Allocation</p>
-                  <p className="text-xs text-muted-foreground">Assign a supplier for morning routes. Evening routes stay shared.</p>
+                 
                 </div>
                 <Badge variant="outline" className="uppercase tracking-wide">Config</Badge>
               </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-2 sm:gap-4">
                 <div className="space-y-1.5">
                   <Label>Shift</Label>
                   <Select value={form.shift} onValueChange={v => setForm(f => ({ ...f, shift: v as 'morning' | 'evening', supplierId: v === 'evening' ? '' : f.supplierId }))}>
@@ -581,7 +581,7 @@ export default function HousesPage() {
                       <SelectValue placeholder={form.shift === 'morning' ? 'Select supplier' : 'Shared route'} />
                     </SelectTrigger>
                     <SelectContent className="max-w-[min(92vw,28rem)]">
-                      <SelectItem value="__none__">Unassigned / shared</SelectItem>
+                      <SelectItem value="__none__">Unassigned </SelectItem>
                       {suppliers.map(supplier => (
                         <SelectItem key={supplier.uuid} value={supplier.uuid} className="max-w-full">
                           {supplier.username} - {supplier.email}
@@ -593,7 +593,7 @@ export default function HousesPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="house-position">
                     Position
-                    {form.shift === 'evening' && <span className="text-xs font-normal text-muted-foreground ml-2">(global, managed by suppliers)</span>}
+                    {form.shift === 'evening' && <span className="text-xs font-normal text-muted-foreground ml-2"></span>}
                   </Label>
                   <Input
                     id="house-position"
@@ -608,19 +608,19 @@ export default function HousesPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="house-alerts">Daily Alerts</Label>
-                  <Input id="house-alerts" value={form.dailyAlerts} onChange={e => setForm(f => ({ ...f, dailyAlerts: e.target.value }))} placeholder="Optional alert text" />
+                  <Input id="house-alerts" value={form.dailyAlerts} onChange={e => setForm(f => ({ ...f, dailyAlerts: e.target.value }))} placeholder="Optional alert" />
                 </div>
               </div>
             </div>
-            <div className="lg:col-span-3 rounded-xl border border-border/70 bg-muted/20 p-4">
+            <div className="col-span-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4 lg:col-span-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Balance</p>
-                  <p className="text-xs text-muted-foreground">Enter the carried balance and the current month amount.</p>
+                  
                 </div>
                 <Badge variant="outline" className="uppercase tracking-wide">Balance</Badge>
               </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-2 sm:gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="house-previous-balance">Previous Balance</Label>
                   <Input id="house-previous-balance" type="number" min="0" step="0.01" value={form.previousBalance} onChange={e => setForm(f => ({ ...f, previousBalance: e.target.value }))} placeholder="0" />
@@ -631,7 +631,7 @@ export default function HousesPage() {
                 </div>
               </div>
             </div>
-            <div className="sm:col-span-2 lg:col-span-3 space-y-1.5">
+            <div className="col-span-2 sm:col-span-2 lg:col-span-3 space-y-1.5">
               <Label htmlFor="house-desc">Description / Notes</Label>
               <Textarea id="house-desc" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional notes..." rows={3} />
             </div>
