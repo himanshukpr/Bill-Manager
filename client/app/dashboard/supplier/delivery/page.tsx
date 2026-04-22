@@ -196,6 +196,7 @@ export default function DeliveryPage() {
 
     const [auth, setAuth] = useState<any>(null)
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
+    const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
 
     const [houses, setHouses] = useState<House[]>([])
     const [globalRateMap, setGlobalRateMap] = useState<Record<MilkType, number>>({
@@ -755,19 +756,29 @@ export default function DeliveryPage() {
     // SHIFT SELECTOR
     if (!selectedShift) {
         return (
-            <Dialog open>
+            <Dialog
+                open={shiftSelectorOpen}
+                onOpenChange={(open) => {
+                    setShiftSelectorOpen(open)
+                    if (!open) {
+                        router.push('/dashboard/supplier')
+                    }
+                }}
+            >
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Select Shift</DialogTitle>
                     </DialogHeader>
 
-                    <Button onClick={() => setSelectedShift('morning')}>
-                        Morning
-                    </Button>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <Button className="w-full" onClick={() => setSelectedShift('morning')}>
+                            Morning
+                        </Button>
 
-                    <Button onClick={() => setSelectedShift('evening')}>
-                        Evening
-                    </Button>
+                        <Button className="w-full" onClick={() => setSelectedShift('evening')}>
+                            Evening
+                        </Button>
+                    </div>
                 </DialogContent>
             </Dialog>
         )
@@ -850,15 +861,15 @@ export default function DeliveryPage() {
     const isCompleted = completedHouses.has(currentHouse.id)
 
     return (
-        <div className="max-w-md mx-auto p-4 space-y-4">
-            <div className="flex items-center justify-between gap-2">
+        <div className="mx-auto flex h-[100dvh] max-w-md flex-col overflow-hidden px-2 py-2 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
+            <div className="flex shrink-0 items-center justify-between gap-1.5 py-0 sm:py-1">
                 <Badge variant="outline" className="capitalize">
                     {selectedShift} Shift
                 </Badge>
                 <Button
                     variant="outline"
                     size="sm"
-                    className="gap-2"
+                    className="h-8 gap-1.5 px-2"
                     onClick={() => setPanelView('allocated-houses')}
                 >
                     <Rows3 className="h-4 w-4" /> Switch View
@@ -871,13 +882,13 @@ export default function DeliveryPage() {
                 </Button>
             </div> */}
 
-            <div className="space-y-0">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {/* HOUSE CARD */}
-            <div className="bg-card p-3 sm:p-4 rounded-t-2xl rounded-b-none space-y-3">
+            <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
                 <button
                     type="button"
                     onClick={() => setIsMapExpanded(true)}
-                    className="relative h-56 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-2 text-left sm:h-60"
+                    className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"
                 >
                     <div className="absolute inset-0 pointer-events-none">
                         <iframe
@@ -899,45 +910,41 @@ export default function DeliveryPage() {
                     </div>
                 </button>
 
-                <div className="grid grid-cols-3 gap-3 rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <div className="col-span-2 space-y-2">
-                        <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:gap-3 sm:p-3">
+                    <div className="col-span-2 space-y-1.5">
+                        <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
                             <div>
                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
-                                <h1 className="mt-1 text-2xl font-bold leading-none">{currentHouse.houseNo}</h1>
+                                <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{currentHouse.houseNo}</h1>
                             </div>
                             <div>
                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
-                                {isCompleted ? (
-                                    <p className="mt-1 font-semibold text-green-600">Delivered</p>
-                                ) : (
-                                    <p className="mt-1 font-semibold text-yellow-600">Pending</p>
-                                )}
+                                {isCompleted ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 text-sm">
+                        <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
                             <MapPin className="h-4 w-4" />
                             <span>{currentHouse.area || 'Area not set'}</span>
                         </div>
 
-                        <div className="flex items-center gap-2 text-sm">
+                        <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
                             <Phone className="h-4 w-4" />
                             <span>{currentHouse.phoneNo || 'Phone not set'}</span>
                         </div>
                     </div>
 
-                    <div className="col-span-1 flex flex-col gap-2 justify-center">
+                    <div className="col-span-1 flex flex-col justify-center gap-1 sm:gap-2">
                         {(() => {
                             const buffalo = getEffectiveRate(currentHouse, 'buffalo')
                             const cow = getEffectiveRate(currentHouse, 'cow')
 
                             return (
                                 <>
-                                    <Badge className="w-full justify-center py-1 text-xs">
+                                    <Badge className="w-full justify-center py-0.5 text-[10px] sm:py-1 sm:text-[11px]">
                                         Buffalo ₹{buffalo.rate}/L
                                     </Badge>
-                                    <Badge className="w-full justify-center py-1 text-xs">
+                                    <Badge className="w-full justify-center py-0.5 text-[10px] sm:py-1 sm:text-[11px]">
                                         Cow ₹{cow.rate}/L
                                     </Badge>
                                 </>
@@ -1099,24 +1106,25 @@ export default function DeliveryPage() {
                     </div>
                 </div>
 
-                <Button onClick={handleMarkDelivered} disabled={marking} className="w-full rounded-none rounded-b-2xl">
-                    {marking ? 'Saving...' : isCompleted ? 'Add Delivery' : 'Mark Delivered'}
-                </Button>
+            {/* ACTION */}
+            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+                {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
+            </Button>
             </div>
             ) : null}
 
-            <div className="flex items-center justify-between px-1">
-                <Button variant="ghost" onClick={handlePrevious} disabled={currentIndex === 0}>
+            <div className="flex shrink-0 items-center justify-between px-0.5 py-0.5">
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handlePrevious} disabled={currentIndex === 0}>
                     <ChevronLeft />
                 </Button>
 
                 <div className="text-center">
-                    <p className="text-sm font-semibold">
+                    <p className="text-xs font-semibold sm:text-sm">
                         {currentIndex + 1} / {houses.length}
                     </p>
                 </div>
 
-                <Button variant="ghost" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
                     <ChevronRight />
                 </Button>
             </div>

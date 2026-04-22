@@ -78,7 +78,7 @@ export function dashboardPath(role: AppRole): string {
 // ─── API base URL ─────────────────────────────────────────────────────────────
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL;
+  process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 // ─── Auth API ─────────────────────────────────────────────────────────────────
 

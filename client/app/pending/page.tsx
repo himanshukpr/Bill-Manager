@@ -12,7 +12,7 @@ import {
 } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 export default function PendingVerificationPage() {
   const router = useRouter()
