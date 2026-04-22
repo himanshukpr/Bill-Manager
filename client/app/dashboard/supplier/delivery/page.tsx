@@ -595,6 +595,9 @@ export default function DeliveryPage() {
         if (!currentHouse) return
         if (!selectedShift) return
 
+        const wasCompleted = completedHouses.has(currentHouse.id)
+        const previousLogs = currentHouseLogs
+
         setMarking(true)
 
         try {
@@ -616,27 +619,50 @@ export default function DeliveryPage() {
                 return
             }
 
-            await deliveryLogsApi.create({
+            const optimisticLogId = -Date.now()
+            const deliveredAt = new Date().toISOString()
+            const openingBalance = Number(currentBalance || 0)
+            const totalAmount = payloadItems.reduce((sum, item) => sum + item.amount, 0)
+
+            const optimisticLog: DeliveryLog = {
+                id: optimisticLogId,
+                houseId: currentHouse.id,
+                supplierId: auth?.uuid || '',
+                shift: selectedShift,
+                items: payloadItems,
+                totalAmount: String(totalAmount),
+                openingBalance: String(openingBalance),
+                closingBalance: String(openingBalance + totalAmount),
+                deliveredAt,
+            }
+
+            // Reflect delivered state instantly while request is in-flight.
+            setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+            setCurrentHouseLogs((prev) => [optimisticLog, ...prev])
+
+            const created = await deliveryLogsApi.create({
                 houseId: currentHouse.id,
                 shift: selectedShift,
                 items: payloadItems,
                 currentBalance: currentBalance ? Number(currentBalance) : undefined,
             })
 
-            setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
-            const refreshedLogs = await deliveryLogsApi.list({
-                houseId: currentHouse.id,
-                shift: selectedShift,
-            })
-            const today = new Date()
             setCurrentHouseLogs(
-                refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+                (prev) => prev.map((log) => (log.id === optimisticLogId ? created.log : log)),
             )
 
             toast.success(`${currentHouse.houseNo} delivered!`)
 
             setTimeout(() => handleNext(), 400)
         } catch (err: any) {
+            setCurrentHouseLogs(previousLogs)
+            if (!wasCompleted) {
+                setCompletedHouses((prev) => {
+                    const next = new Set(prev)
+                    next.delete(currentHouse.id)
+                    return next
+                })
+            }
             toast.error(err.message)
         } finally {
             setMarking(false)
@@ -706,7 +732,7 @@ export default function DeliveryPage() {
 
         autoSaveTimerRef.current = setTimeout(() => {
             void persistTodaySheet().finally(() => setSheetDirty(false))
-        }, 700)
+        }, 3000)
 
         return () => {
             if (autoSaveTimerRef.current) {
@@ -716,8 +742,12 @@ export default function DeliveryPage() {
     }, [sheetDirty, persistTodaySheet])
 
     const updateTodayRecordItem = (idx: number, field: keyof DeliveryItemForm, value: string) => {
+        const previousItem = editingItems[idx]
+
         if (field === 'qty') {
             const trimmed = value.trim()
+            const hadQty = Number(previousItem?.qty || 0) > 0
+
             setEditingItems((prev) => {
                 if (trimmed === '' && prev.length > 1) {
                     return prev.filter((_, i) => i !== idx)
@@ -726,19 +756,24 @@ export default function DeliveryPage() {
                     i === idx ? { ...item, qty: value } : item,
                 )
             })
-            setSheetDirty(true)
+
+            if (trimmed !== '' || hadQty) {
+                setSheetDirty(true)
+            }
             return
         }
 
         setEditingItems((prev) =>
             prev.map((item, i) => (i === idx ? { ...item, milkType: value as MilkType } : item)),
         )
-        setSheetDirty(true)
+
+        if (Number(previousItem?.qty || 0) > 0) {
+            setSheetDirty(true)
+        }
     }
 
     const addTodayRecordItem = () => {
         setEditingItems((prev) => [...prev, { ...emptyDeliveryItem }])
-        setSheetDirty(true)
     }
 
     const todaySheetTotal = useMemo(

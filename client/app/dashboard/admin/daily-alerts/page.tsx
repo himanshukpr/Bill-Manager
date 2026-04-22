@@ -69,16 +69,39 @@ function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
 const DAYS_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
 const DAYS_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function ManageAlertsDialog({ house, config }: { house: House, config: HouseConfig | undefined }) {
-  const [open, setOpen] = useState(false)
+function ManageAlertsDialog({
+  house,
+  config,
+  open,
+  onOpenChange,
+  showTrigger = true,
+}: {
+  house: House
+  config: HouseConfig | undefined
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  showTrigger?: boolean
+}) {
+  const [internalOpen, setInternalOpen] = useState(false)
   const [alerts, setAlerts] = useState<HouseAlert[]>([])
   const [isSaving, setIsSaving] = useState(false)
+  const dialogOpen = open ?? internalOpen
+
+  const setDialogOpen = useCallback(
+    (nextOpen: boolean) => {
+      if (open === undefined) {
+        setInternalOpen(nextOpen)
+      }
+      onOpenChange?.(nextOpen)
+    },
+    [open, onOpenChange],
+  )
 
   useEffect(() => {
-    if (open) {
+    if (dialogOpen) {
       setAlerts(parseAlerts(config?.dailyAlerts))
     }
-  }, [open, config?.dailyAlerts])
+  }, [dialogOpen, config?.dailyAlerts])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -90,7 +113,7 @@ function ManageAlertsDialog({ house, config }: { house: House, config: HouseConf
          await houseConfigApi.create({ houseId: house.id, shift: 'morning', dailyAlerts: newAlertsStr, position: 0 })
       }
       toast.success('Alerts successfully synced')
-      setOpen(false)
+      setDialogOpen(false)
     } catch {
       toast.error('Failed to sync alerts')
     } finally {
@@ -132,15 +155,15 @@ function ManageAlertsDialog({ house, config }: { house: House, config: HouseConf
     setAlerts(prev => prev.filter((_, i) => i !== index))
   }
 
-  const actAlerts = parseAlerts(config?.dailyAlerts)
-
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2 shrink-0">
-           <Settings className="w-4 h-4" /> Manage
-        </Button>
-      </DialogTrigger>
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      {showTrigger ? (
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-2 shrink-0">
+             <Settings className="w-4 h-4" /> Manage
+          </Button>
+        </DialogTrigger>
+      ) : null}
       <DialogContent className="max-w-2xl bg-card border-border/60">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -197,7 +220,7 @@ function ManageAlertsDialog({ house, config }: { house: House, config: HouseConf
         </div>
         
         <DialogFooter className="mt-4 pt-4 border-t border-border/40">
-           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Cancel</Button>
            <Button onClick={handleSave} disabled={isSaving} className="gap-2">
               <Save className="w-4 h-4" />
               {isSaving ? 'Saving...' : 'Save Schedule'}
@@ -212,6 +235,11 @@ function ManageAlertsDialog({ house, config }: { house: House, config: HouseConf
 export default function AdminDailyAlertsPage() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [addAlertOpen, setAddAlertOpen] = useState(false)
+  const [addHouseSearch, setAddHouseSearch] = useState('')
+  const [selectedAddHouseId, setSelectedAddHouseId] = useState<number | null>(null)
+  const [addDialogAlerts, setAddDialogAlerts] = useState<HouseAlert[]>([])
+  const [addDialogSaving, setAddDialogSaving] = useState(false)
 
   // LIVE QUERIES
   const houses = useLiveQuery(() => db.houses.toArray())
@@ -257,15 +285,19 @@ export default function AdminDailyAlertsPage() {
     return mapped
   }, [rawConfigs])
 
-  const filteredHouses = useMemo(() => {
+  const housesWithAlerts = useMemo(() => {
     if (!houses) return []
-    const housesWithAlerts = houses.filter((house) => {
+    return houses.filter((house) => {
       const config = mappedConfigs.get(house.id)
       return parseAlerts(config?.dailyAlerts).length > 0
     })
+  }, [houses, mappedConfigs])
+
+  const filteredHouses = useMemo(() => {
+    if (!housesWithAlerts) return []
 
     const q = debouncedSearch.trim().toLowerCase()
-    if (!q) return housesWithAlerts.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    if (!q) return [...housesWithAlerts].sort((a, b) => a.houseNo.localeCompare(b.houseNo))
 
     return housesWithAlerts.filter((house) => {
       const config = mappedConfigs.get(house.id)
@@ -277,7 +309,129 @@ export default function AdminDailyAlertsPage() {
         (supplierName || '').toLowerCase().includes(q)
       )
     }).sort((a, b) => a.houseNo.localeCompare(b.houseNo))
-  }, [houses, mappedConfigs, supplierById, debouncedSearch])
+  }, [housesWithAlerts, mappedConfigs, supplierById, debouncedSearch])
+
+  const housesWithoutAlerts = useMemo(() => {
+    if (!houses) return []
+    return houses.filter((house) => {
+      const config = mappedConfigs.get(house.id)
+      return parseAlerts(config?.dailyAlerts).length === 0
+    })
+  }, [houses, mappedConfigs])
+
+  const filteredAddHouseOptions = useMemo(() => {
+    const q = addHouseSearch.trim().toLowerCase()
+    if (!q) return [...housesWithoutAlerts].sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    return housesWithoutAlerts
+      .filter((house) =>
+        house.houseNo.toLowerCase().includes(q) ||
+        (house.area || '').toLowerCase().includes(q),
+      )
+      .sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+  }, [addHouseSearch, housesWithoutAlerts])
+
+  const selectedAddHouse = useMemo(() => {
+    if (!houses || !selectedAddHouseId) return undefined
+    return houses.find((house) => house.id === selectedAddHouseId)
+  }, [houses, selectedAddHouseId])
+
+  const selectedAddHouseConfig = useMemo(() => {
+    if (!selectedAddHouseId) return undefined
+    return mappedConfigs.get(selectedAddHouseId)
+  }, [selectedAddHouseId, mappedConfigs])
+
+  useEffect(() => {
+    if (!addAlertOpen) {
+      setSelectedAddHouseId(null)
+      setAddHouseSearch('')
+      setAddDialogAlerts([])
+    }
+  }, [addAlertOpen])
+
+  useEffect(() => {
+    if (!selectedAddHouseId) {
+      setAddDialogAlerts([])
+      return
+    }
+
+    setAddDialogAlerts(parseAlerts(selectedAddHouseConfig?.dailyAlerts))
+  }, [selectedAddHouseId, selectedAddHouseConfig?.dailyAlerts])
+
+  const handleSelectHouseForAlert = (houseId: number) => {
+    setSelectedAddHouseId(houseId)
+  }
+
+  const handleAddDialogAddAlert = () => {
+    setAddDialogAlerts((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        text: '',
+        schedule: {
+          Monday: true,
+          Tuesday: true,
+          Wednesday: true,
+          Thursday: true,
+          Friday: true,
+          Saturday: true,
+          Sunday: true,
+        },
+      },
+    ])
+  }
+
+  const handleAddDialogUpdateText = (index: number, text: string) => {
+    setAddDialogAlerts((prev) => {
+      const next = [...prev]
+      next[index] = { ...next[index], text }
+      return next
+    })
+  }
+
+  const handleAddDialogToggleDay = (index: number, day: typeof DAYS_KEYS[number]) => {
+    setAddDialogAlerts((prev) => {
+      const next = [...prev]
+      next[index] = {
+        ...next[index],
+        schedule: {
+          ...next[index].schedule,
+          [day]: !next[index].schedule[day],
+        },
+      }
+      return next
+    })
+  }
+
+  const handleAddDialogRemoveAlert = (index: number) => {
+    setAddDialogAlerts((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleSaveSelectedHouseAlerts = async () => {
+    if (!selectedAddHouse) return
+
+    setAddDialogSaving(true)
+    try {
+      const payload = JSON.stringify(addDialogAlerts)
+      if (selectedAddHouseConfig?.id) {
+        await houseConfigApi.update(selectedAddHouseConfig.id, { dailyAlerts: payload })
+      } else {
+        await houseConfigApi.create({
+          houseId: selectedAddHouse.id,
+          shift: 'morning',
+          dailyAlerts: payload,
+          position: 0,
+        })
+      }
+
+      toast.success('Alerts successfully synced')
+      setAddAlertOpen(false)
+    } catch {
+      toast.error('Failed to sync alerts')
+    } finally {
+      setAddDialogSaving(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -290,13 +444,134 @@ export default function AdminDailyAlertsPage() {
       </div>
 
       <div className="relative">
-        <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search by house, shift, or supplier..."
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          className="pl-9 bg-card"
-        />
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by house, shift, or supplier..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="pl-9 bg-card"
+            />
+          </div>
+
+          <Dialog open={addAlertOpen} onOpenChange={setAddAlertOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 whitespace-nowrap">
+                <Plus className="h-4 w-4" /> Add Alert
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl bg-card border-border/60">
+              <DialogHeader>
+                <DialogTitle>
+                  {selectedAddHouse ? `Manage Alerts for ${selectedAddHouse.houseNo}` : 'Select House'}
+                </DialogTitle>
+              </DialogHeader>
+
+              {!selectedAddHouse ? (
+                <div className="space-y-3">
+                  <Input
+                    placeholder="Search house by number or area"
+                    value={addHouseSearch}
+                    onChange={(event) => setAddHouseSearch(event.target.value)}
+                    className="bg-background"
+                  />
+
+                  <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-border/60">
+                    {filteredAddHouseOptions.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-muted-foreground">
+                        {housesWithoutAlerts.length === 0
+                          ? 'All houses already have alerts configured.'
+                          : 'No house matches your search.'}
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border/60">
+                        {filteredAddHouseOptions.map((house) => (
+                          <button
+                            key={house.id}
+                            type="button"
+                            className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/20"
+                            onClick={() => handleSelectHouseForAlert(house.id)}
+                          >
+                            <div>
+                              <p className="font-semibold">{house.houseNo}</p>
+                              <p className="text-xs text-muted-foreground">{house.area || 'Area not set'}</p>
+                            </div>
+                            <span className="text-xs text-primary">Select</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="max-h-[60vh] overflow-y-auto pr-4 mt-2">
+                    {addDialogAlerts.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground border rounded-xl border-dashed">
+                        <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
+                        <p className="font-medium">No alerts configured</p>
+                        <p className="text-xs mt-1">Create an alert schedule to notify suppliers.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {addDialogAlerts.map((alert, index) => (
+                          <div key={alert.id} className="p-4 rounded-xl border border-border bg-muted/20 relative group">
+                            <div className="flex gap-3 mb-4">
+                              <Input
+                                placeholder="E.g., Call before arrival, Only 1L today..."
+                                value={alert.text}
+                                onChange={(e) => handleAddDialogUpdateText(index, e.target.value)}
+                                className="bg-background flex-1"
+                              />
+                              <Button
+                                variant="destructive"
+                                size="icon"
+                                onClick={() => handleAddDialogRemoveAlert(index)}
+                                className="shrink-0"
+                                title="Delete Alert"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Active Days</p>
+                              <div className="flex flex-wrap gap-2">
+                                {DAYS_KEYS.map((day, i) => (
+                                  <Button
+                                    key={day}
+                                    variant={alert.schedule[day] ? 'default' : 'outline'}
+                                    size="sm"
+                                    className={`h-8 font-medium ${alert.schedule[day] ? 'bg-primary/90' : 'bg-background'}`}
+                                    onClick={() => handleAddDialogToggleDay(index, day)}
+                                  >
+                                    {DAYS_LABELS[i]}
+                                  </Button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <Button onClick={handleAddDialogAddAlert} variant="secondary" className="w-full mt-4 gap-2 border border-dashed border-border">
+                      <Plus className="w-4 h-4" /> Create New Alert
+                    </Button>
+                  </div>
+
+                  <DialogFooter className="mt-4 pt-4 border-t border-border/40">
+                    <Button variant="ghost" onClick={() => setSelectedAddHouseId(null)}>Back</Button>
+                    <Button onClick={handleSaveSelectedHouseAlerts} disabled={addDialogSaving} className="gap-2">
+                      <Save className="w-4 h-4" />
+                      {addDialogSaving ? 'Saving...' : 'Save Schedule'}
+                    </Button>
+                  </DialogFooter>
+                </>
+              )}
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -309,8 +584,8 @@ export default function AdminDailyAlertsPage() {
         ) : filteredHouses.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Building2 className="mb-3 h-12 w-12 opacity-30" />
-            <p className="font-medium">No daily alerts found</p>
-            <p className="mt-1 text-sm">Create a daily alert while adding/updating house config.</p>
+            <p className="font-medium">No configured alerts found</p>
+            <p className="mt-1 text-sm">Click Add Alert to set alerts for a house.</p>
           </div>
         ) : (
           <>
@@ -405,6 +680,7 @@ export default function AdminDailyAlertsPage() {
           </>
         )}
       </div>
+
     </div>
   )
 }
