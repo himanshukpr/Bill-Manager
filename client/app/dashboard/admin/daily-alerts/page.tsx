@@ -40,11 +40,29 @@ export type HouseAlert = {
 
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
   if (!jsonStr) return [];
+  const trimmed = jsonStr.trim();
+  if (!trimmed) return [];
+
   try {
-    const parsed = JSON.parse(jsonStr);
+    const parsed = JSON.parse(trimmed);
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    return [];
+    // Backward compatibility for legacy plain-text alert values.
+    return [
+      {
+        id: 'legacy-alert',
+        text: trimmed,
+        schedule: {
+          Monday: true,
+          Tuesday: true,
+          Wednesday: true,
+          Thursday: true,
+          Friday: true,
+          Saturday: true,
+          Sunday: true,
+        },
+      },
+    ];
   }
 }
 
@@ -241,10 +259,15 @@ export default function AdminDailyAlertsPage() {
 
   const filteredHouses = useMemo(() => {
     if (!houses) return []
-    const q = debouncedSearch.trim().toLowerCase()
-    if (!q) return houses.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    const housesWithAlerts = houses.filter((house) => {
+      const config = mappedConfigs.get(house.id)
+      return parseAlerts(config?.dailyAlerts).length > 0
+    })
 
-    return houses.filter((house) => {
+    const q = debouncedSearch.trim().toLowerCase()
+    if (!q) return housesWithAlerts.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    return housesWithAlerts.filter((house) => {
       const config = mappedConfigs.get(house.id)
       const supplierName = config?.supplierId ? supplierById.get(config.supplierId)?.username : ''
       return (
@@ -286,8 +309,8 @@ export default function AdminDailyAlertsPage() {
         ) : filteredHouses.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Building2 className="mb-3 h-12 w-12 opacity-30" />
-            <p className="font-medium">No houses found</p>
-            <p className="mt-1 text-sm">Add houses and configuration first.</p>
+            <p className="font-medium">No daily alerts found</p>
+            <p className="mt-1 text-sm">Create a daily alert while adding/updating house config.</p>
           </div>
         ) : (
           <>

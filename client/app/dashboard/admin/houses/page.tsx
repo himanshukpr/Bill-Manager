@@ -32,6 +32,66 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
+type AlertDays = {
+  Monday: boolean
+  Tuesday: boolean
+  Wednesday: boolean
+  Thursday: boolean
+  Friday: boolean
+  Saturday: boolean
+  Sunday: boolean
+}
+
+type HouseAlert = {
+  id: string
+  text: string
+  schedule: AlertDays
+}
+
+const ALL_DAYS_ALERT_SCHEDULE: AlertDays = {
+  Monday: true,
+  Tuesday: true,
+  Wednesday: true,
+  Thursday: true,
+  Friday: true,
+  Saturday: true,
+  Sunday: true,
+}
+
+function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
+  if (!jsonStr) return []
+  const trimmed = jsonStr.trim()
+  if (!trimmed) return []
+
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (Array.isArray(parsed)) return parsed
+  } catch {
+    // Backward compatibility for legacy plain-text alert values.
+  }
+
+  return [{ id: 'legacy-alert', text: trimmed, schedule: ALL_DAYS_ALERT_SCHEDULE }]
+}
+
+function toAlertStorageValue(input: string): string | undefined {
+  const text = input.trim()
+  if (!text) return undefined
+
+  return JSON.stringify([
+    {
+      id: `auto-${Date.now()}`,
+      text,
+      schedule: ALL_DAYS_ALERT_SCHEDULE,
+    },
+  ])
+}
+
+function toAlertInputValue(rawValue: string | null | undefined): string {
+  const parsed = parseAlerts(rawValue)
+  const firstText = parsed.find((alert) => alert.text?.trim())?.text
+  return firstText?.trim() ?? ''
+}
+
 type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
@@ -134,7 +194,7 @@ export default function HousesPage() {
       shift: primaryConfig?.shift ?? 'evening',
       supplierId: primaryConfig?.supplierId ?? '',
       position: String(primaryConfig?.position ?? 0),
-      dailyAlerts: primaryConfig?.dailyAlerts ?? '',
+      dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
       previousBalance: String(h.balance?.previousBalance ?? '0'),
       currentBalance: String(h.balance?.currentBalance ?? '0'),
     })
@@ -182,7 +242,7 @@ export default function HousesPage() {
         shift: form.shift,
         supplierId: form.shift === 'morning' ? form.supplierId : undefined,
         position: Number.isFinite(Number.parseInt(form.position, 10)) ? Number.parseInt(form.position, 10) : 0,
-        dailyAlerts: form.dailyAlerts || undefined,
+        dailyAlerts: toAlertStorageValue(form.dailyAlerts),
       }
 
       if (formConfigId) {
@@ -230,7 +290,7 @@ export default function HousesPage() {
       shift: houseConfig?.shift ?? 'morning',
       supplierId: houseConfig?.supplierId ?? '',
       position: String(houseConfig?.position ?? 0),
-      dailyAlerts: houseConfig?.dailyAlerts ?? '',
+      dailyAlerts: toAlertInputValue(houseConfig?.dailyAlerts),
     })
     setConfigDialogOpen(true)
   }
@@ -261,7 +321,7 @@ export default function HousesPage() {
         shift: configForm.shift,
         supplierId: configForm.shift === 'morning' ? configForm.supplierId : undefined,
         position: Number.isFinite(positionValue) ? positionValue : 0,
-        dailyAlerts: configForm.dailyAlerts || undefined,
+        dailyAlerts: toAlertStorageValue(configForm.dailyAlerts),
       }
 
       const selectedHouseId = parseInt(configForm.houseId)
