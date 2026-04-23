@@ -41,6 +41,14 @@ export class BillsController {
     return this.service.getMonthlyStats(year);
   }
 
+  @Get('preview')
+  preview(
+    @Query('houseId', ParseIntPipe) houseId: number,
+    @Query('date') date: string,
+  ) {
+    return this.service.preview(houseId, date);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);

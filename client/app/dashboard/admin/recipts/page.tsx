@@ -95,7 +95,7 @@ export default function ReceiptsPage() {
       </div>
 
       {/* Summary Card */}
-      <div className="rounded-2xl border border-border bg-gradient-to-br from-emerald-500/10 to-emerald-600/10 p-5">
+      <div className="rounded-2xl border border-border bg-linear-to-br from-emerald-500/10 to-emerald-600/10 p-5">
         <p className="text-sm font-medium text-muted-foreground">Total Received (All Time)</p>
         <p className="mt-2 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
           ₹{totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })}

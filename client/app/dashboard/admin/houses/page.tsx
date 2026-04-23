@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Plus, Search, Phone, MapPin, Building2,
-  Pencil, Trash2, Eye, IndianRupee, ChevronRight, Settings2
+  Pencil, Trash2, Eye, ChevronRight, Settings2
 } from 'lucide-react'
-import { balanceApi, houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
+import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -96,7 +96,6 @@ type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
   shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string;
-  previousBalance: string; currentBalance: string;
 }
 
 type HouseConfigForm = {
@@ -107,16 +106,10 @@ type HouseConfigForm = {
   dailyAlerts: string
 }
 
-type BalanceForm = {
-  previousBalance: string
-  currentBalance: string
-}
-
 const emptyForm: HouseForm = {
   houseNo: '', area: '', phoneNo: '', alternativePhone: '',
   description: '', rate1Type: '', rate1: '', rate2Type: '', rate2: '',
   shift: 'evening', supplierId: '', position: '0', dailyAlerts: '',
-  previousBalance: '0', currentBalance: '0',
 }
 
 const emptyConfigForm: HouseConfigForm = {
@@ -125,11 +118,6 @@ const emptyConfigForm: HouseConfigForm = {
   supplierId: '',
   position: '0',
   dailyAlerts: '',
-}
-
-const emptyBalanceForm: BalanceForm = {
-  previousBalance: '0',
-  currentBalance: '0',
 }
 
 export default function HousesPage() {
@@ -148,9 +136,6 @@ export default function HousesPage() {
   const [configSaving, setConfigSaving] = useState(false)
   const [configEditingId, setConfigEditingId] = useState<number | null>(null)
   const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
-  const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
-  const [balanceSaving, setBalanceSaving] = useState(false)
-  const [balanceForm, setBalanceForm] = useState<BalanceForm>(emptyBalanceForm)
 
   const load = useCallback(async () => {
     try {
@@ -195,8 +180,6 @@ export default function HousesPage() {
       supplierId: primaryConfig?.supplierId ?? '',
       position: String(primaryConfig?.position ?? 0),
       dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
-      previousBalance: String(h.balance?.previousBalance ?? '0'),
-      currentBalance: String(h.balance?.currentBalance ?? '0'),
     })
     setFormConfigId(primaryConfig?.id ?? null)
     setEditingId(h.id)
@@ -225,17 +208,10 @@ export default function HousesPage() {
         ? await housesApi.update(editingId, payload)
         : await housesApi.create(payload)
 
-      const houseId = savedHouse.id ?? editingId
+      const houseId = editingId ?? savedHouse?.id
       if (!houseId) {
         throw new Error('Unable to resolve house id')
       }
-
-      const previousBalance = Number.parseFloat(form.previousBalance)
-      const currentBalance = Number.parseFloat(form.currentBalance)
-      await balanceApi.update(houseId, {
-        previousBalance: Number.isFinite(previousBalance) ? previousBalance : 0,
-        currentBalance: Number.isFinite(currentBalance) ? currentBalance : 0,
-      })
 
       const configPayload = {
         houseId,
@@ -295,14 +271,6 @@ export default function HousesPage() {
     setConfigDialogOpen(true)
   }
 
-  function openBalanceDialog(house: House) {
-    setBalanceForm({
-      previousBalance: String(house.balance?.previousBalance ?? '0'),
-      currentBalance: String(house.balance?.currentBalance ?? '0'),
-    })
-    setBalanceDialogOpen(true)
-  }
-
   async function handleConfigSave() {
     if (!configForm.houseId) {
       toast.error('Select a house')
@@ -348,29 +316,6 @@ export default function HousesPage() {
       toast.error(e.message)
     } finally {
       setConfigSaving(false)
-    }
-  }
-
-  async function handleBalanceSave() {
-    if (!viewHouse) return
-    setBalanceSaving(true)
-    try {
-      const previousBalance = Number.parseFloat(balanceForm.previousBalance)
-      const currentBalance = Number.parseFloat(balanceForm.currentBalance)
-      await balanceApi.update(viewHouse.id, {
-        previousBalance: Number.isFinite(previousBalance) ? previousBalance : 0,
-        currentBalance: Number.isFinite(currentBalance) ? currentBalance : 0,
-      })
-      toast.success('Balance updated')
-      setBalanceDialogOpen(false)
-      setBalanceForm(emptyBalanceForm)
-      await load()
-      const refreshed = await housesApi.get(viewHouse.id)
-      setViewHouse(refreshed)
-    } catch (e: any) {
-      toast.error(e.message)
-    } finally {
-      setBalanceSaving(false)
     }
   }
 
@@ -495,7 +440,7 @@ export default function HousesPage() {
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[94dvh] overflow-y-auto [&_[data-slot=input]]:h-10 [&_[data-slot=select-trigger]]:h-10 [&_[data-slot=input]]:placeholder:text-[11px] sm:[&_[data-slot=input]]:placeholder:text-xs [&_[data-slot=input]]:placeholder:text-muted-foreground/70 [&_[data-slot=select-value]]:text-[11px] sm:[&_[data-slot=select-value]]:text-xs [&_[data-slot=select-value]]:text-muted-foreground/70 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
+        <DialogContent className="max-w-5xl max-h-[94dvh] overflow-y-auto **:data-[slot=input]:h-10 **:data-[slot=select-trigger]:h-10 **:data-[slot=input]:placeholder:text-[11px] sm:**:data-[slot=input]:placeholder:text-xs **:data-[slot=input]:placeholder:text-muted-foreground/70 **:data-[slot=select-value]:text-[11px] sm:**:data-[slot=select-value]:text-xs **:data-[slot=select-value]:text-muted-foreground/70 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit House' : 'Add New House'}</DialogTitle>
             <DialogDescription>
@@ -612,25 +557,6 @@ export default function HousesPage() {
                 </div>
               </div>
             </div>
-            <div className="col-span-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4 lg:col-span-3">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Balance</p>
-                  
-                </div>
-                <Badge variant="outline" className="uppercase tracking-wide">Balance</Badge>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-previous-balance">Previous Balance</Label>
-                  <Input id="house-previous-balance" type="number" min="0" step="0.01" value={form.previousBalance} onChange={e => setForm(f => ({ ...f, previousBalance: e.target.value }))} placeholder="0" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-current-balance">Current Balance</Label>
-                  <Input id="house-current-balance" type="number" min="0" step="0.01" value={form.currentBalance} onChange={e => setForm(f => ({ ...f, currentBalance: e.target.value }))} placeholder="0" />
-                </div>
-              </div>
-            </div>
             <div className="col-span-2 sm:col-span-2 lg:col-span-3 space-y-1.5">
               <Label htmlFor="house-desc">Description / Notes</Label>
               <Textarea id="house-desc" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional notes..." rows={3} />
@@ -665,7 +591,7 @@ export default function HousesPage() {
 
       {/* View House Sheet */}
       <Dialog open={!!viewHouse} onOpenChange={open => !open && setViewHouse(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto [&_[data-slot=input]]:h-11 [&_[data-slot=select-trigger]]:h-11 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto **:data-[slot=input]:h-11 **:data-[slot=select-trigger]:h-11 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9">
           {viewHouse && (
             <>
               <DialogHeader>
@@ -696,9 +622,6 @@ export default function HousesPage() {
                 <div className="rounded-xl border border-border bg-muted/30 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Balance</p>
-                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openBalanceDialog(viewHouse)}>
-                      <IndianRupee className="h-3.5 w-3.5" /> Edit Balance
-                    </Button>
                   </div>
                   <div className="flex gap-6">
                     <div>
@@ -881,46 +804,6 @@ export default function HousesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
-        <DialogContent className="max-w-md [&_[data-slot=input]]:h-11 sm:[&_[data-slot=input]]:h-9">
-          <DialogHeader>
-            <DialogTitle>Edit House Balance</DialogTitle>
-            <DialogDescription>
-              Update the pending balance carried forward and the current month balance for this house.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="balance-previous">Previous Balance</Label>
-              <Input
-                id="balance-previous"
-                type="number"
-                min="0"
-                step="0.01"
-                value={balanceForm.previousBalance}
-                onChange={e => setBalanceForm(form => ({ ...form, previousBalance: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="balance-current">Current Balance</Label>
-              <Input
-                id="balance-current"
-                type="number"
-                min="0"
-                step="0.01"
-                value={balanceForm.currentBalance}
-                onChange={e => setBalanceForm(form => ({ ...form, currentBalance: e.target.value }))}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBalanceDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleBalanceSave} disabled={balanceSaving}>
-              {balanceSaving ? 'Saving...' : 'Update Balance'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

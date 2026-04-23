@@ -2,7 +2,7 @@ import { getAuthHeader } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 const DEFAULT_CACHE_FRESH_MS = 20_000;
 const revalidationLocks = new Map<string, Promise<void>>();
 
@@ -420,18 +420,6 @@ export const balanceApi = {
   get: (houseId: number) => apiGet<HouseBalance>(`/house-balance/${houseId}`),
   payments: (houseId: number) => apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`),
   allPayments: () => apiGet<PaymentHistory[]>('/house-balance/payments'),
-  update: async (houseId: number, data: { previousBalance?: number; currentBalance?: number }) => {
-    if (isBrowser()) {
-      await invalidateCache('/house-balance');
-      await syncEngine.enqueue(`/house-balance/${houseId}`, 'PATCH', data);
-    }
-
-    if (isOnline()) {
-      return apiPatch<HouseBalance>(`/house-balance/${houseId}`, data);
-    }
-
-    return { houseId, ...(data as Record<string, unknown>) } as unknown as HouseBalance;
-  },
   record: async (data: { houseId: number; amount: number; note?: string }) => {
     if (isBrowser()) {
       await invalidateCache('/house-balance');
@@ -467,11 +455,11 @@ export const billsApi = {
       },
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
+  preview: (houseId: number, date: string) => 
+    apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number }>(`/bills/preview?houseId=${houseId}&date=${date}`),
   generate: async (data: {
     houseId: number;
-    month: number;
-    year: number;
-    items: BillItem[];
+    date: string;
     note?: string;
   }) => {
     const res = await apiPost<Bill>('/bills/generate', data);
@@ -581,7 +569,6 @@ export const deliveryLogsApi = {
     houseId: number;
     shift: 'morning' | 'evening';
     items: DeliveryLogItem[];
-    currentBalance?: number;
     note?: string;
   }) => {
     const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
@@ -595,7 +582,6 @@ export const deliveryLogsApi = {
     id: number,
     data: {
       items?: DeliveryLogItem[];
-      currentBalance?: number;
       note?: string;
     },
   ) => {

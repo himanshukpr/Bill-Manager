@@ -1,7 +1,7 @@
 import { db } from './db';
 import { getAuthHeader } from './auth';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 function nextRetryDelay(attempts: number): number {

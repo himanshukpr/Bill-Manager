@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GenerateBillDto } from './dto/bill.dto';
@@ -37,19 +38,23 @@ export class BillsService {
   }
 
   async generate(dto: GenerateBillDto) {
+    const selectedDate = new Date(dto.date);
+    const month = selectedDate.getMonth() + 1;
+    const year = selectedDate.getFullYear();
+
     // Check for duplicate bill
     const existing = await this.prisma.bill.findUnique({
       where: {
         houseId_month_year: {
           houseId: dto.houseId,
-          month: dto.month,
-          year: dto.year,
+          month,
+          year,
         },
       },
     });
     if (existing)
       throw new ConflictException(
-        `Bill for house #${dto.houseId} for ${dto.month}/${dto.year} already exists`,
+        `Bill for house #${dto.houseId} for ${month}/${year} already exists`,
       );
 
     // Get current balance
@@ -59,7 +64,73 @@ export class BillsService {
     if (!balance)
       throw new NotFoundException(`House #${dto.houseId} balance not found`);
 
-    const totalAmount = dto.items.reduce((sum, item) => sum + item.amount, 0);
+    const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const periodEnd = new Date(selectedDate);
+    periodEnd.setHours(23, 59, 59, 999);
+
+    const deliveryLogs = await this.prisma.deliveryLog.findMany({
+      where: {
+        houseId: dto.houseId,
+        deliveredAt: {
+          gte: periodStart,
+          lt: periodEnd,
+        },
+      },
+      orderBy: { deliveredAt: 'asc' },
+    });
+
+    if (deliveryLogs.length === 0) {
+      throw new BadRequestException(
+        `No delivery logs found for house #${dto.houseId} for ${month}/${year} up to selected date`,
+      );
+    }
+
+    const totalAmount = deliveryLogs.reduce(
+      (sum, log) => sum + Number(log.totalAmount ?? 0),
+      0,
+    );
+
+    if (totalAmount <= 0) {
+      throw new BadRequestException('Cannot generate bill with zero amount');
+    }
+
+    const itemSummary = new Map<string, { name: string; qty: number; rate: number; amount: number }>();
+    for (const log of deliveryLogs) {
+      const logItems = Array.isArray(log.items) ? (log.items as any[]) : [];
+      for (const rawItem of logItems) {
+        const milkType = String(rawItem?.milkType ?? rawItem?.name ?? 'milk');
+        const normalizedType = milkType.toLowerCase();
+        const qty = Number(rawItem?.qty ?? 0);
+        const rate = Number(rawItem?.rate ?? 0);
+        const amount = Number(rawItem?.amount ?? qty * rate);
+        if (qty <= 0 || rate <= 0 || amount <= 0) continue;
+
+        const key = `${normalizedType}:${rate}`;
+        const existingItem = itemSummary.get(key);
+        if (!existingItem) {
+          itemSummary.set(key, {
+            name: `${normalizedType.charAt(0).toUpperCase()}${normalizedType.slice(1)} Milk`,
+            qty,
+            rate,
+            amount,
+          });
+        } else {
+          existingItem.qty += qty;
+          existingItem.amount += amount;
+        }
+      }
+    }
+
+    const billItems = Array.from(itemSummary.values());
+    if (billItems.length === 0) {
+      billItems.push({
+        name: 'Delivery Total',
+        qty: 1,
+        rate: totalAmount,
+        amount: totalAmount,
+      });
+    }
+
     const previousBalance = Number(balance.previousBalance);
 
     // Use transaction: create bill + update balance
@@ -67,11 +138,12 @@ export class BillsService {
       this.prisma.bill.create({
         data: {
           houseId: dto.houseId,
-          month: dto.month,
-          year: dto.year,
+          month,
+          year,
           totalAmount,
-          items: dto.items as any,
+          items: billItems as any,
           previousBalance,
+          generatedDate: selectedDate,
           note: dto.note,
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
@@ -81,12 +153,52 @@ export class BillsService {
         where: { houseId: dto.houseId },
         data: {
           previousBalance: { increment: totalAmount },
-          currentBalance: 0,
+          currentBalance: { decrement: totalAmount },
         },
       }),
     ]);
 
     return bill;
+  }
+
+  async preview(houseId: number, dateStr: string) {
+    const selectedDate = new Date(dateStr);
+    const month = selectedDate.getMonth() + 1;
+    const year = selectedDate.getFullYear();
+
+    const balance = await this.prisma.houseBalance.findUnique({
+      where: { houseId },
+    });
+    if (!balance)
+      throw new NotFoundException(`House #${houseId} balance not found`);
+
+    const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const periodEnd = new Date(selectedDate);
+    periodEnd.setHours(23, 59, 59, 999);
+
+    const deliveryLogs = await this.prisma.deliveryLog.findMany({
+      where: {
+        houseId,
+        deliveredAt: {
+          gte: periodStart,
+          lt: periodEnd,
+        },
+      },
+    });
+
+    const totalAmount = deliveryLogs.reduce(
+      (sum, log) => sum + Number(log.totalAmount ?? 0),
+      0,
+    );
+
+    const previousBalance = Number(balance.previousBalance);
+
+    return {
+      totalAmount,
+      previousBalance,
+      grandTotal: totalAmount + previousBalance,
+      logCount: deliveryLogs.length,
+    };
   }
 
   async remove(id: number) {

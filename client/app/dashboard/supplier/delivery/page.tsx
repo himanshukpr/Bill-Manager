@@ -214,7 +214,6 @@ export default function DeliveryPage() {
     const [logsLoading, setLogsLoading] = useState(false)
 
     const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
-    const [currentBalance, setCurrentBalance] = useState('')
     const [marking, setMarking] = useState(false)
 
     // Edit log state (inline editing)
@@ -619,7 +618,6 @@ export default function DeliveryPage() {
 
     const resetForm = () => {
         setDeliveryItems([{ ...emptyDeliveryItem }])
-        setCurrentBalance('')
     }
 
     // DELIVERY ITEMS
@@ -688,7 +686,6 @@ export default function DeliveryPage() {
                 houseId: currentHouse.id,
                 shift: selectedShift,
                 items: payloadItems,
-                currentBalance: currentBalance ? Number(currentBalance) : undefined,
             })
 
             setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
@@ -935,7 +932,7 @@ export default function DeliveryPage() {
                 : 'animate-in fade-in duration-200'
 
     return (
-        <div className="mx-auto flex h-[100dvh] max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
+        <div className="mx-auto flex h-dvh max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
             
             <div className="flex shrink-0 items-center justify-between gap-1.5 py-0 sm:py-1">
                 <Badge variant="outline" className="capitalize">
@@ -1043,10 +1040,10 @@ export default function DeliveryPage() {
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className="w-[90px] sm:w-[120px]">Product</TableHead>
-                                    <TableHead className="w-[96px] sm:w-[110px]">Qty (L)</TableHead>
-                                    <TableHead className="w-[74px] sm:w-[90px]">Rate</TableHead>
-                                    <TableHead className="hidden sm:table-cell sm:w-[100px]">Amount</TableHead>
+                                    <TableHead className="w-22.5 sm:w-30">Product</TableHead>
+                                    <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
+                                    <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
+                                    <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1075,7 +1072,7 @@ export default function DeliveryPage() {
                                                 </Select>
                                             </TableCell>
 
-                                            <TableCell className="w-[96px] sm:min-w-[120px]">
+                                            <TableCell className="w-24 sm:min-w-30">
                                                 <Input
                                                     type="number"
                                                     placeholder="0"

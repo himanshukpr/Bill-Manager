@@ -80,7 +80,7 @@ export default function AdminDashboardPage() {
           const Icon = stat.icon
           return (
             <div key={stat.label}
-              className={`relative overflow-hidden rounded-2xl border border-neutral-200/50 bg-gradient-to-br ${stat.bgGradient} p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-800/50`}>
+              className={`relative overflow-hidden rounded-2xl border border-neutral-200/50 bg-linear-to-br ${stat.bgGradient} p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-800/50`}>
               <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-white/10" />
               <div className="relative flex items-start justify-between">
                 <div>
