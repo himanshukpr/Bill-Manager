@@ -176,6 +176,13 @@ function isSameLocalDate(left: Date, right: Date): boolean {
     )
 }
 
+function getLocalDateKey(date: Date = new Date()): string {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+
 function parseHouseLocation(location?: string): { lat: number; lon: number } | null {
     if (!location) return null
 
@@ -207,6 +214,7 @@ export default function DeliveryPage() {
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
     const [allocatedHouseProducts, setAllocatedHouseProducts] = useState<Record<number, string>>({})
+    const [todayKey, setTodayKey] = useState(() => getLocalDateKey())
 
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
@@ -215,13 +223,10 @@ export default function DeliveryPage() {
 
     const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
     const [marking, setMarking] = useState(false)
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+    const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
+    const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
 
-    // Edit log state (inline editing)
-    const [editingLogId, setEditingLogId] = useState<number | null>(null)
-    const [editingItems, setEditingItems] = useState<DeliveryItemForm[]>([])
-    const [editingSaving, setEditingSaving] = useState(false)
-    const [sheetDirty, setSheetDirty] = useState(false)
-    const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
     const houseChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const swipeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -232,6 +237,13 @@ export default function DeliveryPage() {
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
+    const pageContainerRef = useRef<HTMLDivElement | null>(null)
+    const [availableHeight, setAvailableHeight] = useState<number | null>(null)
+
+    const containerStyle = useMemo(
+        () => ({ height: availableHeight ? `${availableHeight}px` : 'calc(100dvh - 0.5rem)' }),
+        [availableHeight],
+    )
 
     // AUTH
     useEffect(() => {
@@ -241,6 +253,25 @@ export default function DeliveryPage() {
             return
         }
         setAuth(session)
+    }, [])
+
+    useEffect(() => {
+        const updateHeight = () => {
+            const topOffset = pageContainerRef.current?.getBoundingClientRect().top ?? 0
+            const nextHeight = Math.max(320, Math.floor(window.innerHeight - topOffset - 8))
+            setAvailableHeight(nextHeight)
+        }
+
+        updateHeight()
+        window.addEventListener('resize', updateHeight)
+        window.addEventListener('orientationchange', updateHeight)
+        window.visualViewport?.addEventListener('resize', updateHeight)
+
+        return () => {
+            window.removeEventListener('resize', updateHeight)
+            window.removeEventListener('orientationchange', updateHeight)
+            window.visualViewport?.removeEventListener('resize', updateHeight)
+        }
     }, [])
 
     // LOAD HOUSES
@@ -405,45 +436,55 @@ export default function DeliveryPage() {
         })
     }, [houses, houseSearch, allocatedHouseProducts])
 
+    const loadTodayDeliveredSummary = useCallback(async () => {
+        if (!auth || !selectedShift) return
+
+        const logs = await deliveryLogsApi.list({ shift: selectedShift })
+        const today = new Date()
+        const deliveredToday = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+
+        const nextProducts: Record<number, Map<string, number>> = {}
+        const nextCompleted = new Set<number>()
+
+        for (const log of deliveredToday) {
+            nextCompleted.add(log.houseId)
+
+            if (!nextProducts[log.houseId]) {
+                nextProducts[log.houseId] = new Map<string, number>()
+            }
+
+            for (const item of log.items) {
+                const productName = item.milkType.trim()
+                if (!productName) continue
+
+                const currentQty = nextProducts[log.houseId].get(productName) ?? 0
+                nextProducts[log.houseId].set(productName, currentQty + Number(item.qty || 0))
+            }
+        }
+
+        const resolvedProducts: Record<number, string> = {}
+        for (const [houseId, products] of Object.entries(nextProducts)) {
+            const formattedProducts = Array.from(products.entries())
+                .filter(([, qty]) => qty > 0)
+                .map(([productName, qty]) => `${productName} ${qty}L`)
+
+            resolvedProducts[Number(houseId)] = formattedProducts.join(', ')
+        }
+
+        setAllocatedHouseProducts(resolvedProducts)
+        setCompletedHouses(nextCompleted)
+    }, [auth, selectedShift])
+
     useEffect(() => {
-        if (!auth || !selectedShift || panelView !== 'allocated-houses') return
+        if (!auth || !selectedShift) return
 
         let active = true
 
         const loadDeliveredProducts = async () => {
             try {
-                const logs = await deliveryLogsApi.list({ shift: selectedShift })
-                const today = new Date()
-                const deliveredToday = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
-
-                const nextProducts: Record<number, Map<string, number>> = {}
-
-                for (const log of deliveredToday) {
-                    if (!nextProducts[log.houseId]) {
-                        nextProducts[log.houseId] = new Map<string, number>()
-                    }
-
-                    for (const item of log.items) {
-                        const productName = item.milkType.trim()
-                        if (!productName) continue
-
-                        const currentQty = nextProducts[log.houseId].get(productName) ?? 0
-                        nextProducts[log.houseId].set(productName, currentQty + Number(item.qty || 0))
-                    }
-                }
+                await loadTodayDeliveredSummary()
 
                 if (!active) return
-
-                const resolvedProducts: Record<number, string> = {}
-                for (const [houseId, products] of Object.entries(nextProducts)) {
-                    const formattedProducts = Array.from(products.entries())
-                        .filter(([, qty]) => qty > 0)
-                        .map(([productName, qty]) => `${productName} ${qty}L`)
-
-                    resolvedProducts[Number(houseId)] = formattedProducts.join(', ')
-                }
-
-                setAllocatedHouseProducts(resolvedProducts)
             } catch (error: any) {
                 if (active) toast.error(error.message)
             }
@@ -454,7 +495,22 @@ export default function DeliveryPage() {
         return () => {
             active = false
         }
-    }, [auth, selectedShift, panelView])
+    }, [auth, selectedShift, loadTodayDeliveredSummary])
+
+    useEffect(() => {
+        const timer = setInterval(() => {
+            const nextKey = getLocalDateKey()
+            if (nextKey === todayKey) return
+
+            setTodayKey(nextKey)
+            setCompletedHouses(new Set())
+            setAllocatedHouseProducts({})
+            setCurrentHouseLogs([])
+            void loadTodayDeliveredSummary()
+        }, 60_000)
+
+        return () => clearInterval(timer)
+    }, [todayKey, loadTodayDeliveredSummary])
 
     useEffect(() => {
         if (!currentHouse || !selectedShift) {
@@ -483,6 +539,12 @@ export default function DeliveryPage() {
                 setCurrentHouseLogs(todayLogs)
                 if (todayLogs.length > 0) {
                     setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+                } else {
+                    setCompletedHouses((prev) => {
+                        const next = new Set(prev)
+                        next.delete(currentHouse.id)
+                        return next
+                    })
                 }
             } catch (err: any) {
                 if (active) toast.error(err.message)
@@ -496,17 +558,14 @@ export default function DeliveryPage() {
         return () => {
             active = false
         }
-    }, [currentHouse?.id, selectedShift])
+    }, [currentHouse?.id, selectedShift, todayKey])
 
     useEffect(() => {
         if (currentHouseLogs.length === 0) {
-            setEditingLogId(null)
-            setEditingItems([])
-            setSheetDirty(false)
+            setDeliveryItems([{ ...emptyDeliveryItem }])
             return
         }
 
-        const primaryLog = currentHouseLogs[0]
         const grouped = new Map<MilkType, number>()
 
         for (const log of currentHouseLogs) {
@@ -521,9 +580,7 @@ export default function DeliveryPage() {
             qty: String(qty),
         }))
 
-        setEditingLogId(primaryLog.id)
-        setEditingItems(nextItems.length > 0 ? nextItems : [{ ...emptyDeliveryItem }])
-        setSheetDirty(false)
+        setDeliveryItems(nextItems.length > 0 ? nextItems : [{ ...emptyDeliveryItem }])
     }, [currentHouseLogs])
 
     const getEffectiveRate = (house: House | undefined, milkType: MilkType): { rate: number; source: 'house' | 'global' | 'none' } => {
@@ -699,7 +756,15 @@ export default function DeliveryPage() {
 
     const resetForm = () => {
         setDeliveryItems([{ ...emptyDeliveryItem }])
+        setHasUnsavedChanges(false)
+        setSaveStatus('idle')
     }
+
+    useEffect(() => {
+        setHasUnsavedChanges(false)
+        setSaveStatus('idle')
+        setLastSavedAt(null)
+    }, [currentHouse?.id, selectedShift])
 
     // DELIVERY ITEMS
     const updateDeliveryItem = (idx: number, field: keyof DeliveryItemForm, value: string) => {
@@ -713,6 +778,8 @@ export default function DeliveryPage() {
                     i === idx ? { ...item, qty: value } : item
                 )
             })
+            setHasUnsavedChanges(true)
+            setSaveStatus('idle')
             return
         }
 
@@ -721,10 +788,14 @@ export default function DeliveryPage() {
                 i === idx ? { ...item, milkType: value as MilkType } : item
             )
         )
+        setHasUnsavedChanges(true)
+        setSaveStatus('idle')
     }
 
     const addItem = () => {
         setDeliveryItems((prev) => [...prev, { ...emptyDeliveryItem }])
+        setHasUnsavedChanges(true)
+        setSaveStatus('idle')
     }
 
     // TOTAL CALCULATION
@@ -743,6 +814,7 @@ export default function DeliveryPage() {
         if (!selectedShift) return
 
         setMarking(true)
+        setSaveStatus('idle')
 
         try {
             const payloadItems = deliveryItems
@@ -763,71 +835,14 @@ export default function DeliveryPage() {
                 return
             }
 
-            await deliveryLogsApi.create({
-                houseId: currentHouse.id,
-                shift: selectedShift,
-                items: payloadItems,
-            })
-
-            setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
-            const refreshedLogs = await deliveryLogsApi.list({
-                houseId: currentHouse.id,
-                shift: selectedShift,
-            })
-            const today = new Date()
-            setCurrentHouseLogs(
-                refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
-            )
-
-            toast.success(`${currentHouse.houseNo} delivered!`)
-
-            setTimeout(() => handleNext(), 400)
-        } catch (err: any) {
-            toast.error(err.message)
-        } finally {
-            setMarking(false)
-        }
-    }
-
-    const persistTodaySheet = useCallback(async () => {
-        if (!currentHouse || !selectedShift || editingItems.length === 0) return
-
-        const validItems = editingItems
-            .filter((item) => Number(item.qty) > 0)
-            .map((item) => {
-                const qty = Number(item.qty)
-                const { rate } = getEffectiveRate(currentHouse, item.milkType)
-                return {
-                    milkType: item.milkType,
-                    qty,
-                    rate,
-                    amount: qty * rate,
-                }
-            })
-            .filter((item) => item.rate > 0)
-
-        if (validItems.length === 0) return
-
-        try {
-            setEditingSaving(true)
-
-            if (!editingLogId) {
-                const created = await deliveryLogsApi.create({
-                    houseId: currentHouse.id,
-                    shift: selectedShift,
-                    items: validItems,
-                })
-
-                setEditingLogId(created.log.id)
-                setCurrentHouseLogs([created.log])
-                setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
-            } else {
-                const updated = await deliveryLogsApi.update(editingLogId, {
-                    items: validItems as any,
+            if (isCompleted && currentHouseLogs.length > 0) {
+                const primaryLog = currentHouseLogs[0]
+                const updated = await deliveryLogsApi.update(primaryLog.id, {
+                    items: payloadItems as any,
                 })
 
                 const duplicateLogIds = currentHouseLogs
-                    .filter((log) => log.id !== editingLogId)
+                    .slice(1)
                     .map((log) => log.id)
 
                 if (duplicateLogIds.length > 0) {
@@ -835,69 +850,48 @@ export default function DeliveryPage() {
                 }
 
                 setCurrentHouseLogs([updated as DeliveryLog])
+            } else {
+                await deliveryLogsApi.create({
+                    houseId: currentHouse.id,
+                    shift: selectedShift,
+                    items: payloadItems,
+                })
+
+                setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+                const refreshedLogs = await deliveryLogsApi.list({
+                    houseId: currentHouse.id,
+                    shift: selectedShift,
+                })
+                const today = new Date()
+                setCurrentHouseLogs(
+                    refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+                )
+            }
+
+            await loadTodayDeliveredSummary()
+
+            const now = new Date()
+            const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            setHasUnsavedChanges(false)
+            setSaveStatus('saved')
+            setLastSavedAt(timeLabel)
+
+            toast.success(
+                isCompleted
+                    ? `${currentHouse.houseNo} delivery updated!`
+                    : `${currentHouse.houseNo} delivered!`
+            )
+
+            if (!isCompleted) {
+                setTimeout(() => handleNext(), 400)
             }
         } catch (err: any) {
-            toast.error(err.message || 'Auto-save failed')
+            toast.error(err.message)
+            setSaveStatus('failed')
         } finally {
-            setEditingSaving(false)
+            setMarking(false)
         }
-    }, [currentHouse, selectedShift, editingItems, editingLogId, currentHouseLogs])
-
-    useEffect(() => {
-        if (!sheetDirty) return
-
-        if (autoSaveTimerRef.current) {
-            clearTimeout(autoSaveTimerRef.current)
-        }
-
-        autoSaveTimerRef.current = setTimeout(() => {
-            void persistTodaySheet().finally(() => setSheetDirty(false))
-        }, 700)
-
-        return () => {
-            if (autoSaveTimerRef.current) {
-                clearTimeout(autoSaveTimerRef.current)
-            }
-        }
-    }, [sheetDirty, persistTodaySheet])
-
-    const updateTodayRecordItem = (idx: number, field: keyof DeliveryItemForm, value: string) => {
-        if (field === 'qty') {
-            const trimmed = value.trim()
-            setEditingItems((prev) => {
-                if (trimmed === '' && prev.length > 1) {
-                    return prev.filter((_, i) => i !== idx)
-                }
-                return prev.map((item, i) =>
-                    i === idx ? { ...item, qty: value } : item,
-                )
-            })
-            setSheetDirty(true)
-            return
-        }
-
-        setEditingItems((prev) =>
-            prev.map((item, i) => (i === idx ? { ...item, milkType: value as MilkType } : item)),
-        )
-        setSheetDirty(true)
     }
-
-    const addTodayRecordItem = () => {
-        setEditingItems((prev) => [...prev, { ...emptyDeliveryItem }])
-        setSheetDirty(true)
-    }
-
-    const todaySheetTotal = useMemo(
-        () =>
-            editingItems
-                .filter((item) => Number(item.qty) > 0)
-                .reduce((sum, item) => {
-                    const qty = Number(item.qty)
-                    const { rate } = getEffectiveRate(currentHouse, item.milkType)
-                    return sum + qty * rate
-                }, 0),
-        [editingItems, currentHouse, globalRateMap],
-    )
 
     // SHIFT SELECTOR
     if (!selectedShift) {
@@ -934,7 +928,7 @@ export default function DeliveryPage() {
 
     if (panelView === 'allocated-houses') {
         return (
-            <div className="max-w-4xl mx-auto p-4 space-y-4">
+            <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-4xl flex-col overflow-hidden px-2 py-2 sm:px-4 sm:py-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <p className="text-xs uppercase tracking-wide text-muted-foreground">Supplier Panel</p>
@@ -961,7 +955,7 @@ export default function DeliveryPage() {
                     onChange={(event) => setHouseSearch(event.target.value)}
                 />
 
-                <div className="rounded-2xl border border-border bg-card p-2">
+                <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card p-2">
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -1005,6 +999,7 @@ export default function DeliveryPage() {
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
+    const canSubmitDelivery = !marking && (!isCompleted || hasUnsavedChanges)
     const houseMotionClass =
         houseChangeDirection === 'next'
             ? 'animate-in fade-in slide-in-from-right-4 duration-300'
@@ -1021,7 +1016,7 @@ export default function DeliveryPage() {
     } as const
 
     return (
-        <div className="mx-auto flex h-dvh max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
+        <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
             
             <div className="flex shrink-0 items-center justify-between gap-1.5 py-0 sm:py-1">
                 <Badge variant="outline" className="capitalize">
@@ -1207,11 +1202,25 @@ export default function DeliveryPage() {
                             Total: ₹{currentDeliveryTotal.toLocaleString('en-IN')}
                         </div>
                     </div>
+
+                    <p className="text-xs text-muted-foreground">
+                        {marking
+                            ? 'Saving changes...'
+                            : saveStatus === 'failed'
+                                ? 'Save failed. Please try again.'
+                                : hasUnsavedChanges
+                                    ? 'Unsaved changes. Click the button below to save.'
+                                    : saveStatus === 'saved'
+                                        ? `Changes saved${lastSavedAt ? ` at ${lastSavedAt}` : ''}.`
+                                        : isCompleted
+                                            ? 'No new changes to save.'
+                                        : ''}
+                    </p>
                 </div>
 
             {/* ACTION */}
-            <Button onClick={handleMarkDelivered} disabled={marking || isCompleted} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
-                {isCompleted ? 'Already Delivered Today' : marking ? 'Saving...' : 'Mark Delivered'}
+            <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+                {marking ? 'Saving...' : isCompleted ? 'Update Delivery' : 'Mark Delivered'}
             </Button>
             </div>
 
