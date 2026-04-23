@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import maplibregl from 'maplibre-gl'
 import Map, { Marker, NavigationControl, type MapRef } from 'react-map-gl/maplibre'
-import { ArrowLeft, Loader2, MapPin, Navigation, Save } from 'lucide-react'
+import { Loader2, MapPin, Navigation, Save } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { housesApi } from '@/lib/api'
@@ -339,23 +339,18 @@ export function LocationRouteMap({
     <div className="space-y-3">
       <div className="sticky top-0 z-10 rounded-xl border border-border/70 bg-background/95 p-2 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2">
-          {onBack ? (
-            <Button variant="outline" size="sm" onClick={onBack} className="gap-1.5">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </Button>
-          ) : null}
-
-          <div className="grid flex-1 min-w-[220px] grid-cols-2 gap-2">
-            <Button onClick={saveCurrentLocation} disabled={isBusy || !houseId} className="gap-2">
+          <div className="grid flex-1 min-w-0 grid-cols-2 gap-2">
+            <Button onClick={saveCurrentLocation} disabled={isBusy || !houseId} className="w-full gap-2">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {saving ? 'Saving...' : 'Save Location'}
             </Button>
-            <Button variant="outline" onClick={openDirections} disabled={isBusy || !targetLocation} className="gap-2">
+            <Button variant="outline" onClick={openDirections} disabled={isBusy || !targetLocation} className="w-full gap-2">
               {openingDirections ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
               Directions
             </Button>
           </div>
         </div>
+       
       </div>
 
       <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card">
@@ -390,7 +385,6 @@ export function LocationRouteMap({
         </div>
       </div>
 
-      {status ? <p className="text-xs text-muted-foreground">{status}</p> : null}
     </div>
   )
 }

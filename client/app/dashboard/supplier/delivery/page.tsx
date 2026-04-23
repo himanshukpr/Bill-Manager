@@ -224,6 +224,9 @@ export default function DeliveryPage() {
     const [sheetDirty, setSheetDirty] = useState(false)
     const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
+    const houseChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [houseChangeMessage, setHouseChangeMessage] = useState('')
+    const [houseChangeDirection, setHouseChangeDirection] = useState<'next' | 'prev' | null>(null)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
@@ -538,6 +541,16 @@ export default function DeliveryPage() {
     // NAVIGATION HANDLERS
     const handleNext = () => {
         if (currentIndex < houses.length - 1) {
+            const nextHouse = houses[currentIndex + 1]
+            setHouseChangeDirection('next')
+            setHouseChangeMessage(nextHouse ? `House ${nextHouse.houseNo} loaded` : 'House changed')
+            if (houseChangeTimerRef.current) {
+                clearTimeout(houseChangeTimerRef.current)
+            }
+            houseChangeTimerRef.current = setTimeout(() => {
+                setHouseChangeMessage('')
+                setHouseChangeDirection(null)
+            }, 1100)
             setCurrentIndex((i) => i + 1)
             resetForm()
         }
@@ -545,10 +558,39 @@ export default function DeliveryPage() {
 
     const handlePrevious = () => {
         if (currentIndex > 0) {
+            const prevHouse = houses[currentIndex - 1]
+            setHouseChangeDirection('prev')
+            setHouseChangeMessage(prevHouse ? `House ${prevHouse.houseNo} loaded` : 'House changed')
+            if (houseChangeTimerRef.current) {
+                clearTimeout(houseChangeTimerRef.current)
+            }
+            houseChangeTimerRef.current = setTimeout(() => {
+                setHouseChangeMessage('')
+                setHouseChangeDirection(null)
+            }, 1100)
             setCurrentIndex((i) => i - 1)
             resetForm()
         }
     }
+
+    useEffect(() => {
+        if (!houseChangeMessage) return
+
+        if (houseChangeTimerRef.current) {
+            clearTimeout(houseChangeTimerRef.current)
+        }
+
+        houseChangeTimerRef.current = setTimeout(() => {
+            setHouseChangeMessage('')
+            setHouseChangeDirection(null)
+        }, 1100)
+
+        return () => {
+            if (houseChangeTimerRef.current) {
+                clearTimeout(houseChangeTimerRef.current)
+            }
+        }
+    }, [houseChangeMessage])
 
     const handleNavTouchStart = (event: TouchEvent<HTMLDivElement>) => {
         const touch = event.touches[0]
@@ -885,6 +927,12 @@ export default function DeliveryPage() {
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
+    const houseMotionClass =
+        houseChangeDirection === 'next'
+            ? 'animate-in fade-in slide-in-from-right-4 duration-300'
+            : houseChangeDirection === 'prev'
+                ? 'animate-in fade-in slide-in-from-left-4 duration-300'
+                : 'animate-in fade-in duration-200'
 
     return (
         <div className="mx-auto flex h-[100dvh] max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
@@ -909,7 +957,12 @@ export default function DeliveryPage() {
                 </Button>
             </div> */}
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div key={currentHouse.id} className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${houseMotionClass}`}>
+            {houseChangeMessage ? (
+                <div className="pointer-events-none absolute right-2 top-2 z-20 rounded-full bg-primary/90 px-3 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg shadow-primary/20">
+                    {houseChangeMessage}
+                </div>
+            ) : null}
             {/* HOUSE CARD */}
             <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
                 <button
@@ -1090,8 +1143,8 @@ export default function DeliveryPage() {
             </div>
 
             <Dialog open={isMapExpanded} onOpenChange={setIsMapExpanded}>
-                <DialogContent className="max-w-3xl">
-                    <DialogHeader>
+                <DialogContent className="max-w-3xl max-h-[calc(100dvh-1rem)] overflow-y-auto top-2 translate-y-0 px-4 pb-4 pt-10 sm:top-1/2 sm:-translate-y-1/2 sm:px-6 sm:pb-6 sm:pt-6">
+                    <DialogHeader className="pr-10">
                         <DialogTitle>House Location & Route</DialogTitle>
                     </DialogHeader>
 
