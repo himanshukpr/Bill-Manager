@@ -2,14 +2,14 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Plus, Search, Phone, MapPin, Building2,
-  Pencil, Trash2, Eye, ChevronRight, Settings2
+  Plus, Search, Phone, MapPin, Building2, Bell, CalendarDays,
+  Pencil, Trash2, Eye, Settings2, Save
 } from 'lucide-react'
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogFooter, DialogDescription,
+  DialogFooter, DialogDescription, DialogTrigger,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -90,6 +90,20 @@ function toAlertInputValue(rawValue: string | null | undefined): string {
   const parsed = parseAlerts(rawValue)
   const firstText = parsed.find((alert) => alert.text?.trim())?.text
   return firstText?.trim() ?? ''
+}
+
+function serializeAlerts(alerts: HouseAlert[]): string | undefined {
+  const normalized = alerts
+    .map((alert) => ({
+      id: alert.id || crypto.randomUUID(),
+      text: alert.text.trim(),
+      schedule: alert.schedule,
+    }))
+    .filter((alert) => alert.text.length > 0)
+
+  if (normalized.length === 0) return undefined
+
+  return JSON.stringify(normalized)
 }
 
 type HouseForm = {
@@ -535,25 +549,13 @@ export default function HousesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-position">
-                    Position
-                    {form.shift === 'evening' && <span className="text-xs font-normal text-muted-foreground ml-2"></span>}
-                  </Label>
-                  <Input
-                    id="house-position"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.position}
-                    onChange={e => setForm(f => ({ ...f, position: e.target.value }))}
-                    placeholder="0"
-                    disabled={form.shift === 'evening'}
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Daily Alerts</Label>
+                  <DailyAlertsDialog
+                    value={form.dailyAlerts}
+                    onChange={value => setForm(f => ({ ...f, dailyAlerts: value }))}
+                    placeholder="Open schedule editor"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-alerts">Daily Alerts</Label>
-                  <Input id="house-alerts" value={form.dailyAlerts} onChange={e => setForm(f => ({ ...f, dailyAlerts: e.target.value }))} placeholder="Optional alert" />
                 </div>
               </div>
             </div>
@@ -774,24 +776,11 @@ export default function HousesPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="config-position">Position</Label>
-              <Input
-                id="config-position"
-                type="number"
-                min="0"
-                step="1"
-                value={configForm.position}
-                onChange={e => setConfigForm(form => ({ ...form, position: e.target.value }))}
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1.5">
               <Label htmlFor="config-alerts">Daily Alerts</Label>
-              <Input
-                id="config-alerts"
+              <DailyAlertsDialog
                 value={configForm.dailyAlerts}
-                onChange={e => setConfigForm(form => ({ ...form, dailyAlerts: e.target.value }))}
-                placeholder="Optional alert text"
+                onChange={value => setConfigForm(form => ({ ...form, dailyAlerts: value }))}
+                placeholder="Open schedule editor"
               />
             </div>
           </div>
@@ -814,5 +803,147 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="text-xs text-muted-foreground font-medium">{label}</p>
       <p className="text-sm font-semibold mt-0.5">{value}</p>
     </div>
+  )
+}
+
+const DAYS_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const
+const DAYS_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+function DailyAlertsDialog({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [alerts, setAlerts] = useState<HouseAlert[]>([])
+
+  useEffect(() => {
+    if (open) {
+      setAlerts(parseAlerts(value))
+    }
+  }, [open, value])
+
+  const addAlert = () => {
+    setAlerts(prev => [...prev, {
+      id: crypto.randomUUID(),
+      text: '',
+      schedule: ALL_DAYS_ALERT_SCHEDULE,
+    }])
+  }
+
+  const updateAlertText = (index: number, text: string) => {
+    setAlerts(prev => {
+      const next = [...prev]
+      next[index] = { ...next[index], text }
+      return next
+    })
+  }
+
+  const toggleDay = (index: number, day: typeof DAYS_KEYS[number]) => {
+    setAlerts(prev => {
+      const next = [...prev]
+      next[index] = {
+        ...next[index],
+        schedule: {
+          ...next[index].schedule,
+          [day]: !next[index].schedule[day],
+        },
+      }
+      return next
+    })
+  }
+
+  const removeAlert = (index: number) => {
+    setAlerts(prev => prev.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  const handleSave = () => {
+    onChange(serializeAlerts(alerts) ?? '')
+    setOpen(false)
+  }
+
+  const activeCount = parseAlerts(value).length
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <span className="truncate text-muted-foreground">
+            {activeCount > 0 ? `${activeCount} alert${activeCount > 1 ? 's' : ''} configured` : placeholder ?? 'Open schedule editor'}
+          </span>
+          <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl bg-card border-border/60">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5 text-primary" /> Daily Alerts
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
+          {alerts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-10 text-muted-foreground">
+              <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
+              <p className="font-medium">No alerts configured</p>
+              <p className="mt-1 text-xs">Create an alert schedule for selected days.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {alerts.map((alert, index) => (
+                <div key={alert.id} className="relative rounded-xl border border-border bg-muted/20 p-4">
+                  <div className="mb-4 flex gap-3">
+                    <Input
+                      value={alert.text}
+                      onChange={event => updateAlertText(index, event.target.value)}
+                      placeholder="E.g. Call before arrival"
+                      className="bg-background"
+                    />
+                    <Button variant="destructive" size="icon" onClick={() => removeAlert(index)} className="shrink-0">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Active Days</p>
+                    <div className="flex flex-wrap gap-2">
+                      {DAYS_KEYS.map((day, dayIndex) => (
+                        <Button
+                          key={day}
+                          type="button"
+                          variant={alert.schedule[day] ? 'default' : 'outline'}
+                          size="sm"
+                          className={`h-8 font-medium ${alert.schedule[day] ? 'bg-primary/90' : 'bg-background'}`}
+                          onClick={() => toggleDay(index, day)}
+                        >
+                          {DAYS_LABELS[dayIndex]}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button onClick={addAlert} variant="secondary" className="mt-4 w-full gap-2 border border-dashed border-border">
+            <Plus className="h-4 w-4" /> Create New Alert
+          </Button>
+        </div>
+
+        <DialogFooter className="mt-4 border-t border-border/40 pt-4">
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleSave} className="gap-2">
+            <Save className="h-4 w-4" /> Save Schedule
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

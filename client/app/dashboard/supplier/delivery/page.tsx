@@ -224,8 +224,11 @@ export default function DeliveryPage() {
     const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
     const houseChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const swipeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [houseChangeMessage, setHouseChangeMessage] = useState('')
     const [houseChangeDirection, setHouseChangeDirection] = useState<'next' | 'prev' | null>(null)
+    const [swipeOffset, setSwipeOffset] = useState(0)
+    const [isSwiping, setIsSwiping] = useState(false)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
@@ -540,6 +543,7 @@ export default function DeliveryPage() {
     // NAVIGATION HANDLERS
     const handleNext = () => {
         if (currentIndex < houses.length - 1) {
+            setSwipeOffset(0)
             const nextHouse = houses[currentIndex + 1]
             setHouseChangeDirection('next')
             setHouseChangeMessage(nextHouse ? `House ${nextHouse.houseNo} loaded` : 'House changed')
@@ -557,6 +561,7 @@ export default function DeliveryPage() {
 
     const handlePrevious = () => {
         if (currentIndex > 0) {
+            setSwipeOffset(0)
             const prevHouse = houses[currentIndex - 1]
             setHouseChangeDirection('prev')
             setHouseChangeMessage(prevHouse ? `House ${prevHouse.houseNo} loaded` : 'House changed')
@@ -591,9 +596,40 @@ export default function DeliveryPage() {
         }
     }, [houseChangeMessage])
 
+    useEffect(() => {
+        return () => {
+            if (swipeCommitTimerRef.current) {
+                clearTimeout(swipeCommitTimerRef.current)
+            }
+        }
+    }, [])
+
     const handleNavTouchStart = (event: TouchEvent<HTMLDivElement>) => {
         const touch = event.touches[0]
         navSwipeStartRef.current = { x: touch.clientX, y: touch.clientY }
+    }
+
+    const handleHouseTouchStart = (event: TouchEvent<HTMLDivElement>) => {
+        const touch = event.touches[0]
+        navSwipeStartRef.current = { x: touch.clientX, y: touch.clientY }
+        setIsSwiping(true)
+    }
+
+    const handleHouseTouchMove = (event: TouchEvent<HTMLDivElement>) => {
+        const start = navSwipeStartRef.current
+        if (!start) return
+
+        const touch = event.touches[0]
+        const deltaX = touch.clientX - start.x
+        const deltaY = touch.clientY - start.y
+
+        if (Math.abs(deltaY) > Math.abs(deltaX)) return
+
+        event.preventDefault()
+
+        const maxOffset = 96
+        const nextOffset = Math.max(-maxOffset, Math.min(maxOffset, deltaX))
+        setSwipeOffset(nextOffset)
     }
 
     const handleNavTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
@@ -614,6 +650,51 @@ export default function DeliveryPage() {
         }
 
         handlePrevious()
+    }
+
+    const handleHouseTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
+        const start = navSwipeStartRef.current
+        navSwipeStartRef.current = null
+        setIsSwiping(false)
+        if (!start) {
+            setSwipeOffset(0)
+            return
+        }
+
+        const touch = event.changedTouches[0]
+        const deltaX = touch.clientX - start.x
+        const deltaY = touch.clientY - start.y
+
+        if (Math.abs(deltaX) < 40 || Math.abs(deltaX) < Math.abs(deltaY)) {
+            setSwipeOffset(0)
+            return
+        }
+
+        const direction = deltaX < 0 ? 'next' : 'prev'
+        setSwipeOffset(direction === 'next' ? -128 : 128)
+        setHouseChangeDirection(direction)
+
+        const targetHouse = direction === 'next' ? houses[currentIndex + 1] : houses[currentIndex - 1]
+        setHouseChangeMessage(targetHouse ? `House ${targetHouse.houseNo} loaded` : 'House changed')
+
+        if (swipeCommitTimerRef.current) {
+            clearTimeout(swipeCommitTimerRef.current)
+        }
+
+        swipeCommitTimerRef.current = setTimeout(() => {
+            if (direction === 'next' && currentIndex < houses.length - 1) {
+                setCurrentIndex((index) => index + 1)
+                resetForm()
+            }
+
+            if (direction === 'prev' && currentIndex > 0) {
+                setCurrentIndex((index) => index - 1)
+                resetForm()
+            }
+
+            setSwipeOffset(0)
+            setHouseChangeDirection(null)
+        }, 140)
     }
 
     const resetForm = () => {
@@ -930,6 +1011,14 @@ export default function DeliveryPage() {
             : houseChangeDirection === 'prev'
                 ? 'animate-in fade-in slide-in-from-left-4 duration-300'
                 : 'animate-in fade-in duration-200'
+    const houseSwipeStyle = {
+        transform: `translate3d(${swipeOffset}px, 0, 0) scale(${isSwiping ? 0.992 : 1})`,
+        opacity: swipeOffset === 0 ? 1 : 1 - Math.min(Math.abs(swipeOffset) / 420, 0.12),
+        transition: isSwiping
+            ? 'none'
+            : 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms cubic-bezier(0.22, 1, 0.36, 1)',
+        willChange: 'transform, opacity',
+    } as const
 
     return (
         <div className="mx-auto flex h-dvh max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:h-auto sm:overflow-visible sm:px-4 sm:py-4">
@@ -954,7 +1043,19 @@ export default function DeliveryPage() {
                 </Button>
             </div> */}
 
-            <div key={currentHouse.id} className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${houseMotionClass}`}>
+            <div
+                key={currentHouse.id}
+                className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${houseMotionClass}`}
+                style={houseSwipeStyle}
+                onTouchStart={handleHouseTouchStart}
+                onTouchMove={handleHouseTouchMove}
+                onTouchEnd={handleHouseTouchEnd}
+                onTouchCancel={() => {
+                    navSwipeStartRef.current = null
+                    setSwipeOffset(0)
+                    setIsSwiping(false)
+                }}
+            >
             {houseChangeMessage ? (
                 <div className="pointer-events-none absolute right-2 top-2 z-20 rounded-full bg-primary/90 px-3 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg shadow-primary/20">
                     {houseChangeMessage}
