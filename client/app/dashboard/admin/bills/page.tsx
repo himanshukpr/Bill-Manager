@@ -48,8 +48,15 @@ export default function BillsPage() {
   const [genNote, setGenNote] = useState('')
 
   // Preview State
-  const [previewData, setPreviewData] = useState<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number } | null>(null)
+  const [previewData, setPreviewData] = useState<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+
+  const generateDisabled =
+    saving ||
+    previewLoading ||
+    !genHouseId ||
+    !genDate ||
+    !!previewData?.existingBillId
 
   const load = useCallback(async () => {
     try {
@@ -106,6 +113,14 @@ export default function BillsPage() {
 
   async function handleGenerate() {
     if (!genHouseId) { toast.error('Please select a house'); return }
+    if (previewData?.existingBillId) {
+      const selectedDate = new Date(genDate)
+      const selectedHouse = houses.find(h => h.id === parseInt(genHouseId))
+      toast.error(
+        `Bill already exists for ${selectedHouse?.houseNo ?? `house #${genHouseId}`} in ${MONTH_NAMES[selectedDate.getMonth() + 1]} ${selectedDate.getFullYear()}. Delete it first to regenerate.`
+      )
+      return
+    }
     if (!previewData || previewData.totalAmount <= 0) {
       toast.error('No delivery logs found for this period to generate a bill')
       return
@@ -121,7 +136,12 @@ export default function BillsPage() {
       setGenerateOpen(false)
       load()
     } catch (e: any) {
-      toast.error(e.message)
+      const msg = String(e?.message ?? '')
+      if (msg.toLowerCase().includes('already exists')) {
+        toast.error('Bill for this house and month already exists. Delete the old bill to generate again.')
+      } else {
+        toast.error(msg || 'Failed to generate bill')
+      }
     } finally {
       setSaving(false)
     }
@@ -283,6 +303,11 @@ export default function BillsPage() {
                   </div>
                 ) : previewData ? (
                   <>
+                    {previewData.existingBillId && (
+                      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                        A bill for this house and month already exists. Please delete the existing bill first if you want to generate again.
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium text-muted-foreground">Deliveries Total ({previewData.logCount} logs)</span>
                       <span className="font-semibold">₹{previewData.totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
@@ -311,8 +336,8 @@ export default function BillsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setGenerateOpen(false)}>Cancel</Button>
-            <Button onClick={handleGenerate} disabled={saving}>
-              {saving ? 'Generating...' : 'Generate Bill'}
+            <Button onClick={handleGenerate} disabled={generateDisabled}>
+              {previewLoading ? 'Checking...' : saving ? 'Generating...' : 'Generate Bill'}
             </Button>
           </DialogFooter>
         </DialogContent>

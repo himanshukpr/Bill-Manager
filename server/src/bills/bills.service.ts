@@ -166,6 +166,17 @@ export class BillsService {
     const month = selectedDate.getMonth() + 1;
     const year = selectedDate.getFullYear();
 
+    const existingBill = await this.prisma.bill.findUnique({
+      where: {
+        houseId_month_year: {
+          houseId,
+          month,
+          year,
+        },
+      },
+      select: { id: true },
+    });
+
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId },
     });
@@ -198,6 +209,7 @@ export class BillsService {
       previousBalance,
       grandTotal: totalAmount + previousBalance,
       logCount: deliveryLogs.length,
+      existingBillId: existingBill?.id ?? null,
     };
   }
 

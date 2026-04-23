@@ -456,7 +456,7 @@ export const billsApi = {
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
   preview: (houseId: number, date: string) => 
-    apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number }>(`/bills/preview?houseId=${houseId}&date=${date}`),
+    apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null }>(`/bills/preview?houseId=${houseId}&date=${date}`),
   generate: async (data: {
     houseId: number;
     date: string;
