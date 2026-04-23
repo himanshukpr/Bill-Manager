@@ -320,6 +320,10 @@ export default function AdminDailyAlertsPage() {
   }, [houses, mappedConfigs])
 
   const filteredAddHouseOptions = useMemo(() => {
+    if (selectedAddHouseId) {
+      return housesWithoutAlerts.filter((house) => house.id === selectedAddHouseId)
+    }
+
     const q = addHouseSearch.trim().toLowerCase()
     if (!q) return [...housesWithoutAlerts].sort((a, b) => a.houseNo.localeCompare(b.houseNo))
 
@@ -329,7 +333,7 @@ export default function AdminDailyAlertsPage() {
         (house.area || '').toLowerCase().includes(q),
       )
       .sort((a, b) => a.houseNo.localeCompare(b.houseNo))
-  }, [addHouseSearch, housesWithoutAlerts])
+  }, [addHouseSearch, housesWithoutAlerts, selectedAddHouseId])
 
   const selectedAddHouse = useMemo(() => {
     if (!houses || !selectedAddHouseId) return undefined
@@ -359,6 +363,7 @@ export default function AdminDailyAlertsPage() {
   }, [selectedAddHouseId, selectedAddHouseConfig?.dailyAlerts])
 
   const handleSelectHouseForAlert = (houseId: number) => {
+    if (selectedAddHouseId) return
     setSelectedAddHouseId(houseId)
   }
 
@@ -464,111 +469,128 @@ export default function AdminDailyAlertsPage() {
             <DialogContent className="max-w-2xl bg-card border-border/60">
               <DialogHeader>
                 <DialogTitle>
-                  {selectedAddHouse ? `Manage Alerts for ${selectedAddHouse.houseNo}` : 'Select House'}
+                  Add Alert
                 </DialogTitle>
               </DialogHeader>
 
-              {!selectedAddHouse ? (
-                <div className="space-y-3">
-                  <Input
-                    placeholder="Search house by number or area"
-                    value={addHouseSearch}
-                    onChange={(event) => setAddHouseSearch(event.target.value)}
-                    className="bg-background"
-                  />
+              <div className="space-y-3">
+                <Input
+                  placeholder="Search house by number or area"
+                  value={addHouseSearch}
+                  onChange={(event) => setAddHouseSearch(event.target.value)}
+                  disabled={!!selectedAddHouseId}
+                  className="bg-background"
+                />
 
-                  <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-border/60">
-                    {filteredAddHouseOptions.length === 0 ? (
-                      <div className="py-8 text-center text-sm text-muted-foreground">
-                        {housesWithoutAlerts.length === 0
-                          ? 'All houses already have alerts configured.'
-                          : 'No house matches your search.'}
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-border/60">
-                        {filteredAddHouseOptions.map((house) => (
+                <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border/60">
+                  {filteredAddHouseOptions.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      {housesWithoutAlerts.length === 0
+                        ? 'All houses already have alerts configured.'
+                        : 'No house matches your search.'}
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border/60">
+                      {filteredAddHouseOptions.map((house) => {
+                        const isSelected = selectedAddHouseId === house.id
+                        if (selectedAddHouseId && !isSelected) return null
+                        return (
                           <button
                             key={house.id}
                             type="button"
-                            className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/20"
+                            className={`flex w-full items-center justify-between px-4 py-3 text-left transition-all duration-200 hover:bg-muted/20 ${isSelected ? 'bg-primary/10 ring-1 ring-primary/30' : ''}`}
                             onClick={() => handleSelectHouseForAlert(house.id)}
                           >
                             <div>
                               <p className="font-semibold">{house.houseNo}</p>
                               <p className="text-xs text-muted-foreground">{house.area || 'Area not set'}</p>
                             </div>
-                            <span className="text-xs text-primary">Select</span>
+                            <span className="text-xs text-primary">{isSelected ? 'Selected' : 'Select'}</span>
                           </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <>
-                  <div className="max-h-[60vh] overflow-y-auto pr-4 mt-2">
-                    {addDialogAlerts.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground border rounded-xl border-dashed">
-                        <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
-                        <p className="font-medium">No alerts configured</p>
-                        <p className="text-xs mt-1">Create an alert schedule to notify suppliers.</p>
+              </div>
+
+              <div
+                className={`overflow-hidden transition-all duration-500 ease-out ${selectedAddHouse ? 'mt-4 max-h-[80vh] opacity-100 translate-y-0' : 'max-h-0 opacity-0 translate-y-3 pointer-events-none'}`}
+              >
+                {selectedAddHouse ? (
+                  <div className="rounded-xl border border-border/60 bg-muted/10 p-4">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Editing house</p>
+                        <p className="font-semibold">{selectedAddHouse.houseNo}</p>
                       </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {addDialogAlerts.map((alert, index) => (
-                          <div key={alert.id} className="p-4 rounded-xl border border-border bg-muted/20 relative group">
-                            <div className="flex gap-3 mb-4">
-                              <Input
-                                placeholder="E.g., Call before arrival, Only 1L today..."
-                                value={alert.text}
-                                onChange={(e) => handleAddDialogUpdateText(index, e.target.value)}
-                                className="bg-background flex-1"
-                              />
-                              <Button
-                                variant="destructive"
-                                size="icon"
-                                onClick={() => handleAddDialogRemoveAlert(index)}
-                                className="shrink-0"
-                                title="Delete Alert"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Active Days</p>
-                              <div className="flex flex-wrap gap-2">
-                                {DAYS_KEYS.map((day, i) => (
-                                  <Button
-                                    key={day}
-                                    variant={alert.schedule[day] ? 'default' : 'outline'}
-                                    size="sm"
-                                    className={`h-8 font-medium ${alert.schedule[day] ? 'bg-primary/90' : 'bg-background'}`}
-                                    onClick={() => handleAddDialogToggleDay(index, day)}
-                                  >
-                                    {DAYS_LABELS[i]}
-                                  </Button>
-                                ))}
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedAddHouseId(null)}>Clear</Button>
+                    </div>
+
+                    <div className="max-h-[42vh] overflow-y-auto pr-2">
+                      {addDialogAlerts.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 text-muted-foreground border rounded-xl border-dashed">
+                          <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
+                          <p className="font-medium">No alerts configured</p>
+                          <p className="text-xs mt-1">Create an alert schedule to notify suppliers.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {addDialogAlerts.map((alert, index) => (
+                            <div key={alert.id} className="p-4 rounded-xl border border-border bg-background/70 relative group">
+                              <div className="flex gap-3 mb-4">
+                                <Input
+                                  placeholder="E.g., Call before arrival, Only 1L today..."
+                                  value={alert.text}
+                                  onChange={(e) => handleAddDialogUpdateText(index, e.target.value)}
+                                  className="bg-background flex-1"
+                                />
+                                <Button
+                                  variant="destructive"
+                                  size="icon"
+                                  onClick={() => handleAddDialogRemoveAlert(index)}
+                                  className="shrink-0"
+                                  title="Delete Alert"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Active Days</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {DAYS_KEYS.map((day, i) => (
+                                    <Button
+                                      key={day}
+                                      variant={alert.schedule[day] ? 'default' : 'outline'}
+                                      size="sm"
+                                      className={`h-8 font-medium ${alert.schedule[day] ? 'bg-primary/90' : 'bg-background'}`}
+                                      onClick={() => handleAddDialogToggleDay(index, day)}
+                                    >
+                                      {DAYS_LABELS[i]}
+                                    </Button>
+                                  ))}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      )}
 
-                    <Button onClick={handleAddDialogAddAlert} variant="secondary" className="w-full mt-4 gap-2 border border-dashed border-border">
-                      <Plus className="w-4 h-4" /> Create New Alert
-                    </Button>
+                      <Button onClick={handleAddDialogAddAlert} variant="secondary" className="w-full mt-4 gap-2 border border-dashed border-border">
+                        <Plus className="w-4 h-4" /> Create New Alert
+                      </Button>
+                    </div>
+
+                    <DialogFooter className="mt-4 pt-4 border-t border-border/40">
+                      <Button variant="ghost" onClick={() => setAddAlertOpen(false)}>Cancel</Button>
+                      <Button onClick={handleSaveSelectedHouseAlerts} disabled={addDialogSaving} className="gap-2">
+                        <Save className="w-4 h-4" />
+                        {addDialogSaving ? 'Saving...' : 'Save Schedule'}
+                      </Button>
+                    </DialogFooter>
                   </div>
-
-                  <DialogFooter className="mt-4 pt-4 border-t border-border/40">
-                    <Button variant="ghost" onClick={() => setSelectedAddHouseId(null)}>Back</Button>
-                    <Button onClick={handleSaveSelectedHouseAlerts} disabled={addDialogSaving} className="gap-2">
-                      <Save className="w-4 h-4" />
-                      {addDialogSaving ? 'Saving...' : 'Save Schedule'}
-                    </Button>
-                  </DialogFooter>
-                </>
-              )}
+                ) : null}
+              </div>
             </DialogContent>
           </Dialog>
         </div>
