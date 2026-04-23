@@ -2,7 +2,7 @@ import { getAuthHeader } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const DEFAULT_CACHE_FRESH_MS = 20_000;
 const revalidationLocks = new Map<string, Promise<void>>();
 
