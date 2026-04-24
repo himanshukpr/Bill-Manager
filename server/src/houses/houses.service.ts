@@ -90,9 +90,14 @@ export class HousesService {
     }
   }
 
-  async remove(id: number) {
+  async deactivate(id: number) {
     await this.findOne(id);
-    return this.prisma.house.delete({ where: { id } });
+    return this.prisma.house.update({ where: { id }, data: { active: false } });
+  }
+
+  async reactivate(id: number) {
+    await this.findOne(id);
+    return this.prisma.house.update({ where: { id }, data: { active: true } });
   }
 
   async getStats() {

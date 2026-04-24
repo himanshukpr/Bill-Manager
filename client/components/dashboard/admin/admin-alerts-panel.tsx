@@ -12,6 +12,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
+import { useHouseConfigs } from '@/hooks/use-house-configs'
 
 export type AlertDays = {
   Monday: boolean;
@@ -43,7 +44,7 @@ export function AdminAlertsPanel() {
   const [open, setOpen] = useState(false)
   
   const houses = useLiveQuery(() => db.houses.toArray())
-  const rawConfigs = useLiveQuery(() => db.houseConfigs.toArray())
+  const { configs: rawConfigs } = useHouseConfigs()
 
   const [todayKey] = useMemo(() => {
     const daysString = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -86,7 +87,10 @@ export function AdminAlertsPanel() {
           )}
         </Button>
       </SheetTrigger>
-      <SheetContent className="w-[400px] sm:w-[540px] max-w-full overflow-y-auto">
+      <SheetContent
+        className="max-w-full overflow-y-auto"
+        style={{ width: 'min(100vw, 540px)' }}
+      >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 text-xl pb-2 border-b">
             <Bell className="w-5 h-5 text-amber-500" /> Today's Alerts

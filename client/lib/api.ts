@@ -1,10 +1,23 @@
 import { getAuthHeader } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
+import {
+  readHouseConfigSessionCache,
+  writeHouseConfigSessionCache,
+} from './house-config-cache';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
-const DEFAULT_CACHE_FRESH_MS = 20_000;
+const DEFAULT_CACHE_FRESH_MS = 5_000;
+const GLOBAL_SYNC_INTERVAL_MS = 5_000;
+const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'theme', 'next-theme']);
 const revalidationLocks = new Map<string, Promise<void>>();
+const activeGetQueries = new Map<
+  string,
+  { path: string; onData?: (data: unknown) => Promise<void> | void }
+>();
+const lastOnDataPayloadByCacheKey = new Map<string, string>();
+let globalSyncStarted = false;
+let clientSessionInit: Promise<void> | null = null;
 
 const CACHE_INVALIDATION: Record<string, string[]> = {
   houses: ['/houses', '/house-config', '/house-balance', '/bills', '/delivery-logs'],
@@ -22,6 +35,74 @@ function isBrowser() {
 
 function isOnline() {
   return isBrowser() && navigator.onLine;
+}
+
+async function ensureClientSessionStoragePolicy(): Promise<void> {
+  if (!isBrowser()) return;
+  if (clientSessionInit) {
+    await clientSessionInit;
+    return;
+  }
+
+  clientSessionInit = (async () => {
+    const markerKey = 'bill-manager-session-started';
+    let hasMarker = false;
+
+    try {
+      hasMarker = window.sessionStorage.getItem(markerKey) === '1';
+    } catch {
+      hasMarker = false;
+    }
+
+    if (!hasMarker) {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i += 1) {
+          const key = window.localStorage.key(i);
+          if (!key) continue;
+          if (!LOCAL_STORAGE_PRESERVE_KEYS.has(key)) {
+            keysToRemove.push(key);
+          }
+        }
+
+        for (const key of keysToRemove) {
+          window.localStorage.removeItem(key);
+        }
+      } catch {
+        // Ignore storage cleanup failures.
+      }
+
+      try {
+        db.close();
+        await db.delete();
+      } catch {
+        // Ignore IndexedDB cleanup failures.
+      }
+
+      try {
+        window.sessionStorage.setItem(markerKey, '1');
+      } catch {
+        // Ignore storage marker failures.
+      }
+    }
+  })();
+
+  await clientSessionInit;
+}
+
+function startGlobalGetSyncLoop() {
+  if (!isBrowser() || globalSyncStarted) return;
+
+  globalSyncStarted = true;
+
+  window.setInterval(() => {
+    if (!navigator.onLine) return;
+    if (document.visibilityState !== 'visible') return;
+
+    for (const [cacheKey, query] of activeGetQueries.entries()) {
+      void revalidateGet<unknown>(query.path, cacheKey, query.onData);
+    }
+  }, GLOBAL_SYNC_INTERVAL_MS);
 }
 
 function getResource(path: string): string {
@@ -54,6 +135,28 @@ async function writeCache<T>(cacheKey: string, data: T): Promise<void> {
   });
 }
 
+async function applyOnDataIfChanged<T>(
+  cacheKey: string,
+  data: T,
+  onData?: (data: T) => Promise<void> | void,
+): Promise<void> {
+  if (!onData) return;
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(data);
+  } catch {
+    await onData(data);
+    return;
+  }
+
+  const previous = lastOnDataPayloadByCacheKey.get(cacheKey);
+  if (previous === serialized) return;
+
+  lastOnDataPayloadByCacheKey.set(cacheKey, serialized);
+  await onData(data);
+}
+
 async function invalidateCache(path: string): Promise<void> {
   if (!isBrowser()) return;
 
@@ -76,6 +179,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 async function requestGet<T>(path: string): Promise<T> {
+  await ensureClientSessionStoragePolicy();
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
   });
@@ -93,8 +197,18 @@ async function revalidateGet<T>(
   const pending = (async () => {
     try {
       const latest = await requestGet<T>(path);
-      await writeCache(cacheKey, latest);
-      if (onData) await onData(latest);
+      const serializedLatest = JSON.stringify(latest);
+      const existing = await db.queryCache.get(cacheKey);
+
+      if (existing?.payload !== serializedLatest) {
+        await db.queryCache.put({
+          key: cacheKey,
+          payload: serializedLatest,
+          updatedAt: Date.now(),
+        });
+      }
+
+      await applyOnDataIfChanged(cacheKey, latest, onData);
     } catch {
       // Keep stale cache on background fetch failures.
     } finally {
@@ -118,13 +232,20 @@ async function apiGet<T>(
     return requestGet<T>(path);
   }
 
+  await ensureClientSessionStoragePolicy();
+  startGlobalGetSyncLoop();
+
   const cacheKey = options?.cacheKey ?? `GET:${path}`;
   const freshMs = options?.freshMs ?? DEFAULT_CACHE_FRESH_MS;
+  activeGetQueries.set(cacheKey, {
+    path,
+    onData: options?.onData as ((data: unknown) => Promise<void> | void) | undefined,
+  });
 
   const cached = await readCache<T>(cacheKey);
   if (cached !== null) {
     const entry = await db.queryCache.get(cacheKey);
-    if (options?.onData) await options.onData(cached);
+    await applyOnDataIfChanged(cacheKey, cached, options?.onData);
 
     if ((Date.now() - (entry?.updatedAt ?? 0) > freshMs) && isOnline()) {
       void revalidateGet(path, cacheKey, options?.onData);
@@ -135,11 +256,12 @@ async function apiGet<T>(
 
   const latest = await requestGet<T>(path);
   await writeCache(cacheKey, latest);
-  if (options?.onData) await options.onData(latest);
+  await applyOnDataIfChanged(cacheKey, latest, options?.onData);
   return latest;
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  await ensureClientSessionStoragePolicy();
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
@@ -149,6 +271,7 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  await ensureClientSessionStoragePolicy();
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
@@ -158,6 +281,7 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiDelete<T>(path: string): Promise<T> {
+  await ensureClientSessionStoragePolicy();
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
@@ -180,6 +304,7 @@ export type House = {
   rate2Type?: string;
   rate2?: string;
   createdAt: string;
+  active: boolean;
   balance?: HouseBalance;
   configs?: HouseConfig[];
   bills?: Bill[];
@@ -232,6 +357,15 @@ export type Bill = {
   generatedDate: string;
   note?: string;
   house?: { id: number; houseNo: string; area?: string; phoneNo?: string };
+};
+
+export type GenerateAllBillsResult = {
+  date: string;
+  totalHouses: number;
+  generatedCount: number;
+  skippedCount: number;
+  generated: Array<{ houseId: number; houseNo: string; billId: number }>;
+  skipped: Array<{ houseId: number; houseNo: string; reason: string }>;
 };
 
 export type User = {
@@ -334,82 +468,149 @@ export const housesApi = {
     }
 
     return apiPatch<House>(`/houses/${id}/location`, data)
+    },
+    deactivate: async (id: number) => {
+      if (isOnline()) {
+        const res = await apiPatch<House>(`/houses/${id}/deactivate`, {});
+        if (isBrowser()) {
+          const existing = await db.houses.get(id);
+          if (existing) await db.houses.put({ ...existing, active: false });
+          await invalidateCache('/houses');
+        }
+        return res;
+      }
+      if (isBrowser()) {
+        const existing = await db.houses.get(id);
+        if (existing) await db.houses.put({ ...existing, active: false });
+        await invalidateCache('/houses');
+        await syncEngine.enqueue(`/houses/${id}/deactivate`, 'PATCH', {});
+      }
+      return null;
+    },
+    reactivate: async (id: number) => {
+      if (isOnline()) {
+        const res = await apiPatch<House>(`/houses/${id}/reactivate`, {});
+        if (isBrowser()) {
+          const existing = await db.houses.get(id);
+          if (existing) await db.houses.put({ ...existing, active: true });
+          await invalidateCache('/houses');
+        }
+        return res;
+      }
+      if (isBrowser()) {
+        const existing = await db.houses.get(id);
+        if (existing) await db.houses.put({ ...existing, active: true });
+        await invalidateCache('/houses');
+        await syncEngine.enqueue(`/houses/${id}/reactivate`, 'PATCH', {});
+      }
+      return null;
   },
   delete: async (id: number) => {
-    if (isBrowser()) {
-       await db.houses.delete(id);
-       await invalidateCache('/houses');
-       await syncEngine.enqueue(`/houses/${id}`, 'DELETE');
+    if (isOnline()) {
+      const res = await apiDelete<House>(`/houses/${id}`);
+      if (isBrowser()) {
+        await db.houses.delete(id);
+        await invalidateCache('/houses');
+      }
+      return res;
     }
-    return apiDelete<House>(`/houses/${id}`).catch(console.error);
+
+    if (isBrowser()) {
+      await db.houses.delete(id);
+      await invalidateCache('/houses');
+      await syncEngine.enqueue(`/houses/${id}`, 'DELETE');
+    }
+
+    return null;
   },
 };
 
 // ─── House Config ─────────────────────────────────────────────────────────────
 
 export const houseConfigApi = {
-  list: async (supplierId?: string) =>
-    apiGet<HouseConfig[]>(`/house-config${supplierId ? `?supplierId=${supplierId}` : ''}`, {
-      onData: async (data) => {
-        if (isBrowser()) await db.houseConfigs.bulkPut(data);
-      },
-    }),
-  byHouse: async (houseId: number) =>
-    apiGet<HouseConfig[]>(`/house-config/house/${houseId}`, {
-      onData: async (data) => {
-        if (isBrowser()) await db.houseConfigs.bulkPut(data);
-      },
-    }),
-  create: async (data: Partial<HouseConfig>) => {
-    // Attempt rapid optimistic update if possible, otherwise rely on backend first
-    if (isOnline()) {
-        const res = await apiPost<HouseConfig>('/house-config', data);
-        if (isBrowser()) {
-          await db.houseConfigs.put(res);
-          await invalidateCache('/house-config');
-        }
-        return res;
-    } else {
-        // purely offline creation stub
-        const tempId = -Math.floor(Math.random() * 100000);
-        const stub = { id: tempId, ...data } as HouseConfig;
-        if (isBrowser()) {
-            await db.houseConfigs.put(stub);
-            await invalidateCache('/house-config');
-            await syncEngine.enqueue('/house-config', 'POST', data);
-        }
-        return stub;
+  list: async (supplierId?: string) => {
+    const path = `/house-config${supplierId ? `?supplierId=${supplierId}` : ''}`;
+
+    if (!isOnline()) {
+      const cached = readHouseConfigSessionCache();
+      return supplierId ? cached.filter((item) => item.supplierId === supplierId) : cached;
     }
+
+    const data = await requestGet<HouseConfig[]>(path);
+    if (isBrowser()) writeHouseConfigSessionCache(data);
+    return data;
+  },
+  create: async (data: Partial<HouseConfig>) => {
+    // Session-only cache for house configs; sync to the backend immediately when possible.
+    if (isOnline()) {
+      const res = await apiPost<HouseConfig>('/house-config', data);
+      if (isBrowser()) {
+        const cached = readHouseConfigSessionCache();
+        writeHouseConfigSessionCache([...cached.filter((item) => item.id !== res.id), res]);
+      }
+      return res;
+    }
+
+    const tempId = -Math.floor(Math.random() * 100000);
+    const stub = { id: tempId, ...data } as unknown as HouseConfig;
+    if (isBrowser()) {
+      const cached = readHouseConfigSessionCache();
+      writeHouseConfigSessionCache([...cached.filter((item) => item.id !== stub.id), stub]);
+      await syncEngine.enqueue('/house-config', 'POST', data);
+    }
+    return stub;
   },
   update: async (id: number, data: Partial<HouseConfig>) => {
-    if (isBrowser()) {
-        const existing = await db.houseConfigs.get(id);
-        if (existing) await db.houseConfigs.put({ ...existing, ...data });
-        await invalidateCache('/house-config');
-        await syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
+    if (isOnline()) {
+      const res = await apiPatch<HouseConfig>(`/house-config/${id}`, data);
+      if (isBrowser()) {
+        const cached = readHouseConfigSessionCache();
+        const next = cached.map((item) => (item.id === id ? res : item));
+        writeHouseConfigSessionCache(next);
+      }
+      return res;
     }
-    if (isOnline()) return apiPatch<HouseConfig>(`/house-config/${id}`, data).catch(console.error);
+
+    if (isBrowser()) {
+      const cached = readHouseConfigSessionCache();
+      const next = cached.map((item) => (item.id === id ? { ...item, ...data } : item));
+      writeHouseConfigSessionCache(next);
+      await syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
+    }
+
     return data;
   },
   reorder: async (orderedIds: number[]) => {
-    if (isBrowser()) {
-      await invalidateCache('/house-config');
-      await syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
+    if (isOnline()) {
+      const res = await apiPatch('/house-config/reorder', { orderedIds });
+      if (isBrowser()) {
+        await houseConfigApi.list();
+      }
+      return res;
     }
 
-    if (isOnline()) {
-      return apiPatch('/house-config/reorder', { orderedIds }).catch(console.error);
+    if (isBrowser()) {
+      await syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
     }
 
     return { orderedIds };
   },
   delete: async (id: number) => {
-    if (isBrowser()) {
-        await db.houseConfigs.delete(id);
-        await invalidateCache('/house-config');
-        await syncEngine.enqueue(`/house-config/${id}`, 'DELETE');
+    if (isOnline()) {
+      const res = await apiDelete(`/house-config/${id}`);
+      if (isBrowser()) {
+        const cached = readHouseConfigSessionCache();
+        writeHouseConfigSessionCache(cached.filter((item) => item.id !== id));
+      }
+      return res;
     }
-    if (isOnline()) return apiDelete(`/house-config/${id}`).catch(console.error);
+
+    if (isBrowser()) {
+      const cached = readHouseConfigSessionCache();
+      writeHouseConfigSessionCache(cached.filter((item) => item.id !== id));
+      await syncEngine.enqueue(`/house-config/${id}`, 'DELETE');
+    }
+
     return null;
   },
 };
@@ -421,13 +622,16 @@ export const balanceApi = {
   payments: (houseId: number) => apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`),
   allPayments: () => apiGet<PaymentHistory[]>('/house-balance/payments'),
   record: async (data: { houseId: number; amount: number; note?: string }) => {
+    if (isOnline()) {
+      if (isBrowser()) {
+        await invalidateCache('/house-balance');
+      }
+      return apiPost('/house-balance/payment', data);
+    }
+
     if (isBrowser()) {
       await invalidateCache('/house-balance');
       await syncEngine.enqueue('/house-balance/payment', 'POST', data);
-    }
-
-    if (isOnline()) {
-      return apiPost('/house-balance/payment', data);
     }
 
     return { queued: true };
@@ -469,15 +673,29 @@ export const billsApi = {
     }
     return res;
   },
+  generateAll: async (data: { date: string; note?: string }) => {
+    const res = await apiPost<GenerateAllBillsResult>('/bills/generate-all', data);
+    if (isBrowser()) {
+      await invalidateCache('/bills');
+      await invalidateCache('/house-balance');
+      await invalidateCache('/houses');
+    }
+    return res;
+  },
   delete: async (id: number) => {
+    if (isOnline()) {
+      const res = await apiDelete(`/bills/${id}`);
+      if (isBrowser()) {
+        await db.bills.delete(id);
+        await invalidateCache('/bills');
+      }
+      return res;
+    }
+
     if (isBrowser()) {
       await db.bills.delete(id);
       await invalidateCache('/bills');
       await syncEngine.enqueue(`/bills/${id}`, 'DELETE');
-    }
-
-    if (isOnline()) {
-      return apiDelete(`/bills/${id}`).catch(console.error);
     }
 
     return null;

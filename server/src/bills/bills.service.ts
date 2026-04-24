@@ -5,44 +5,17 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { GenerateBillDto } from './dto/bill.dto';
+import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 
 @Injectable()
 export class BillsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(filters?: { houseId?: number; month?: number; year?: number }) {
-    const where: any = {};
-    if (filters?.houseId) where.houseId = filters.houseId;
-    if (filters?.month) where.month = filters.month;
-    if (filters?.year) where.year = filters.year;
-
-    return this.prisma.bill.findMany({
-      where,
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
-      include: {
-        house: { select: { id: true, houseNo: true, area: true, phoneNo: true } },
-      },
-    });
-  }
-
-  async findOne(id: number) {
-    const bill = await this.prisma.bill.findUnique({
-      where: { id },
-      include: {
-        house: true,
-      },
-    });
-    if (!bill) throw new NotFoundException(`Bill #${id} not found`);
-    return bill;
-  }
-
-  async generate(dto: GenerateBillDto) {
+  private async buildBillDraft(dto: GenerateBillDto) {
     const selectedDate = new Date(dto.date);
     const month = selectedDate.getMonth() + 1;
     const year = selectedDate.getFullYear();
 
-    // Check for duplicate bill
     const existing = await this.prisma.bill.findUnique({
       where: {
         houseId_month_year: {
@@ -52,12 +25,12 @@ export class BillsService {
         },
       },
     });
-    if (existing)
+    if (existing) {
       throw new ConflictException(
         `Bill for house #${dto.houseId} for ${month}/${year} already exists`,
       );
+    }
 
-    // Get current balance
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId: dto.houseId },
     });
@@ -131,7 +104,45 @@ export class BillsService {
       });
     }
 
-    const previousBalance = Number(balance.previousBalance);
+    return {
+      month,
+      year,
+      selectedDate,
+      totalAmount,
+      billItems,
+      previousBalance: Number(balance.previousBalance),
+    };
+  }
+
+  async findAll(filters?: { houseId?: number; month?: number; year?: number }) {
+    const where: any = {};
+    if (filters?.houseId) where.houseId = filters.houseId;
+    if (filters?.month) where.month = filters.month;
+    if (filters?.year) where.year = filters.year;
+
+    return this.prisma.bill.findMany({
+      where,
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      include: {
+        house: { select: { id: true, houseNo: true, area: true, phoneNo: true } },
+      },
+    });
+  }
+
+  async findOne(id: number) {
+    const bill = await this.prisma.bill.findUnique({
+      where: { id },
+      include: {
+        house: true,
+      },
+    });
+    if (!bill) throw new NotFoundException(`Bill #${id} not found`);
+    return bill;
+  }
+
+  async generate(dto: GenerateBillDto) {
+    const { month, year, selectedDate, totalAmount, billItems, previousBalance } =
+      await this.buildBillDraft(dto);
 
     // Use transaction: create bill + update balance
     const [bill] = await this.prisma.$transaction([
@@ -159,6 +170,40 @@ export class BillsService {
     ]);
 
     return bill;
+  }
+
+  async generateAll(dto: GenerateAllBillsDto) {
+    const houses = await this.prisma.house.findMany({
+      select: { id: true, houseNo: true },
+      orderBy: { id: 'asc' },
+    });
+
+    const generated: Array<{ houseId: number; houseNo: string; billId: number }> = [];
+    const skipped: Array<{ houseId: number; houseNo: string; reason: string }> = [];
+
+    for (const house of houses) {
+      try {
+        const bill = await this.generate({
+          houseId: house.id,
+          date: dto.date,
+          note: dto.note,
+        });
+        generated.push({ houseId: house.id, houseNo: house.houseNo, billId: bill.id });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown error while generating bill';
+        skipped.push({ houseId: house.id, houseNo: house.houseNo, reason: message });
+      }
+    }
+
+    return {
+      date: dto.date,
+      totalHouses: houses.length,
+      generatedCount: generated.length,
+      skippedCount: skipped.length,
+      generated,
+      skipped,
+    };
   }
 
   async preview(houseId: number, dateStr: string) {

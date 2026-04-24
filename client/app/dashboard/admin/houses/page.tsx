@@ -142,7 +142,8 @@ export default function HousesPage() {
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [toggleId, setToggleId] = useState<number | null>(null)
+  const [toggleAction, setToggleAction] = useState<'deactivate' | 'reactivate' | null>(null)
   const [viewHouse, setViewHouse] = useState<House | null>(null)
   const [saving, setSaving] = useState(false)
   const [formConfigId, setFormConfigId] = useState<number | null>(null)
@@ -251,12 +252,18 @@ export default function HousesPage() {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteId) return
+  async function handleToggleActive() {
+    if (!toggleId || !toggleAction) return
     try {
-      await housesApi.delete(deleteId)
-      toast.success('House deleted')
-      setDeleteId(null)
+      if (toggleAction === 'deactivate') {
+        await housesApi.deactivate(toggleId)
+        toast.success('House deactivated')
+      } else {
+        await housesApi.reactivate(toggleId)
+        toast.success('House reactivated')
+      }
+      setToggleId(null)
+      setToggleAction(null)
       load()
     } catch (e: any) {
       toast.error(e.message)
@@ -438,10 +445,15 @@ export default function HousesPage() {
                         <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleteId(h.id)} title="Delete"
-                          className="text-destructive hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {h.active ? (
+                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleAction('deactivate') }} title="Deactivate" className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleAction('reactivate') }} title="Reactivate" className="text-green-600 hover:text-green-700">
+                            <Save className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -573,19 +585,21 @@ export default function HousesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Alert */}
-      <AlertDialog open={!!deleteId} onOpenChange={open => !open && setDeleteId(null)}>
+      {/* Deactivate/Reactivate Alert */}
+      <AlertDialog open={!!toggleId} onOpenChange={open => { if (!open) { setToggleId(null); setToggleAction(null) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete House?</AlertDialogTitle>
+            <AlertDialogTitle>{toggleAction === 'deactivate' ? 'Deactivate House?' : 'Reactivate House?'}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete this house along with all its configs, balances and bills. This action cannot be undone.
+              {toggleAction === 'deactivate'
+                ? 'This will deactivate the house. It will not be available for normal operations until reactivated.'
+                : 'This will reactivate the house and make it available again.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
+            <AlertDialogAction onClick={handleToggleActive} className={toggleAction === 'deactivate' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : 'bg-green-600 text-white hover:bg-green-700'}>
+              {toggleAction === 'deactivate' ? 'Deactivate' : 'Reactivate'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

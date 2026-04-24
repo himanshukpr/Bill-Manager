@@ -45,3 +45,12 @@ export class GenerateBillDto {
   @IsString()
   note?: string;
 }
+
+export class GenerateAllBillsDto {
+  @IsString()
+  date: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}

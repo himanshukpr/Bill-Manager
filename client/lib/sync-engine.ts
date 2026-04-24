@@ -25,7 +25,7 @@ class SyncEngine {
       // Periodic fallback flush for queued writes.
       setInterval(() => {
         if (navigator.onLine) this.processQueue();
-      }, 15000);
+      }, 5000);
     }
   }
 

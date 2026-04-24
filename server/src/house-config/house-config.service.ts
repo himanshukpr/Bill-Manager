@@ -15,6 +15,17 @@ import {
 export class HouseConfigService {
   constructor(private prisma: PrismaService) { }
 
+  private async ensureHouseExists(houseId: number) {
+    const house = await this.prisma.house.findUnique({
+      where: { id: houseId },
+      select: { id: true },
+    });
+
+    if (!house) {
+      throw new NotFoundException(`House #${houseId} not found`);
+    }
+  }
+
   async findAll(supplierId?: string) {
     const where = supplierId ? { supplierId } : {};
     return this.prisma.houseConfig.findMany({
@@ -38,6 +49,8 @@ export class HouseConfigService {
   }
 
   async create(dto: CreateHouseConfigDto) {
+    await this.ensureHouseExists(dto.houseId);
+
     const existing = await this.prisma.houseConfig.findFirst({
       where: { houseId: dto.houseId },
     });
@@ -58,21 +71,33 @@ export class HouseConfigService {
     const count = await this.prisma.houseConfig.count({
       where: { supplierId: dto.supplierId ?? null },
     });
-    return this.prisma.houseConfig.create({
-      data: {
-        houseId: dto.houseId,
-        shift: dto.shift,
-        supplierId: dto.supplierId,
-        position: dto.position ?? count,
-        dailyAlerts: dto.dailyAlerts,
-      },
-      include: { house: true },
-    });
+    try {
+      return await this.prisma.houseConfig.create({
+        data: {
+          houseId: dto.houseId,
+          shift: dto.shift,
+          supplierId: dto.supplierId,
+          position: dto.position ?? count,
+          dailyAlerts: dto.dailyAlerts,
+        },
+        include: { house: true },
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2003' && String(error?.meta?.cause ?? '').includes('house_configs_house_id_fkey')) {
+        throw new NotFoundException(`House #${dto.houseId} not found`);
+      }
+      throw error;
+    }
   }
 
   async update(id: number, dto: UpdateHouseConfigDto) {
     const cfg = await this.prisma.houseConfig.findUnique({ where: { id } });
     if (!cfg) throw new NotFoundException(`Config #${id} not found`);
+
+    if (dto.houseId && dto.houseId !== cfg.houseId) {
+      await this.ensureHouseExists(dto.houseId);
+    }
+
     return this.prisma.houseConfig.update({
       where: { id },
       data: dto,

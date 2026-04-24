@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { BillsService } from './bills.service';
-import { GenerateBillDto } from './dto/bill.dto';
+import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -57,6 +57,11 @@ export class BillsController {
   @Post('generate')
   generate(@Body() dto: GenerateBillDto) {
     return this.service.generate(dto);
+  }
+
+  @Post('generate-all')
+  generateAll(@Body() dto: GenerateAllBillsDto) {
+    return this.service.generateAll(dto);
   }
 
   @Delete(':id')

@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
+import { useHouseConfigs } from '@/hooks/use-house-configs'
 
 type RowConfigForm = {
   configId: number | null
@@ -51,7 +52,7 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
           value={draft.shift}
           onValueChange={(value) => onUpdateShift(house.id, value as 'morning' | 'evening')}
         >
-          <SelectTrigger className="h-9 min-w-[9rem]">
+          <SelectTrigger className="h-9 min-w-36">
             <SelectValue placeholder="Select shift" />
           </SelectTrigger>
           <SelectContent>
@@ -66,7 +67,7 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
           onValueChange={(value) => onUpdateSupplier(house.id, value === '__none__' ? '' : value)}
           disabled={draft.shift === 'evening'}
         >
-          <SelectTrigger className="h-9 w-full min-w-[12rem]">
+          <SelectTrigger className="h-9 w-full min-w-48">
             <SelectValue placeholder="Select supplier" />
           </SelectTrigger>
           <SelectContent>
@@ -148,12 +149,11 @@ export default function AdminHouseConfigPage() {
   const pendingSavesCount = useRef(0)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // -- Dexie Live Queries (Local First) --
+  const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
   const houses = useLiveQuery(() => db.houses.toArray())
-  const rawConfigs = useLiveQuery(() => db.houseConfigs.toArray())
   const suppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
 
-  const loading = !houses || !rawConfigs || !suppliers;
+  const loading = !houses || !suppliers || configsLoading;
 
   // Debounce search input for better performance
   useEffect(() => {
@@ -182,10 +182,7 @@ export default function AdminHouseConfigPage() {
 
   const loadData = useCallback(async () => {
     try {
-      // Fire background network syncs (Stale-While-Revalidate)
-      // These will silently update Dexie when finished, natively triggering re-renders
       housesApi.list()
-      houseConfigApi.list()
       usersApi.list('supplier')
     } catch (error: any) {
       toast.error('Failed to trigger background sync')
@@ -327,7 +324,7 @@ export default function AdminHouseConfigPage() {
           />
         </div>
         <Select value={shiftFilter} onValueChange={setShiftFilter}>
-          <SelectTrigger className="w-full sm:w-[150px]">
+          <SelectTrigger className="w-full sm:w-37.5">
              <SelectValue placeholder="Filter shift" />
           </SelectTrigger>
           <SelectContent>
@@ -337,7 +334,7 @@ export default function AdminHouseConfigPage() {
           </SelectContent>
         </Select>
         <Select value={supplierFilter} onValueChange={setSupplierFilter}>
-          <SelectTrigger className="w-full sm:w-[200px]">
+          <SelectTrigger className="w-full sm:w-50">
              <SelectValue placeholder="Filter supplier" />
           </SelectTrigger>
           <SelectContent>
@@ -384,7 +381,7 @@ export default function AdminHouseConfigPage() {
             </div>
 
             <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[800px] table-fixed text-sm">
+              <table className="w-full min-w-200 table-fixed text-sm">
                 <colgroup>
                   <col className="w-[40%]" />
                   <col className="w-[20%]" />

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays } from 'lucide-react'
 import { billsApi, housesApi, type Bill, type House, type BillItem } from '@/lib/api'
 import { toast } from 'sonner'
@@ -41,6 +41,7 @@ export default function BillsPage() {
   const [viewBill, setViewBill] = useState<Bill | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+  const [generateMode, setGenerateMode] = useState<'single' | 'all'>('single')
 
   // Generate form
   const [genHouseId, setGenHouseId] = useState('')
@@ -50,17 +51,19 @@ export default function BillsPage() {
   // Preview State
   const [previewData, setPreviewData] = useState<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const hasLoadedOnceRef = useRef(false)
 
   const generateDisabled =
     saving ||
     previewLoading ||
-    !genHouseId ||
     !genDate ||
-    !!previewData?.existingBillId
+    (generateMode === 'single' && (!genHouseId || !!previewData?.existingBillId))
 
   const load = useCallback(async () => {
     try {
-      setLoading(true)
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true)
+      }
       const [billsData, housesData] = await Promise.all([
         billsApi.list({
           month: filterMonth ? parseInt(filterMonth) : undefined,
@@ -70,6 +73,7 @@ export default function BillsPage() {
       ])
       setBills(billsData)
       setHouses(housesData)
+      hasLoadedOnceRef.current = true
     } catch (e: any) {
       toast.error(e.message)
     } finally {
@@ -80,6 +84,10 @@ export default function BillsPage() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
+    if (generateMode !== 'single') {
+      setPreviewData(null)
+      return
+    }
     if (!genHouseId || !genDate) {
       setPreviewData(null)
       return
@@ -96,7 +104,7 @@ export default function BillsPage() {
       }
     }
     fetchPreview()
-  }, [genHouseId, genDate])
+  }, [genHouseId, genDate, generateMode])
 
   const filtered = bills.filter(b =>
     b.house?.houseNo.toLowerCase().includes(search.toLowerCase()) ||
@@ -104,6 +112,7 @@ export default function BillsPage() {
   )
 
   function openGenerate() {
+    setGenerateMode('single')
     setGenHouseId('')
     setGenDate(new Date().toISOString().split('T')[0])
     setGenNote('')
@@ -112,27 +121,44 @@ export default function BillsPage() {
   }
 
   async function handleGenerate() {
-    if (!genHouseId) { toast.error('Please select a house'); return }
-    if (previewData?.existingBillId) {
-      const selectedDate = new Date(genDate)
-      const selectedHouse = houses.find(h => h.id === parseInt(genHouseId))
-      toast.error(
-        `Bill already exists for ${selectedHouse?.houseNo ?? `house #${genHouseId}`} in ${MONTH_NAMES[selectedDate.getMonth() + 1]} ${selectedDate.getFullYear()}. Delete it first to regenerate.`
-      )
-      return
+    if (generateMode === 'single') {
+      if (!genHouseId) { toast.error('Please select a house'); return }
+      if (previewData?.existingBillId) {
+        const selectedDate = new Date(genDate)
+        const selectedHouse = houses.find(h => h.id === parseInt(genHouseId))
+        toast.error(
+          `Bill already exists for ${selectedHouse?.houseNo ?? `house #${genHouseId}`} in ${MONTH_NAMES[selectedDate.getMonth() + 1]} ${selectedDate.getFullYear()}. Delete it first to regenerate.`
+        )
+        return
+      }
+      if (!previewData || previewData.totalAmount <= 0) {
+        toast.error('No delivery logs found for this period to generate a bill')
+        return
+      }
     }
-    if (!previewData || previewData.totalAmount <= 0) {
-      toast.error('No delivery logs found for this period to generate a bill')
-      return
-    }
+
     setSaving(true)
     try {
-      await billsApi.generate({
-        houseId: parseInt(genHouseId),
-        date: genDate,
-        note: genNote || undefined,
-      })
-      toast.success('Bill generated successfully')
+      if (generateMode === 'all') {
+        const result = await billsApi.generateAll({
+          date: genDate,
+          note: genNote || undefined,
+        })
+        if (result.generatedCount > 0) {
+          toast.success(
+            `Generated ${result.generatedCount} bill${result.generatedCount > 1 ? 's' : ''}. Skipped ${result.skippedCount}.`
+          )
+        } else {
+          toast.error('No bills were generated. All houses were skipped.')
+        }
+      } else {
+        await billsApi.generate({
+          houseId: parseInt(genHouseId),
+          date: genDate,
+          note: genNote || undefined,
+        })
+        toast.success('Bill generated successfully')
+      }
       setGenerateOpen(false)
       load()
     } catch (e: any) {
@@ -271,63 +297,96 @@ export default function BillsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Generate Bill</DialogTitle>
-            <DialogDescription>Create a monthly bill from this house&apos;s recorded delivery balance.</DialogDescription>
+            <DialogDescription>
+              Choose whether to generate for one house or for all houses up to the selected date.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-5 py-2">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>House</Label>
-                <Select value={genHouseId} onValueChange={setGenHouseId}>
-                  <SelectTrigger><SelectValue placeholder="Select house" /></SelectTrigger>
-                  <SelectContent>
-                    {houses.map(h => (
-                      <SelectItem key={h.id} value={String(h.id)}>
-                        {h.houseNo}{h.area ? ` — ${h.area}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div>
+              <Label className="text-base font-semibold">Generate For</Label>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant={generateMode === 'single' ? 'default' : 'outline'}
+                  onClick={() => setGenerateMode('single')}
+                  disabled={saving}
+                >
+                  One House
+                </Button>
+                <Button
+                  type="button"
+                  variant={generateMode === 'all' ? 'default' : 'outline'}
+                  onClick={() => setGenerateMode('all')}
+                  disabled={saving}
+                >
+                  All Houses
+                </Button>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {generateMode === 'single' && (
+                <div className="space-y-1.5">
+                  <Label>House</Label>
+                  <Select value={genHouseId} onValueChange={setGenHouseId}>
+                    <SelectTrigger><SelectValue placeholder="Select house" /></SelectTrigger>
+                    <SelectContent>
+                      {houses.map(h => (
+                        <SelectItem key={h.id} value={String(h.id)}>
+                          {h.houseNo}{h.area ? ` — ${h.area}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label>Generate Bill Up To Date</Label>
                 <Input type="date" value={genDate} onChange={e => setGenDate(e.target.value)} />
               </div>
             </div>
 
-            <div>
-              <Label className="text-base font-semibold">Bill Basis</Label>
-              <div className="mt-4 rounded-xl bg-muted/50 p-4 space-y-3">
-                {previewLoading ? (
-                  <div className="flex items-center justify-center py-4">
-                    <span className="text-sm text-muted-foreground animate-pulse">Calculating preview...</span>
-                  </div>
-                ) : previewData ? (
-                  <>
-                    {previewData.existingBillId && (
-                      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-                        A bill for this house and month already exists. Please delete the existing bill first if you want to generate again.
+            {generateMode === 'single' ? (
+              <div>
+                <Label className="text-base font-semibold">Bill Basis</Label>
+                <div className="mt-4 rounded-xl bg-muted/50 p-4 space-y-3">
+                  {previewLoading ? (
+                    <div className="flex items-center justify-center py-4">
+                      <span className="text-sm text-muted-foreground animate-pulse">Calculating preview...</span>
+                    </div>
+                  ) : previewData ? (
+                    <>
+                      {previewData.existingBillId && (
+                        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                          A bill for this house and month already exists. Please delete the existing bill first if you want to generate again.
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-muted-foreground">Deliveries Total ({previewData.logCount} logs)</span>
+                        <span className="font-semibold">₹{previewData.totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
                       </div>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-muted-foreground">Deliveries Total ({previewData.logCount} logs)</span>
-                      <span className="font-semibold">₹{previewData.totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-muted-foreground">Previous Balance</span>
+                        <span className="font-semibold text-amber-600 dark:text-amber-400">₹{previewData.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-border pt-2 mt-2">
+                        <span className="text-base font-bold text-foreground">Grand Total</span>
+                        <span className="text-lg font-bold text-primary">₹{previewData.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-center py-4">
+                      <span className="text-sm text-muted-foreground">Select a house to see preview</span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-muted-foreground">Previous Balance</span>
-                      <span className="font-semibold text-amber-600 dark:text-amber-400">₹{previewData.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-                    </div>
-                    <div className="flex items-center justify-between border-t border-border pt-2 mt-2">
-                      <span className="text-base font-bold text-foreground">Grand Total</span>
-                      <span className="text-lg font-bold text-primary">₹{previewData.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex items-center justify-center py-4">
-                    <span className="text-sm text-muted-foreground">Select a house to see preview</span>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                Bills will be generated for all houses up to {new Date(genDate).toLocaleDateString('en-IN')}.
+                Houses with no deliveries for this month or an existing bill will be skipped.
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label>Note (Optional)</Label>
@@ -337,7 +396,11 @@ export default function BillsPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setGenerateOpen(false)}>Cancel</Button>
             <Button onClick={handleGenerate} disabled={generateDisabled}>
-              {previewLoading ? 'Checking...' : saving ? 'Generating...' : 'Generate Bill'}
+              {previewLoading && generateMode === 'single'
+                ? 'Checking...'
+                : saving
+                  ? (generateMode === 'all' ? 'Generating All...' : 'Generating...')
+                  : (generateMode === 'all' ? 'Generate All Bills' : 'Generate Bill')}
             </Button>
           </DialogFooter>
         </DialogContent>

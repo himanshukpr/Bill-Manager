@@ -21,6 +21,7 @@ import {
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
+import { useHouseConfigs } from '@/hooks/use-house-configs'
 
 export type AlertDays = {
   Monday: boolean;
@@ -213,17 +214,15 @@ export default function AdminDailyAlertsPage() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
 
-  // LIVE QUERIES
+  const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
   const houses = useLiveQuery(() => db.houses.toArray())
-  const rawConfigs = useLiveQuery(() => db.houseConfigs.toArray())
   const suppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
 
-  const loading = !houses || !rawConfigs
+  const loading = !houses || !suppliers || configsLoading
 
   const loadData = useCallback(async () => {
     try {
       housesApi.list()
-      houseConfigApi.list()
       usersApi.list('supplier')
     } catch {
       toast.error('Failed to trigger background sync')

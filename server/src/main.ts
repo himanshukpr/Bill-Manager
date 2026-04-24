@@ -4,6 +4,11 @@ import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+declare global {
+  // Guard for dev/watch mode to avoid double bootstrap on module re-evaluation.
+  var __BILL_MANAGER_NEST_BOOTSTRAPPED__: boolean | undefined;
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
@@ -19,4 +24,8 @@ async function bootstrap() {
   console.log(`Starting server on http://localhost:${port}`);
   await app.listen(port, '0.0.0.0');
 }
-bootstrap();
+
+if (!globalThis.__BILL_MANAGER_NEST_BOOTSTRAPPED__) {
+  globalThis.__BILL_MANAGER_NEST_BOOTSTRAPPED__ = true;
+  void bootstrap();
+}
