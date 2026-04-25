@@ -114,6 +114,7 @@ model DeliveryLog {
   houseId        Int      @map("house_id")
   supplierId     String   @map("supplier_id") @db.Uuid
   shift          Shift
+  billGenerated  Boolean  @default(false) @map("bill_generated")
   items          Json
   totalAmount    Decimal  @map("total_amount") @db.Decimal(10, 2)
   openingBalance Decimal  @map("opening_balance") @db.Decimal(10, 2)

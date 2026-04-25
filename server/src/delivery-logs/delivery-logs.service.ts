@@ -52,6 +52,7 @@ export class DeliveryLogsService {
                     houseId: dto.houseId,
                     supplierId: user.uuid,
                     shift: dto.shift as Shift,
+                    billGenerated: dto.billGenerated ?? false,
                     items: items as any,
                     totalAmount: computedTotal,
                     openingBalance,
@@ -130,6 +131,9 @@ export class DeliveryLogsService {
                         totalAmount: computedTotal,
                         closingBalance: Number(log.closingBalance ?? 0) + totalDelta,
                         note: dto.note !== undefined ? dto.note : log.note,
+                        ...(dto.billGenerated !== undefined
+                            ? { billGenerated: dto.billGenerated }
+                            : {}),
                     },
                     include: {
                         house: { select: { id: true, houseNo: true, area: true } },
@@ -146,6 +150,9 @@ export class DeliveryLogsService {
             where: { id },
             data: {
                 ...(dto.note !== undefined ? { note: dto.note } : {}),
+                ...(dto.billGenerated !== undefined
+                    ? { billGenerated: dto.billGenerated }
+                    : {}),
             },
             include: {
                 house: { select: { id: true, houseNo: true, area: true } },

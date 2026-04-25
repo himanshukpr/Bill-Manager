@@ -26,51 +26,20 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  parseDailyAlerts,
+  ALL_DAYS_ALERT_SCHEDULE,
+  type AlertDays,
+  type HouseAlert,
+} from '@/lib/alerts'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
-type AlertDays = {
-  Monday: boolean
-  Tuesday: boolean
-  Wednesday: boolean
-  Thursday: boolean
-  Friday: boolean
-  Saturday: boolean
-  Sunday: boolean
-}
-
-type HouseAlert = {
-  id: string
-  text: string
-  schedule: AlertDays
-}
-
-const ALL_DAYS_ALERT_SCHEDULE: AlertDays = {
-  Monday: true,
-  Tuesday: true,
-  Wednesday: true,
-  Thursday: true,
-  Friday: true,
-  Saturday: true,
-  Sunday: true,
-}
-
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
-  if (!jsonStr) return []
-  const trimmed = jsonStr.trim()
-  if (!trimmed) return []
-
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (Array.isArray(parsed)) return parsed
-  } catch {
-    // Backward compatibility for legacy plain-text alert values.
-  }
-
-  return [{ id: 'legacy-alert', text: trimmed, schedule: ALL_DAYS_ALERT_SCHEDULE }]
+  return parseDailyAlerts(jsonStr)
 }
 
 function toAlertStorageValue(input: string): string | undefined {

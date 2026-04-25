@@ -7,6 +7,18 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
+function shouldPreventOutsideDismissOnMobile(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+}
+
+type DialogPointerOutsideEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof DialogPrimitive.Content>["onPointerDownOutside"]>
+>[0]
+
+type DialogInteractOutsideEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof DialogPrimitive.Content>["onInteractOutside"]>
+>[0]
+
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -51,6 +63,8 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onPointerDownOutside,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -60,6 +74,18 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        onPointerDownOutside={(event: DialogPointerOutsideEvent) => {
+          if (shouldPreventOutsideDismissOnMobile()) {
+            event.preventDefault()
+          }
+          onPointerDownOutside?.(event)
+        }}
+        onInteractOutside={(event: DialogInteractOutsideEvent) => {
+          if (shouldPreventOutsideDismissOnMobile()) {
+            event.preventDefault()
+          }
+          onInteractOutside?.(event)
+        }}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-sm text-popover-foreground ring-1 ring-foreground/5 duration-100 outline-none sm:max-w-md data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className

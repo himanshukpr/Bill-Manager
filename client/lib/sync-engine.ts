@@ -1,7 +1,7 @@
 import { db } from './db';
 import { getAuthHeader } from './auth';
+import { fetchApi } from './api-base';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 function nextRetryDelay(attempts: number): number {
@@ -100,7 +100,7 @@ class SyncEngine {
         if (!navigator.onLine) break; // Lost connection midway
         
         try {
-          const res = await fetch(`${BASE_URL}${action.url}`, {
+          const res = await fetchApi(action.url, {
             method: action.method,
             headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
             body: action.body ? JSON.stringify(action.body) : undefined,
