@@ -1016,7 +1016,7 @@ export default function DeliveryPage() {
     } as const
 
     return (
-        <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
+        <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
             
             <div className="flex shrink-0 items-center justify-between gap-1.5 py-0 sm:py-1">
                 <Badge variant="outline" className="capitalize">
@@ -1028,7 +1028,7 @@ export default function DeliveryPage() {
                     className="h-7 gap-1.5 px-3 rounded-full"
                     onClick={() => setPanelView('allocated-houses')}
                 >
-                    <Rows3 className="h-4 w-4" /> Switch View
+                    <Rows3 className="h-2 w-2" /> Switch View
                 </Button>
             </div>
 
@@ -1130,7 +1130,7 @@ export default function DeliveryPage() {
             </div>
 
             {/* FIRST DELIVERY FORM */}
-            <div className="bg-card rounded-t-none overflow-hidden">
+            <div className="bg-card rounded-t-none overflow-y-auto">
                 <div className="border-t border-border/40 p-3 space-y-3">
                     <div className="overflow-x-auto rounded-xl border border-border/70">
                         <Table>
@@ -1219,9 +1219,11 @@ export default function DeliveryPage() {
                 </div>
 
             {/* ACTION */}
-            <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+            <div className="shrink-0 sticky bottom-0 z-10 bg-card">
+                <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
                 {marking ? 'Saving...' : isCompleted ? 'Update Delivery' : 'Mark Delivered'}
-            </Button>
+                </Button>
+            </div>
             </div>
 
             <div
