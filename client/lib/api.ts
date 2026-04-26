@@ -186,11 +186,24 @@ async function invalidateCache(path: string): Promise<void> {
 // ─── Generic fetch helpers ────────────────────────────────────────────────────
 
 async function handleResponse<T>(res: Response): Promise<T> {
-  const body = await res.json().catch(() => ({}));
+  const rawBody = await res.text().catch(() => '');
+  let body: { message?: string | string[] } & Record<string, unknown> = {};
+
+  if (rawBody) {
+    try {
+      body = JSON.parse(rawBody) as { message?: string | string[] } & Record<string, unknown>;
+    } catch {
+      body = { message: rawBody };
+    }
+  }
+
   if (!res.ok) {
-    const msg = Array.isArray(body.message) ? body.message[0] : body.message ?? 'Unknown error';
+    const message = Array.isArray(body.message) ? body.message[0] : body.message;
+    const fallback = `${res.status} ${res.statusText}`.trim() || 'Unknown error';
+    const msg = typeof message === 'string' && message.trim().length > 0 ? message : fallback;
     throw new Error(msg);
   }
+
   return body as T;
 }
 
