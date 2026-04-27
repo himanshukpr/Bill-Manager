@@ -69,4 +69,18 @@ export class HouseBalanceService {
       },
     });
   }
+
+  async updatePreviousBalance(houseId: number, previousBalance: number) {
+    const balance = await this.prisma.houseBalance.findUnique({
+      where: { houseId },
+      select: { id: true },
+    });
+
+    if (!balance) throw new NotFoundException(`Balance for house #${houseId} not found`);
+
+    return this.prisma.houseBalance.update({
+      where: { houseId },
+      data: { previousBalance },
+    });
+  }
 }

@@ -5,7 +5,7 @@ import {
   Plus, Search, Phone, MapPin, Building2, Bell, CalendarDays,
   Pencil, Trash2, Eye, Settings2, Save
 } from 'lucide-react'
-import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
+import { balanceApi, houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -93,7 +93,7 @@ function serializeAlerts(alerts: HouseAlert[]): string | undefined {
 type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
-  shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string;
+  shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string; previousBalance: string;
 }
 
 type HouseConfigForm = {
@@ -107,7 +107,7 @@ type HouseConfigForm = {
 const emptyForm: HouseForm = {
   houseNo: '', area: '', phoneNo: '', alternativePhone: '',
   description: '', rate1Type: '', rate1: '', rate2Type: '', rate2: '',
-  shift: 'evening', supplierId: '', position: '0', dailyAlerts: '',
+  shift: 'evening', supplierId: '', position: '0', dailyAlerts: '', previousBalance: '',
 }
 
 const emptyConfigForm: HouseConfigForm = {
@@ -179,6 +179,7 @@ export default function HousesPage() {
       supplierId: primaryConfig?.supplierId ?? '',
       position: String(primaryConfig?.position ?? 0),
       dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
+      previousBalance: h.balance?.previousBalance ? String(h.balance.previousBalance) : '',
     })
     setFormConfigId(primaryConfig?.id ?? null)
     setEditingId(h.id)
@@ -224,6 +225,14 @@ export default function HousesPage() {
         await houseConfigApi.update(formConfigId, configPayload)
       } else {
         await houseConfigApi.create(configPayload)
+      }
+
+      if (form.previousBalance.trim() !== '') {
+        const parsedPreviousBalance = Number(form.previousBalance)
+        if (!Number.isFinite(parsedPreviousBalance)) {
+          throw new Error('Previous balance must be a valid number')
+        }
+        await balanceApi.updatePrevious(houseId, parsedPreviousBalance)
       }
 
       toast.success(editingId ? 'House updated' : 'House added')
@@ -450,7 +459,12 @@ export default function HousesPage() {
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[94dvh] overflow-y-auto **:data-[slot=input]:h-10 **:data-[slot=select-trigger]:h-10 **:data-[slot=input]:placeholder:text-[11px] sm:**:data-[slot=input]:placeholder:text-xs **:data-[slot=input]:placeholder:text-muted-foreground/70 **:data-[slot=select-value]:text-[11px] sm:**:data-[slot=select-value]:text-xs **:data-[slot=select-value]:text-muted-foreground/70 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9">
+        <DialogContent
+          className="max-w-5xl max-h-[94dvh] overflow-y-auto **:data-[slot=input]:h-10 **:data-[slot=select-trigger]:h-10 **:data-[slot=input]:placeholder:text-[11px] sm:**:data-[slot=input]:placeholder:text-xs **:data-[slot=input]:placeholder:text-muted-foreground/70 **:data-[slot=select-value]:text-[11px] sm:**:data-[slot=select-value]:text-xs **:data-[slot=select-value]:text-muted-foreground/70 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit House' : 'Add New House'}</DialogTitle>
             <DialogDescription>
@@ -487,7 +501,16 @@ export default function HousesPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="house-rate1">Rate 1 (₹/L)</Label>
-              <Input id="house-rate1" type="number" min="0" step="0.5" value={form.rate1} onChange={e => setForm(f => ({ ...f, rate1: e.target.value }))} placeholder="e.g. 60" />
+              <Input
+                id="house-rate1"
+                type="number"
+                min="0"
+                step="0.5"
+                value={form.rate1}
+                onChange={e => setForm(f => ({ ...f, rate1: e.target.value }))}
+                placeholder={form.rate1Type ? 'e.g. 60' : 'Select a type first'}
+                disabled={!form.rate1Type}
+              />
             </div>
             {/* Rate 2 */}
             <div className="space-y-1.5">
@@ -502,7 +525,27 @@ export default function HousesPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="house-rate2">Rate 2 (₹/L)</Label>
-              <Input id="house-rate2" type="number" min="0" step="0.5" value={form.rate2} onChange={e => setForm(f => ({ ...f, rate2: e.target.value }))} placeholder="e.g. 50" />
+              <Input
+                id="house-rate2"
+                type="number"
+                min="0"
+                step="0.5"
+                value={form.rate2}
+                onChange={e => setForm(f => ({ ...f, rate2: e.target.value }))}
+                placeholder={form.rate2Type ? 'e.g. 50' : 'Select a type first'}
+                disabled={!form.rate2Type}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="house-previous-balance">Previous Balance (₹)</Label>
+              <Input
+                id="house-previous-balance"
+                type="number"
+                step="0.01"
+                value={form.previousBalance}
+                onChange={e => setForm(f => ({ ...f, previousBalance: e.target.value }))}
+                placeholder="e.g. 1200"
+              />
             </div>
             <div className="col-span-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4 lg:col-span-3">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -829,11 +872,15 @@ function DailyAlertsDialog({
   }, [open, value])
 
   const addAlert = () => {
-    setAlerts(prev => [...prev, {
-      id: createAlertId(),
-      text: '',
-      schedule: ALL_DAYS_ALERT_SCHEDULE,
-    }])
+    setAlerts(prev => {
+      if (prev.length >= 1) return prev
+
+      return [{
+        id: createAlertId(),
+        text: '',
+        schedule: ALL_DAYS_ALERT_SCHEDULE,
+      }]
+    })
   }
 
   const updateAlertText = (index: number, text: string) => {
@@ -863,7 +910,7 @@ function DailyAlertsDialog({
   }
 
   const handleSave = () => {
-    onChange(serializeAlerts(alerts) ?? '')
+    onChange(serializeAlerts(alerts.slice(0, 1)) ?? '')
     setOpen(false)
   }
 
@@ -882,7 +929,12 @@ function DailyAlertsDialog({
           <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
         </button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl bg-card border-border/60">
+      <DialogContent
+        className="max-w-2xl bg-card border-border/60"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5 text-primary" /> Daily Alerts
@@ -893,8 +945,8 @@ function DailyAlertsDialog({
           {alerts.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-10 text-muted-foreground">
               <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
-              <p className="font-medium">No alerts configured</p>
-              <p className="mt-1 text-xs">Create an alert schedule for selected days.</p>
+              <p className="font-medium">No alert configured</p>
+              <p className="mt-1 text-xs">Create one alert schedule for selected days.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -933,8 +985,13 @@ function DailyAlertsDialog({
             </div>
           )}
 
-          <Button onClick={addAlert} variant="secondary" className="mt-4 w-full gap-2 border border-dashed border-border">
-            <Plus className="h-4 w-4" /> Create New Alert
+          <Button
+            onClick={addAlert}
+            variant="secondary"
+            className="mt-4 w-full gap-2 border border-dashed border-border"
+            disabled={alerts.length >= 1}
+          >
+            <Plus className="h-4 w-4" /> {alerts.length >= 1 ? 'Only one alert allowed per house' : 'Create Alert'}
           </Button>
         </div>
 

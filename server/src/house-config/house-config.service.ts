@@ -15,6 +15,22 @@ import {
 export class HouseConfigService {
   constructor(private prisma: PrismaService) { }
 
+  private normalizeSingleDailyAlert(dailyAlerts?: string | null): string | undefined {
+    if (dailyAlerts === undefined || dailyAlerts === null) return undefined;
+
+    const trimmed = dailyAlerts.trim();
+    if (!trimmed) return undefined;
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) return trimmed;
+      if (parsed.length === 0) return JSON.stringify([]);
+      return JSON.stringify([parsed[0]]);
+    } catch {
+      return trimmed;
+    }
+  }
+
   private async ensureHouseExists(houseId: number) {
     const house = await this.prisma.house.findUnique({
       where: { id: houseId },
@@ -62,7 +78,7 @@ export class HouseConfigService {
           shift: dto.shift,
           supplierId: dto.supplierId,
           position: dto.position ?? existing.position,
-          dailyAlerts: dto.dailyAlerts,
+          dailyAlerts: this.normalizeSingleDailyAlert(dto.dailyAlerts),
         },
         include: { house: true },
       });
@@ -78,7 +94,7 @@ export class HouseConfigService {
           shift: dto.shift,
           supplierId: dto.supplierId,
           position: dto.position ?? count,
-          dailyAlerts: dto.dailyAlerts,
+          dailyAlerts: this.normalizeSingleDailyAlert(dto.dailyAlerts),
         },
         include: { house: true },
       });
@@ -98,9 +114,16 @@ export class HouseConfigService {
       await this.ensureHouseExists(dto.houseId);
     }
 
+    const { dailyAlerts, ...rest } = dto;
+
     return this.prisma.houseConfig.update({
       where: { id },
-      data: dto,
+      data: {
+        ...rest,
+        ...(dailyAlerts !== undefined
+          ? { dailyAlerts: this.normalizeSingleDailyAlert(dailyAlerts) }
+          : {}),
+      },
       include: { house: true },
     });
   }

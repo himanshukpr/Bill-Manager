@@ -168,7 +168,7 @@ export function parseDailyAlerts(rawValue: string | null | undefined): HouseAler
       return [];
     }
 
-    return parsed.flatMap((entry, index) => normalizeAlertEntries(entry, index));
+    return parsed.flatMap((entry, index) => normalizeAlertEntries(entry, index)).slice(0, 1);
   } catch {
     return [
       {
