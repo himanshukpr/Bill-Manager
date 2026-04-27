@@ -785,6 +785,9 @@ export default function DeliveryPage() {
         if (!currentHouse) return
         if (!selectedShift) return
 
+        const wasCompleted = completedHouses.has(currentHouse.id)
+        const previousLogs = currentHouseLogs
+
         setMarking(true)
         setSaveStatus('idle')
 

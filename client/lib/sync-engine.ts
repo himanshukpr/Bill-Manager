@@ -12,13 +12,27 @@ function nextRetryDelay(attempts: number): number {
 
 class SyncEngine {
   private syncing = false;
+  private processQueueTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private scheduleProcessQueue(delayMs = SYNC_DEBOUNCE_MS) {
+    if (typeof navigator === 'undefined' || !navigator.onLine) return;
+
+    if (this.processQueueTimer) {
+      clearTimeout(this.processQueueTimer);
+    }
+
+    this.processQueueTimer = setTimeout(() => {
+      this.processQueueTimer = null;
+      void this.processQueue();
+    }, delayMs);
+  }
 
   constructor() {
     if (typeof window !== 'undefined') {
-      window.addEventListener('online', () => this.processQueue());
+      window.addEventListener('online', () => this.scheduleProcessQueue(0));
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && navigator.onLine) {
-          this.processQueue();
+          this.scheduleProcessQueue(0);
         }
       });
 
@@ -85,12 +99,17 @@ class SyncEngine {
       });
     }
     
-    if (navigator.onLine) {
-      this.processQueue();
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      this.scheduleProcessQueue();
     }
   }
 
   async processQueue() {
+    if (this.processQueueTimer) {
+      clearTimeout(this.processQueueTimer);
+      this.processQueueTimer = null;
+    }
+
     if (this.syncing || typeof navigator === 'undefined' || !navigator.onLine) return;
     this.syncing = true;
 
