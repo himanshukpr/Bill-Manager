@@ -460,7 +460,7 @@ export default function HousesPage() {
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
-          className="max-w-5xl max-h-[94dvh] overflow-y-auto **:data-[slot=input]:h-10 **:data-[slot=select-trigger]:h-10 **:data-[slot=input]:placeholder:text-[11px] sm:**:data-[slot=input]:placeholder:text-xs **:data-[slot=input]:placeholder:text-muted-foreground/70 **:data-[slot=select-value]:text-[11px] sm:**:data-[slot=select-value]:text-xs **:data-[slot=select-value]:text-muted-foreground/70 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9"
+          className="max-w-5xl max-h-[94dvh] overflow-y-auto **:data-[slot=input]:h-10 **:data-[slot=select-trigger]:h-10 **:data-[slot=input]:placeholder:text-[11px] sm:**:data-[slot=input]:placeholder:text-xs **:data-[slot=input]:placeholder:text-muted-foreground/70 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9"
           onOpenAutoFocus={(event) => {
             event.preventDefault()
           }}
@@ -491,9 +491,17 @@ export default function HousesPage() {
             {/* Rate 1 */}
             <div className="space-y-1.5">
               <Label>Rate 1 Type</Label>
-              <Select value={form.rate1Type} onValueChange={v => setForm(f => ({ ...f, rate1Type: v }))}>
+              <Select
+                value={form.rate1Type || '__none__'}
+                onValueChange={v => setForm(f => ({
+                  ...f,
+                  rate1Type: v === '__none__' ? '' : v,
+                  rate1: v === '__none__' ? '' : f.rate1,
+                }))}
+              >
                 <SelectTrigger id="house-rate1type"><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
                   <SelectItem value="buffalo">Buffalo Milk</SelectItem>
                   <SelectItem value="cow">Cow Milk</SelectItem>
                 </SelectContent>
@@ -515,9 +523,17 @@ export default function HousesPage() {
             {/* Rate 2 */}
             <div className="space-y-1.5">
               <Label>Rate 2 Type</Label>
-              <Select value={form.rate2Type} onValueChange={v => setForm(f => ({ ...f, rate2Type: v }))}>
+              <Select
+                value={form.rate2Type || '__none__'}
+                onValueChange={v => setForm(f => ({
+                  ...f,
+                  rate2Type: v === '__none__' ? '' : v,
+                  rate2: v === '__none__' ? '' : f.rate2,
+                }))}
+              >
                 <SelectTrigger id="house-rate2type"><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
                   <SelectItem value="buffalo">Buffalo Milk</SelectItem>
                   <SelectItem value="cow">Cow Milk</SelectItem>
                 </SelectContent>
