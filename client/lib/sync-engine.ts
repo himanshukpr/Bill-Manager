@@ -1,9 +1,8 @@
 import { db } from './db';
 import { getAuthHeader } from './auth';
+import { fetchApi } from './api-base';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
-const MAX_RETRY_DELAY_MS = 1 * 60 * 1000;
-const SYNC_DEBOUNCE_MS = 3000;
+const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 function nextRetryDelay(attempts: number): number {
   const base = 3000;
@@ -39,10 +38,8 @@ class SyncEngine {
 
       // Periodic fallback flush for queued writes.
       setInterval(() => {
-        if (navigator.onLine) {
-          void this.processQueue();
-        }
-      }, 15000);
+        if (navigator.onLine) this.processQueue();
+      }, 5000);
     }
   }
 
@@ -51,9 +48,8 @@ class SyncEngine {
 
     if (method === 'PATCH') {
       const existing = await db.syncQueue
-        .where('url')
-        .equals(url)
-        .filter((entry) => entry.method === 'PATCH')
+        .toCollection()
+        .filter((entry) => entry.url === url && entry.method === 'PATCH')
         .last();
 
       if (existing?.id) {
@@ -78,7 +74,13 @@ class SyncEngine {
         });
       }
     } else if (method === 'DELETE') {
-      await db.syncQueue.where('url').equals(url).delete();
+      const existingForUrl = await db.syncQueue
+        .toCollection()
+        .filter((entry) => entry.url === url)
+        .primaryKeys();
+      if (existingForUrl.length > 0) {
+        await db.syncQueue.bulkDelete(existingForUrl as number[]);
+      }
       await db.syncQueue.add({
         url,
         method,
@@ -122,7 +124,7 @@ class SyncEngine {
         if (!navigator.onLine) break; // Lost connection midway
         
         try {
-          const res = await fetch(`${BASE_URL}${action.url}`, {
+          const res = await fetchApi(action.url, {
             method: action.method,
             headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
             body: action.body ? JSON.stringify(action.body) : undefined,

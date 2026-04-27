@@ -89,11 +89,7 @@ export default function UsersPage() {
         <Input placeholder="Search by username or email..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
       </div>
 
-      {/* Hint */}
-      <p className="text-xs text-muted-foreground rounded-lg bg-primary/5 border border-primary/10 px-4 py-3">
-        New users register via the signup page. As admin, you can verify or remove them here.
-        Unverified users will see a "Pending Approval" screen and cannot access the dashboard.
-      </p>
+      
 
       {loading ? (
         <div className="space-y-3">

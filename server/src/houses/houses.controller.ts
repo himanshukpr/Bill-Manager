@@ -51,8 +51,13 @@ export class HousesController {
     return this.housesService.updateLocation(id, dto);
   }
 
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.housesService.remove(id);
+  @Patch(':id/deactivate')
+  deactivate(@Param('id', ParseIntPipe) id: number) {
+    return this.housesService.deactivate(id);
+  }
+
+  @Patch(':id/reactivate')
+  reactivate(@Param('id', ParseIntPipe) id: number) {
+    return this.housesService.reactivate(id);
   }
 }

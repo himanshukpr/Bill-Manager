@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { BillsService } from './bills.service';
-import { GenerateBillDto } from './dto/bill.dto';
+import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -41,6 +41,14 @@ export class BillsController {
     return this.service.getMonthlyStats(year);
   }
 
+  @Get('preview')
+  preview(
+    @Query('houseId', ParseIntPipe) houseId: number,
+    @Query('date') date: string,
+  ) {
+    return this.service.preview(houseId, date);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);
@@ -49,6 +57,11 @@ export class BillsController {
   @Post('generate')
   generate(@Body() dto: GenerateBillDto) {
     return this.service.generate(dto);
+  }
+
+  @Post('generate-all')
+  generateAll(@Body() dto: GenerateAllBillsDto) {
+    return this.service.generateAll(dto);
   }
 
   @Delete(':id')

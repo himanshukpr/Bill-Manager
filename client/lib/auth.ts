@@ -1,3 +1,5 @@
+import { fetchApi } from './api-base'
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type AppRole = "admin" | "supplier" | "member"
@@ -75,11 +77,6 @@ export function dashboardPath(role: AppRole): string {
   return "/dashboard/member"
 }
 
-// ─── API base URL ─────────────────────────────────────────────────────────────
-
-const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? '/api';
-
 // ─── Auth API ─────────────────────────────────────────────────────────────────
 
 export type ApiError = { message: string | string[]; statusCode: number }
@@ -103,7 +100,7 @@ export async function apiLogin(
   emailOrUsername: string,
   password: string,
 ): Promise<SessionAuth> {
-  const res = await fetch(`${BASE_URL}/auth/login`, {
+  const res = await fetchApi('/auth/login', {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ emailOrUsername, password }),
@@ -145,7 +142,7 @@ export async function apiRegister(
   email: string,
   password: string,
 ): Promise<SessionAuth> {
-  const res = await fetch(`${BASE_URL}/auth/register`, {
+  const res = await fetchApi('/auth/register', {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, email, password }),

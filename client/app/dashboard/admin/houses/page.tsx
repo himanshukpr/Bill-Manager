@@ -2,14 +2,14 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Plus, Search, Phone, MapPin, Building2,
-  Pencil, Trash2, Eye, IndianRupee, ChevronRight, Settings2
+  Plus, Search, Phone, MapPin, Building2, Bell, CalendarDays,
+  Pencil, Trash2, Eye, Settings2, Save
 } from 'lucide-react'
-import { balanceApi, houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
+import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogFooter, DialogDescription,
+  DialogFooter, DialogDescription, DialogTrigger,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,60 +26,45 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  parseDailyAlerts,
+  createAlertId,
+  ALL_DAYS_ALERT_SCHEDULE,
+  type AlertDays,
+  type HouseAlert,
+} from '@/lib/alerts'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
-type AlertDays = {
-  Monday: boolean
-  Tuesday: boolean
-  Wednesday: boolean
-  Thursday: boolean
-  Friday: boolean
-  Saturday: boolean
-  Sunday: boolean
-}
-
-type HouseAlert = {
-  id: string
-  text: string
-  schedule: AlertDays
-}
-
-const ALL_DAYS_ALERT_SCHEDULE: AlertDays = {
-  Monday: true,
-  Tuesday: true,
-  Wednesday: true,
-  Thursday: true,
-  Friday: true,
-  Saturday: true,
-  Sunday: true,
-}
-
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
-  if (!jsonStr) return []
-  const trimmed = jsonStr.trim()
-  if (!trimmed) return []
+  return parseDailyAlerts(jsonStr)
+}
 
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (Array.isArray(parsed)) return parsed
-  } catch {
-    // Backward compatibility for legacy plain-text alert values.
-  }
+function formatAlertPreview(rawValue: string | null | undefined): string {
+  const text = parseAlerts(rawValue)
+    .map((alert) => alert.text.trim())
+    .filter(Boolean)
+    .join(', ')
 
-  return [{ id: 'legacy-alert', text: trimmed, schedule: ALL_DAYS_ALERT_SCHEDULE }]
+  if (!text) return ''
+  return text.length > 96 ? `${text.slice(0, 93)}...` : text
 }
 
 function toAlertStorageValue(input: string): string | undefined {
   const text = input.trim()
   if (!text) return undefined
 
+  const parsed = parseAlerts(text)
+  if (parsed.length > 0) {
+    return serializeAlerts(parsed)
+  }
+
   return JSON.stringify([
     {
-      id: `auto-${Date.now()}`,
+      id: createAlertId('auto'),
       text,
       schedule: ALL_DAYS_ALERT_SCHEDULE,
     },
@@ -88,15 +73,27 @@ function toAlertStorageValue(input: string): string | undefined {
 
 function toAlertInputValue(rawValue: string | null | undefined): string {
   const parsed = parseAlerts(rawValue)
-  const firstText = parsed.find((alert) => alert.text?.trim())?.text
-  return firstText?.trim() ?? ''
+  return serializeAlerts(parsed) ?? ''
+}
+
+function serializeAlerts(alerts: HouseAlert[]): string | undefined {
+  const normalized = alerts
+    .map((alert) => ({
+      id: alert.id || createAlertId(),
+      text: alert.text.trim(),
+      schedule: alert.schedule,
+    }))
+    .filter((alert) => alert.text.length > 0)
+
+  if (normalized.length === 0) return undefined
+
+  return JSON.stringify(normalized)
 }
 
 type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
   shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string;
-  previousBalance: string; currentBalance: string;
 }
 
 type HouseConfigForm = {
@@ -107,16 +104,10 @@ type HouseConfigForm = {
   dailyAlerts: string
 }
 
-type BalanceForm = {
-  previousBalance: string
-  currentBalance: string
-}
-
 const emptyForm: HouseForm = {
   houseNo: '', area: '', phoneNo: '', alternativePhone: '',
   description: '', rate1Type: '', rate1: '', rate2Type: '', rate2: '',
   shift: 'evening', supplierId: '', position: '0', dailyAlerts: '',
-  previousBalance: '0', currentBalance: '0',
 }
 
 const emptyConfigForm: HouseConfigForm = {
@@ -127,11 +118,6 @@ const emptyConfigForm: HouseConfigForm = {
   dailyAlerts: '',
 }
 
-const emptyBalanceForm: BalanceForm = {
-  previousBalance: '0',
-  currentBalance: '0',
-}
-
 export default function HousesPage() {
   const [houses, setHouses] = useState<House[]>([])
   const [suppliers, setSuppliers] = useState<User[]>([])
@@ -140,7 +126,8 @@ export default function HousesPage() {
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [toggleId, setToggleId] = useState<number | null>(null)
+  const [toggleAction, setToggleAction] = useState<'deactivate' | 'reactivate' | null>(null)
   const [viewHouse, setViewHouse] = useState<House | null>(null)
   const [saving, setSaving] = useState(false)
   const [formConfigId, setFormConfigId] = useState<number | null>(null)
@@ -148,9 +135,6 @@ export default function HousesPage() {
   const [configSaving, setConfigSaving] = useState(false)
   const [configEditingId, setConfigEditingId] = useState<number | null>(null)
   const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
-  const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
-  const [balanceSaving, setBalanceSaving] = useState(false)
-  const [balanceForm, setBalanceForm] = useState<BalanceForm>(emptyBalanceForm)
 
   const load = useCallback(async () => {
     try {
@@ -195,8 +179,6 @@ export default function HousesPage() {
       supplierId: primaryConfig?.supplierId ?? '',
       position: String(primaryConfig?.position ?? 0),
       dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
-      previousBalance: String(h.balance?.previousBalance ?? '0'),
-      currentBalance: String(h.balance?.currentBalance ?? '0'),
     })
     setFormConfigId(primaryConfig?.id ?? null)
     setEditingId(h.id)
@@ -225,17 +207,10 @@ export default function HousesPage() {
         ? await housesApi.update(editingId, payload)
         : await housesApi.create(payload)
 
-      const houseId = savedHouse.id ?? editingId
+      const houseId = editingId ?? savedHouse?.id
       if (!houseId) {
         throw new Error('Unable to resolve house id')
       }
-
-      const previousBalance = Number.parseFloat(form.previousBalance)
-      const currentBalance = Number.parseFloat(form.currentBalance)
-      await balanceApi.update(houseId, {
-        previousBalance: Number.isFinite(previousBalance) ? previousBalance : 0,
-        currentBalance: Number.isFinite(currentBalance) ? currentBalance : 0,
-      })
 
       const configPayload = {
         houseId,
@@ -261,12 +236,18 @@ export default function HousesPage() {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteId) return
+  async function handleToggleActive() {
+    if (!toggleId || !toggleAction) return
     try {
-      await housesApi.delete(deleteId)
-      toast.success('House deleted')
-      setDeleteId(null)
+      if (toggleAction === 'deactivate') {
+        await housesApi.deactivate(toggleId)
+        toast.success('House deactivated')
+      } else {
+        await housesApi.reactivate(toggleId)
+        toast.success('House reactivated')
+      }
+      setToggleId(null)
+      setToggleAction(null)
       load()
     } catch (e: any) {
       toast.error(e.message)
@@ -293,14 +274,6 @@ export default function HousesPage() {
       dailyAlerts: toAlertInputValue(houseConfig?.dailyAlerts),
     })
     setConfigDialogOpen(true)
-  }
-
-  function openBalanceDialog(house: House) {
-    setBalanceForm({
-      previousBalance: String(house.balance?.previousBalance ?? '0'),
-      currentBalance: String(house.balance?.currentBalance ?? '0'),
-    })
-    setBalanceDialogOpen(true)
   }
 
   async function handleConfigSave() {
@@ -348,29 +321,6 @@ export default function HousesPage() {
       toast.error(e.message)
     } finally {
       setConfigSaving(false)
-    }
-  }
-
-  async function handleBalanceSave() {
-    if (!viewHouse) return
-    setBalanceSaving(true)
-    try {
-      const previousBalance = Number.parseFloat(balanceForm.previousBalance)
-      const currentBalance = Number.parseFloat(balanceForm.currentBalance)
-      await balanceApi.update(viewHouse.id, {
-        previousBalance: Number.isFinite(previousBalance) ? previousBalance : 0,
-        currentBalance: Number.isFinite(currentBalance) ? currentBalance : 0,
-      })
-      toast.success('Balance updated')
-      setBalanceDialogOpen(false)
-      setBalanceForm(emptyBalanceForm)
-      await load()
-      const refreshed = await housesApi.get(viewHouse.id)
-      setViewHouse(refreshed)
-    } catch (e: any) {
-      toast.error(e.message)
-    } finally {
-      setBalanceSaving(false)
     }
   }
 
@@ -479,10 +429,15 @@ export default function HousesPage() {
                         <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleteId(h.id)} title="Delete"
-                          className="text-destructive hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {h.active ? (
+                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleAction('deactivate') }} title="Deactivate" className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleAction('reactivate') }} title="Reactivate" className="text-green-600 hover:text-green-700">
+                            <Save className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -495,7 +450,7 @@ export default function HousesPage() {
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[94dvh] overflow-y-auto [&_[data-slot=input]]:h-10 [&_[data-slot=select-trigger]]:h-10 [&_[data-slot=input]]:placeholder:text-[11px] sm:[&_[data-slot=input]]:placeholder:text-xs [&_[data-slot=input]]:placeholder:text-muted-foreground/70 [&_[data-slot=select-value]]:text-[11px] sm:[&_[data-slot=select-value]]:text-xs [&_[data-slot=select-value]]:text-muted-foreground/70 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
+        <DialogContent className="max-w-5xl max-h-[94dvh] overflow-y-auto **:data-[slot=input]:h-10 **:data-[slot=select-trigger]:h-10 **:data-[slot=input]:placeholder:text-[11px] sm:**:data-[slot=input]:placeholder:text-xs **:data-[slot=input]:placeholder:text-muted-foreground/70 **:data-[slot=select-value]:text-[11px] sm:**:data-[slot=select-value]:text-xs **:data-[slot=select-value]:text-muted-foreground/70 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit House' : 'Add New House'}</DialogTitle>
             <DialogDescription>
@@ -590,44 +545,13 @@ export default function HousesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-position">
-                    Position
-                    {form.shift === 'evening' && <span className="text-xs font-normal text-muted-foreground ml-2"></span>}
-                  </Label>
-                  <Input
-                    id="house-position"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.position}
-                    onChange={e => setForm(f => ({ ...f, position: e.target.value }))}
-                    placeholder="0"
-                    disabled={form.shift === 'evening'}
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Daily Alerts</Label>
+                  <DailyAlertsDialog
+                    value={form.dailyAlerts}
+                    onChange={value => setForm(f => ({ ...f, dailyAlerts: value }))}
+                    placeholder="Open schedule editor"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-alerts">Daily Alerts</Label>
-                  <Input id="house-alerts" value={form.dailyAlerts} onChange={e => setForm(f => ({ ...f, dailyAlerts: e.target.value }))} placeholder="Optional alert" />
-                </div>
-              </div>
-            </div>
-            <div className="col-span-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4 lg:col-span-3">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Balance</p>
-                  
-                </div>
-                <Badge variant="outline" className="uppercase tracking-wide">Balance</Badge>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-previous-balance">Previous Balance</Label>
-                  <Input id="house-previous-balance" type="number" min="0" step="0.01" value={form.previousBalance} onChange={e => setForm(f => ({ ...f, previousBalance: e.target.value }))} placeholder="0" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="house-current-balance">Current Balance</Label>
-                  <Input id="house-current-balance" type="number" min="0" step="0.01" value={form.currentBalance} onChange={e => setForm(f => ({ ...f, currentBalance: e.target.value }))} placeholder="0" />
                 </div>
               </div>
             </div>
@@ -645,19 +569,21 @@ export default function HousesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Alert */}
-      <AlertDialog open={!!deleteId} onOpenChange={open => !open && setDeleteId(null)}>
+      {/* Deactivate/Reactivate Alert */}
+      <AlertDialog open={!!toggleId} onOpenChange={open => { if (!open) { setToggleId(null); setToggleAction(null) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete House?</AlertDialogTitle>
+            <AlertDialogTitle>{toggleAction === 'deactivate' ? 'Deactivate House?' : 'Reactivate House?'}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete this house along with all its configs, balances and bills. This action cannot be undone.
+              {toggleAction === 'deactivate'
+                ? 'This will deactivate the house. It will not be available for normal operations until reactivated.'
+                : 'This will reactivate the house and make it available again.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
+            <AlertDialogAction onClick={handleToggleActive} className={toggleAction === 'deactivate' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : 'bg-green-600 text-white hover:bg-green-700'}>
+              {toggleAction === 'deactivate' ? 'Deactivate' : 'Reactivate'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -665,7 +591,7 @@ export default function HousesPage() {
 
       {/* View House Sheet */}
       <Dialog open={!!viewHouse} onOpenChange={open => !open && setViewHouse(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto [&_[data-slot=input]]:h-11 [&_[data-slot=select-trigger]]:h-11 sm:[&_[data-slot=input]]:h-9 sm:[&_[data-slot=select-trigger]]:h-9">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto **:data-[slot=input]:h-11 **:data-[slot=select-trigger]:h-11 sm:**:data-[slot=input]:h-9 sm:**:data-[slot=select-trigger]:h-9">
           {viewHouse && (
             <>
               <DialogHeader>
@@ -696,9 +622,6 @@ export default function HousesPage() {
                 <div className="rounded-xl border border-border bg-muted/30 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Balance</p>
-                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openBalanceDialog(viewHouse)}>
-                      <IndianRupee className="h-3.5 w-3.5" /> Edit Balance
-                    </Button>
                   </div>
                   <div className="flex gap-6">
                     <div>
@@ -738,9 +661,12 @@ export default function HousesPage() {
                                 {config.shift === 'morning' ? (config.supplier?.username ?? 'Unassigned supplier') : 'Shared evening route'}
                               </span>
                               <span className="text-muted-foreground">Position {config.position + 1}</span>
-                              {config.dailyAlerts ? (
-                                <span className="text-xs text-amber-700 dark:text-amber-400">{config.dailyAlerts}</span>
-                              ) : null}
+                              {(() => {
+                                const alertPreview = formatAlertPreview(config.dailyAlerts)
+                                if (!alertPreview) return null
+
+                                return <span className="text-xs text-amber-700 dark:text-amber-400">{alertPreview}</span>
+                              })()}
                             </div>
                             <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
                               <Pencil className="h-3.5 w-3.5" /> Edit
@@ -851,24 +777,11 @@ export default function HousesPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="config-position">Position</Label>
-              <Input
-                id="config-position"
-                type="number"
-                min="0"
-                step="1"
-                value={configForm.position}
-                onChange={e => setConfigForm(form => ({ ...form, position: e.target.value }))}
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1.5">
               <Label htmlFor="config-alerts">Daily Alerts</Label>
-              <Input
-                id="config-alerts"
+              <DailyAlertsDialog
                 value={configForm.dailyAlerts}
-                onChange={e => setConfigForm(form => ({ ...form, dailyAlerts: e.target.value }))}
-                placeholder="Optional alert text"
+                onChange={value => setConfigForm(form => ({ ...form, dailyAlerts: value }))}
+                placeholder="Open schedule editor"
               />
             </div>
           </div>
@@ -881,46 +794,6 @@ export default function HousesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
-        <DialogContent className="max-w-md [&_[data-slot=input]]:h-11 sm:[&_[data-slot=input]]:h-9">
-          <DialogHeader>
-            <DialogTitle>Edit House Balance</DialogTitle>
-            <DialogDescription>
-              Update the pending balance carried forward and the current month balance for this house.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="balance-previous">Previous Balance</Label>
-              <Input
-                id="balance-previous"
-                type="number"
-                min="0"
-                step="0.01"
-                value={balanceForm.previousBalance}
-                onChange={e => setBalanceForm(form => ({ ...form, previousBalance: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="balance-current">Current Balance</Label>
-              <Input
-                id="balance-current"
-                type="number"
-                min="0"
-                step="0.01"
-                value={balanceForm.currentBalance}
-                onChange={e => setBalanceForm(form => ({ ...form, currentBalance: e.target.value }))}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBalanceDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleBalanceSave} disabled={balanceSaving}>
-              {balanceSaving ? 'Saving...' : 'Update Balance'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
@@ -931,5 +804,147 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="text-xs text-muted-foreground font-medium">{label}</p>
       <p className="text-sm font-semibold mt-0.5">{value}</p>
     </div>
+  )
+}
+
+const DAYS_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const
+const DAYS_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+function DailyAlertsDialog({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [alerts, setAlerts] = useState<HouseAlert[]>([])
+
+  useEffect(() => {
+    if (open) {
+      setAlerts(parseAlerts(value))
+    }
+  }, [open, value])
+
+  const addAlert = () => {
+    setAlerts(prev => [...prev, {
+      id: createAlertId(),
+      text: '',
+      schedule: ALL_DAYS_ALERT_SCHEDULE,
+    }])
+  }
+
+  const updateAlertText = (index: number, text: string) => {
+    setAlerts(prev => {
+      const next = [...prev]
+      next[index] = { ...next[index], text }
+      return next
+    })
+  }
+
+  const toggleDay = (index: number, day: typeof DAYS_KEYS[number]) => {
+    setAlerts(prev => {
+      const next = [...prev]
+      next[index] = {
+        ...next[index],
+        schedule: {
+          ...next[index].schedule,
+          [day]: !next[index].schedule[day],
+        },
+      }
+      return next
+    })
+  }
+
+  const removeAlert = (index: number) => {
+    setAlerts(prev => prev.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  const handleSave = () => {
+    onChange(serializeAlerts(alerts) ?? '')
+    setOpen(false)
+  }
+
+  const activeCount = parseAlerts(value).length
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <span className="truncate text-muted-foreground">
+            {activeCount > 0 ? `${activeCount} alert${activeCount > 1 ? 's' : ''} configured` : placeholder ?? 'Open schedule editor'}
+          </span>
+          <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl bg-card border-border/60">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5 text-primary" /> Daily Alerts
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
+          {alerts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-10 text-muted-foreground">
+              <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
+              <p className="font-medium">No alerts configured</p>
+              <p className="mt-1 text-xs">Create an alert schedule for selected days.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {alerts.map((alert, index) => (
+                <div key={alert.id} className="relative rounded-xl border border-border bg-muted/20 p-4">
+                  <div className="mb-4 flex gap-3">
+                    <Input
+                      value={alert.text}
+                      onChange={event => updateAlertText(index, event.target.value)}
+                      placeholder="E.g. Call before arrival"
+                      className="bg-background"
+                    />
+                    <Button variant="destructive" size="icon" onClick={() => removeAlert(index)} className="shrink-0">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Active Days</p>
+                    <div className="flex flex-wrap gap-2">
+                      {DAYS_KEYS.map((day, dayIndex) => (
+                        <Button
+                          key={day}
+                          type="button"
+                          variant={alert.schedule[day] ? 'default' : 'outline'}
+                          size="sm"
+                          className={`h-8 font-medium ${alert.schedule[day] ? 'bg-primary/90' : 'bg-background'}`}
+                          onClick={() => toggleDay(index, day)}
+                        >
+                          {DAYS_LABELS[dayIndex]}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button onClick={addAlert} variant="secondary" className="mt-4 w-full gap-2 border border-dashed border-border">
+            <Plus className="h-4 w-4" /> Create New Alert
+          </Button>
+        </div>
+
+        <DialogFooter className="mt-4 border-t border-border/40 pt-4">
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleSave} className="gap-2">
+            <Save className="h-4 w-4" /> Save Schedule
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

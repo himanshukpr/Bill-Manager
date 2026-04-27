@@ -38,8 +38,7 @@ export class DeliveryLogsService {
         });
 
         const openingBalance = Number(balance.currentBalance ?? 0);
-        const closingBalance =
-            dto.currentBalance !== undefined ? Number(dto.currentBalance) : openingBalance + computedTotal;
+        const closingBalance = openingBalance + computedTotal;
 
         const [updatedBalance, log] = await this.prisma.$transaction([
             this.prisma.houseBalance.update({
@@ -53,6 +52,7 @@ export class DeliveryLogsService {
                     houseId: dto.houseId,
                     supplierId: user.uuid,
                     shift: dto.shift as Shift,
+                    billGenerated: dto.billGenerated ?? false,
                     items: items as any,
                     totalAmount: computedTotal,
                     openingBalance,
@@ -113,19 +113,36 @@ export class DeliveryLogsService {
             }
 
             const computedTotal = validItems.reduce((sum, item) => sum + item.amount, 0);
+            const totalDelta = computedTotal - Number(log.totalAmount ?? 0);
 
-            return this.prisma.deliveryLog.update({
-                where: { id },
-                data: {
-                    items: validItems as any,
-                    totalAmount: computedTotal,
-                    note: dto.note !== undefined ? dto.note : log.note,
-                },
-                include: {
-                    house: { select: { id: true, houseNo: true, area: true } },
-                    supplier: { select: { uuid: true, username: true } },
-                },
-            });
+            const [, updatedLog] = await this.prisma.$transaction([
+                this.prisma.houseBalance.update({
+                    where: { houseId: log.houseId },
+                    data: {
+                        currentBalance: {
+                            increment: totalDelta,
+                        },
+                    },
+                }),
+                this.prisma.deliveryLog.update({
+                    where: { id },
+                    data: {
+                        items: validItems as any,
+                        totalAmount: computedTotal,
+                        closingBalance: Number(log.closingBalance ?? 0) + totalDelta,
+                        note: dto.note !== undefined ? dto.note : log.note,
+                        ...(dto.billGenerated !== undefined
+                            ? { billGenerated: dto.billGenerated }
+                            : {}),
+                    },
+                    include: {
+                        house: { select: { id: true, houseNo: true, area: true } },
+                        supplier: { select: { uuid: true, username: true } },
+                    },
+                }),
+            ]);
+
+            return updatedLog;
         }
 
         // Update other fields
@@ -133,6 +150,9 @@ export class DeliveryLogsService {
             where: { id },
             data: {
                 ...(dto.note !== undefined ? { note: dto.note } : {}),
+                ...(dto.billGenerated !== undefined
+                    ? { billGenerated: dto.billGenerated }
+                    : {}),
             },
             include: {
                 house: { select: { id: true, houseNo: true, area: true } },
@@ -154,6 +174,18 @@ export class DeliveryLogsService {
             throw new ForbiddenException('You can only delete your own delivery logs');
         }
 
-        return this.prisma.deliveryLog.delete({ where: { id } });
+        const [deleted] = await this.prisma.$transaction([
+            this.prisma.deliveryLog.delete({ where: { id } }),
+            this.prisma.houseBalance.update({
+                where: { houseId: log.houseId },
+                data: {
+                    currentBalance: {
+                        decrement: Number(log.totalAmount ?? 0),
+                    },
+                },
+            }),
+        ]);
+
+        return deleted;
     }
 }

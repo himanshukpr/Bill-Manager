@@ -6,6 +6,18 @@ import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
+function shouldPreventOutsideDismissOnMobile(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+}
+
+type AlertDialogPointerOutsideEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof AlertDialogPrimitive.Content>["onPointerDownOutside"]>
+>[0]
+
+type AlertDialogInteractOutsideEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof AlertDialogPrimitive.Content>["onInteractOutside"]>
+>[0]
+
 function AlertDialog({
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
@@ -47,6 +59,8 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  onPointerDownOutside,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
@@ -57,6 +71,18 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         data-size={size}
+        onPointerDownOutside={(event: AlertDialogPointerOutsideEvent) => {
+          if (shouldPreventOutsideDismissOnMobile()) {
+            event.preventDefault()
+          }
+          onPointerDownOutside?.(event)
+        }}
+        onInteractOutside={(event: AlertDialogInteractOutsideEvent) => {
+          if (shouldPreventOutsideDismissOnMobile()) {
+            event.preventDefault()
+          }
+          onInteractOutside?.(event)
+        }}
         className={cn(
           "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-popover-foreground ring-1 ring-foreground/5 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-md data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className

@@ -1,9 +1,11 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Bell } from 'lucide-react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
+import { housesApi } from '@/lib/api'
+import { parseDailyAlerts, type AlertDays } from '@/lib/alerts'
 import {
   Sheet,
   SheetContent,
@@ -12,42 +14,21 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-
-export type AlertDays = {
-  Monday: boolean;
-  Tuesday: boolean;
-  Wednesday: boolean;
-  Thursday: boolean;
-  Friday: boolean;
-  Saturday: boolean;
-  Sunday: boolean;
-}
-
-export type HouseAlert = {
-  id: string; 
-  text: string;
-  schedule: AlertDays;
-}
-
-function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
-  if (!jsonStr) return [];
-  try {
-    const parsed = JSON.parse(jsonStr);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
-}
+import { useHouseConfigs } from '@/hooks/use-house-configs'
 
 export function AdminAlertsPanel() {
   const [open, setOpen] = useState(false)
   
   const houses = useLiveQuery(() => db.houses.toArray())
-  const rawConfigs = useLiveQuery(() => db.houseConfigs.toArray())
+  const { configs: rawConfigs } = useHouseConfigs()
 
   const [todayKey] = useMemo(() => {
     const daysString = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     return [daysString[new Date().getDay()] as keyof AlertDays]
+  }, [])
+
+  useEffect(() => {
+    void housesApi.list();
   }, [])
 
   const activeAlerts = useMemo(() => {
@@ -62,8 +43,8 @@ export function AdminAlertsPanel() {
       const house = houseMap.get(config.houseId)
       if (!house) continue
 
-      const allAlerts = parseAlerts(config.dailyAlerts)
-      const todaysAlerts = allAlerts.filter(a => a.schedule[todayKey])
+      const allAlerts = parseDailyAlerts(config.dailyAlerts)
+      const todaysAlerts = allAlerts.filter((a) => a.schedule?.[todayKey])
       
       for (const alert of todaysAlerts) {
          const displayText = alert.text.trim() || 'Left over house'
@@ -86,7 +67,10 @@ export function AdminAlertsPanel() {
           )}
         </Button>
       </SheetTrigger>
-      <SheetContent className="w-[400px] sm:w-[540px] max-w-full overflow-y-auto">
+      <SheetContent
+        className="max-w-full overflow-y-auto"
+        style={{ width: 'min(100vw, 540px)' }}
+      >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 text-xl pb-2 border-b">
             <Bell className="w-5 h-5 text-amber-500" /> Today's Alerts

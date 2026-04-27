@@ -32,21 +32,23 @@ export class GenerateBillDto {
   @IsInt()
   houseId: number;
 
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(12)
-  month: number;
+  @IsString()
+  date: string;
 
-  @Type(() => Number)
-  @IsInt()
-  @Min(2020)
-  year: number;
-
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => BillItemDto)
-  items: BillItemDto[];
+  items?: BillItemDto[];
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class GenerateAllBillsDto {
+  @IsString()
+  date: string;
 
   @IsOptional()
   @IsString()

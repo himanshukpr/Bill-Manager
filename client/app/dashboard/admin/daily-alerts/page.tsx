@@ -17,53 +17,15 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
+import { parseDailyAlerts, createAlertId, type AlertDays, type HouseAlert } from '@/lib/alerts'
 
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
-
-export type AlertDays = {
-  Monday: boolean;
-  Tuesday: boolean;
-  Wednesday: boolean;
-  Thursday: boolean;
-  Friday: boolean;
-  Saturday: boolean;
-  Sunday: boolean;
-}
-
-export type HouseAlert = {
-  id: string; 
-  text: string;
-  schedule: AlertDays;
-}
+import { useHouseConfigs } from '@/hooks/use-house-configs'
 
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
-  if (!jsonStr) return [];
-  const trimmed = jsonStr.trim();
-  if (!trimmed) return [];
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    // Backward compatibility for legacy plain-text alert values.
-    return [
-      {
-        id: 'legacy-alert',
-        text: trimmed,
-        schedule: {
-          Monday: true,
-          Tuesday: true,
-          Wednesday: true,
-          Thursday: true,
-          Friday: true,
-          Saturday: true,
-          Sunday: true,
-        },
-      },
-    ];
-  }
+  return parseDailyAlerts(jsonStr);
 }
 
 const DAYS_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
@@ -123,7 +85,7 @@ function ManageAlertsDialog({
 
   const addAlert = () => {
      setAlerts(prev => [...prev, { 
-       id: crypto.randomUUID(), 
+       id: createAlertId(), 
        text: '', 
        schedule: { Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true }
      }])
@@ -241,17 +203,15 @@ export default function AdminDailyAlertsPage() {
   const [addDialogAlerts, setAddDialogAlerts] = useState<HouseAlert[]>([])
   const [addDialogSaving, setAddDialogSaving] = useState(false)
 
-  // LIVE QUERIES
+  const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
   const houses = useLiveQuery(() => db.houses.toArray())
-  const rawConfigs = useLiveQuery(() => db.houseConfigs.toArray())
   const suppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
 
-  const loading = !houses || !rawConfigs
+  const loading = !houses || !suppliers || configsLoading
 
   const loadData = useCallback(async () => {
     try {
       housesApi.list()
-      houseConfigApi.list()
       usersApi.list('supplier')
     } catch {
       toast.error('Failed to trigger background sync')

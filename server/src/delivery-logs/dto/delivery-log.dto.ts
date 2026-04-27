@@ -1,5 +1,6 @@
 import {
     IsArray,
+    IsBoolean,
     IsIn,
     IsNumber,
     IsOptional,
@@ -43,15 +44,13 @@ export class CreateDeliveryLogDto {
     @Type(() => DeliveryItemDto)
     items: DeliveryItemDto[];
 
-    @Type(() => Number)
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    currentBalance?: number;
-
     @IsOptional()
     @IsString()
     note?: string;
+
+    @IsOptional()
+    @IsBoolean()
+    billGenerated?: boolean;
 }
 
 export class UpdateDeliveryLogDto {
@@ -61,13 +60,11 @@ export class UpdateDeliveryLogDto {
     @Type(() => DeliveryItemDto)
     items?: DeliveryItemDto[];
 
-    @Type(() => Number)
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    currentBalance?: number;
-
     @IsOptional()
     @IsString()
     note?: string;
+
+    @IsOptional()
+    @IsBoolean()
+    billGenerated?: boolean;
 }

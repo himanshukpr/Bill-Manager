@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPaymentDto } from './dto/payment.dto';
-import { UpdateHouseBalanceDto } from './dto/balance.dto';
 
 @Injectable()
 export class HouseBalanceService {
@@ -46,30 +45,6 @@ export class HouseBalanceService {
     ]);
 
     return { payment, balance: updatedBalance };
-  }
-
-  async updateBalance(houseId: number, dto: UpdateHouseBalanceDto) {
-    const house = await this.prisma.house.findUnique({ where: { id: houseId } });
-    if (!house) throw new NotFoundException(`House #${houseId} not found`);
-
-    return this.prisma.houseBalance.upsert({
-      where: { houseId },
-      create: {
-        houseId,
-        previousBalance: dto.previousBalance ?? 0,
-        currentBalance: dto.currentBalance ?? 0,
-      },
-      update: {
-        ...(dto.previousBalance !== undefined ? { previousBalance: dto.previousBalance } : {}),
-        ...(dto.currentBalance !== undefined ? { currentBalance: dto.currentBalance } : {}),
-      },
-      include: {
-        payments: {
-          orderBy: { createdAt: 'desc' },
-          take: 50,
-        },
-      },
-    });
   }
 
   async getPaymentHistory(houseId: number) {

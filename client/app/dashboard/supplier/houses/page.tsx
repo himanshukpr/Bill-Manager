@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, BadgeAlert, Building2, Clock3, MapPin, Phone, RefreshCcw, Route, GripVertical, Check, Calendar } from 'lucide-react'
+import { ArrowRight, BadgeAlert, Clock3, RefreshCcw, GripVertical, Check, Calendar } from 'lucide-react'
 import {
     DndContext,
     MouseSensor,
@@ -27,11 +27,22 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { houseConfigApi, housesApi, type House, type HouseConfig } from '@/lib/api'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { parseDailyAlerts } from '@/lib/alerts'
 import { toast } from 'sonner'
 
 const SHIFT_LABEL: Record<string, string> = {
     morning: 'Morning',
     evening: 'Evening',
+}
+
+function formatAlertPreview(rawValue: string | null | undefined): string {
+    const text = parseDailyAlerts(rawValue)
+        .map((alert) => alert.text.trim())
+        .filter(Boolean)
+        .join(', ')
+
+    if (!text) return ''
+    return text.length > 96 ? `${text.slice(0, 93)}...` : text
 }
 
 export default function SupplierHousesPage() {
@@ -42,7 +53,6 @@ export default function SupplierHousesPage() {
     const [allConfigs, setAllConfigs] = useState<HouseConfig[]>([])
     const [loading, setLoading] = useState(true)
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening'>('morning')
-    const [plannerShift, setPlannerShift] = useState<'morning' | 'evening'>('morning')
     const [morningPlan, setMorningPlan] = useState<HouseConfig[]>([])
     const [eveningPlan, setEveningPlan] = useState<HouseConfig[]>([])
     const [eveningBaselineOrder, setEveningBaselineOrder] = useState<number[]>([])
@@ -297,11 +307,11 @@ export default function SupplierHousesPage() {
                         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
                             {selectedShift === 'morning' ? 'Your Morning Routes' : 'Shared Evening Routes'}
                         </h1>
-                        <p className="max-w-xl text-sm text-muted-foreground">
+                        {/* <p className="max-w-xl text-sm text-muted-foreground">
                             {selectedShift === 'morning'
                                 ? 'Manage and arrange your personally assigned morning delivery houses.'
                                 : 'Collaboratively manage the global evening delivery sequence visible to all suppliers.'}
-                        </p>
+                        </p> */}
                     </div>
                     <div className="flex flex-wrap gap-3">
                         <Button
@@ -327,26 +337,23 @@ export default function SupplierHousesPage() {
                         value={loading ? '—' : String(stats.visibleCount)}
                         hint={selectedShift === 'morning' ? 'Houses assigned to me' : 'Shared delivery sequence'}
                     />
-                    <StatCard
+                    {/* <StatCard
                         label="Pending Balance"
                         value={loading ? '—' : `₹${stats.pendingAmount.toLocaleString('en-IN')}`}
                         hint="Total previous balance"
-                    />
+                    /> */}
                 </div>
             </section>
 
             <div className="rounded-2xl border border-border bg-card p-2 shadow-sm sm:p-6">
                 <div className="mb-6 sm:mb-8">
                     <h2 className="text-lg font-semibold mb-2">Drag Route Planner</h2>
-                    {/* <p className="text-sm text-muted-foreground mb-2 sm:mb-4">
-                        Dedicated sections: drag houses to rearrange order, then save each section.
-                    </p> */}
                     <div className="mb-4 inline-flex rounded-xl border border-border/70 bg-muted/30 p-1 sm:mb-5">
                         <Button
                             type="button"
                             size="sm"
-                            variant={plannerShift === 'morning' ? 'default' : 'ghost'}
-                            onClick={() => setPlannerShift('morning')}
+                            variant={selectedShift === 'morning' ? 'default' : 'ghost'}
+                            onClick={() => setSelectedShift('morning')}
                             className="rounded-lg px-4"
                         >
                             Morning
@@ -354,8 +361,8 @@ export default function SupplierHousesPage() {
                         <Button
                             type="button"
                             size="sm"
-                            variant={plannerShift === 'evening' ? 'default' : 'ghost'}
-                            onClick={() => setPlannerShift('evening')}
+                            variant={selectedShift === 'evening' ? 'default' : 'ghost'}
+                            onClick={() => setSelectedShift('evening')}
                             className="rounded-lg px-4"
                         >
                             Evening
@@ -363,7 +370,7 @@ export default function SupplierHousesPage() {
                     </div>
 
                     <div className="grid gap-3">
-                        {plannerShift === 'morning' ? (
+                        {selectedShift === 'morning' ? (
                             <div className="rounded-xl border border-border/70 bg-muted/20 p-2 sm:p-3">
                                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                     <p className="text-sm font-semibold">Morning Routes (Your Assigned)</p>
@@ -442,101 +449,6 @@ export default function SupplierHousesPage() {
                     </div>
                 </div>
             </div>
-
-            {loading ? (
-                renderSkeleton()
-            ) : houses.length === 0 ? (
-                selectedShift === 'morning' ? null : (
-                    <div className="rounded-2xl border border-border bg-card px-6 py-12 text-center shadow-sm">
-                        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-                            <Building2 className="h-7 w-7 text-muted-foreground" />
-                        </div>
-                        <h2 className="text-lg font-semibold">No evening routes yet</h2>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                            Ask the admin to create shared evening configs for the delivery route.
-                        </p>
-                        <Button
-                            variant="outline"
-                            className="mt-5 gap-2"
-                            onClick={() => setSelectedShift('morning')}
-                        >
-                            <Calendar className="h-4 w-4" /> Try Morning Shift
-                        </Button>
-                    </div>
-                )
-            ) : (
-                <div className="grid gap-3 lg:grid-cols-2">
-                    {houses.map((house) => {
-                        const configs = house.configs ?? []
-                        const morningConfigs = configs.filter((config) => config.shift === 'morning')
-                        const eveningConfigs = configs.filter((config) => config.shift === 'evening')
-                        const pending = Number(house.balance?.previousBalance ?? 0)
-                        const current = Number(house.balance?.currentBalance ?? 0)
-
-                        return (
-                            <article key={house.id} className="group rounded-2xl border border-border bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg">
-                                <div className="flex items-start justify-between gap-4">
-                                    <div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em]">
-                                                House {house.houseNo}
-                                            </Badge>
-                                            {house.area && (
-                                                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                                    <MapPin className="h-3.5 w-3.5" /> {house.area}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <p className="mt-2 text-sm text-muted-foreground">
-                                            <Phone className="mr-1 inline-block h-3.5 w-3.5" /> {house.phoneNo}
-                                            {house.alternativePhone ? <span className="ml-2">• Alt: {house.alternativePhone}</span> : null}
-                                        </p>
-                                    </div>
-                                    <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-700 dark:text-emerald-300">
-                                        <Route className="h-5 w-5" />
-                                    </div>
-                                </div>
-
-                                <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
-                                    <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
-                                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Balance</p>
-                                        <div className="mt-3 space-y-2 text-sm">
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-muted-foreground">Previous</span>
-                                                <span className="font-semibold text-amber-600 dark:text-amber-400">₹{pending.toLocaleString('en-IN')}</span>
-                                            </div>
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-muted-foreground">Current</span>
-                                                <span className="font-semibold text-primary">₹{current.toLocaleString('en-IN')}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
-                                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Rates</p>
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            {house.rate1Type ? <Badge variant="secondary">{house.rate1Type} ₹{house.rate1}</Badge> : null}
-                                            {house.rate2Type ? <Badge variant="secondary">{house.rate2Type} ₹{house.rate2}</Badge> : null}
-                                            {!house.rate1Type && !house.rate2Type ? <span className="text-sm text-muted-foreground">No rates configured</span> : null}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="mt-4 grid gap-2">
-                                    <ConfigBlock title="Morning configs" items={morningConfigs} emptyText="No morning allocation for this house." />
-                                    <ConfigBlock title="Evening configs" items={eveningConfigs} emptyText="No evening route configured for this house." />
-                                </div>
-
-                                {house.description ? (
-                                    <div className="mt-5 rounded-2xl border border-dashed border-border/80 bg-background/60 p-4 text-sm text-muted-foreground">
-                                        {house.description}
-                                    </div>
-                                ) : null}
-                            </article>
-                        )
-                    })}
-                </div>
-            )}
         </div>
     )
 }
@@ -654,11 +566,16 @@ function ConfigBlock({ title, items, emptyText }: { title: string; items: HouseC
                             <Badge variant="outline" className="rounded-full">{SHIFT_LABEL[config.shift]}</Badge>
                             {config.supplier?.username ? <span className="font-medium">{config.supplier.username}</span> : <span className="font-medium text-muted-foreground">Shared route</span>}
                             <span className="text-muted-foreground">Position {config.position + 1}</span>
-                            {config.dailyAlerts ? (
-                                <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-                                    <BadgeAlert className="h-3.5 w-3.5" /> {config.dailyAlerts}
-                                </span>
-                            ) : null}
+                            {(() => {
+                                const alertPreview = formatAlertPreview(config.dailyAlerts)
+                                if (!alertPreview) return null
+
+                                return (
+                                    <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                                        <BadgeAlert className="h-3.5 w-3.5" /> {alertPreview}
+                                    </span>
+                                )
+                            })()}
                         </div>
                     ))}
                 </div>

@@ -10,9 +10,8 @@ import {
   type SessionAuth,
   type AppRole,
 } from "@/lib/auth"
+import { fetchApi } from "@/lib/api-base"
 import { Button } from "@/components/ui/button"
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 export default function PendingVerificationPage() {
   const router = useRouter()
@@ -40,7 +39,7 @@ export default function PendingVerificationPage() {
     setCheckMsg("")
 
     try {
-      const res = await fetch(`${BASE_URL}/auth/me`, {
+      const res = await fetchApi('/auth/me', {
         headers: { Authorization: `Bearer ${session.token}` },
       })
 
