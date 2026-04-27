@@ -1,12 +1,12 @@
 import { getAuthHeader } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
+import { fetchApi } from './api-base';
 import {
   readHouseConfigSessionCache,
   writeHouseConfigSessionCache,
 } from './house-config-cache';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const DEFAULT_CACHE_FRESH_MS = 5_000;
 const GLOBAL_SYNC_INTERVAL_MS = 5_000;
 const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'theme', 'next-theme']);
@@ -15,7 +15,7 @@ const activeGetQueries = new Map<
   string,
   { path: string; onData?: (data: unknown) => Promise<void> | void }
 >();
-const lastOnDataPayloadByCacheKey = new Map<string, string>();
+const lastOnDataPayloadByCacheKey = new Map<string, WeakMap<object, string>>();
 let globalSyncStarted = false;
 let clientSessionInit: Promise<void> | null = null;
 
@@ -73,8 +73,17 @@ async function ensureClientSessionStoragePolicy(): Promise<void> {
       }
 
       try {
-        db.close();
-        await db.delete();
+        // Keep the Dexie connection open and clear data in-place to avoid
+        // transient DatabaseClosedError for active live queries.
+        await Promise.all([
+          db.houses.clear(),
+          db.houseConfigs.clear(),
+          db.deliveryLogs.clear(),
+          db.bills.clear(),
+          db.users.clear(),
+          db.syncQueue.clear(),
+          db.queryCache.clear(),
+        ]);
       } catch {
         // Ignore IndexedDB cleanup failures.
       }
@@ -150,10 +159,17 @@ async function applyOnDataIfChanged<T>(
     return;
   }
 
-  const previous = lastOnDataPayloadByCacheKey.get(cacheKey);
+  const handlerKey = onData as unknown as object;
+  let payloadByHandler = lastOnDataPayloadByCacheKey.get(cacheKey);
+  if (!payloadByHandler) {
+    payloadByHandler = new WeakMap<object, string>();
+    lastOnDataPayloadByCacheKey.set(cacheKey, payloadByHandler);
+  }
+
+  const previous = payloadByHandler.get(handlerKey);
   if (previous === serialized) return;
 
-  lastOnDataPayloadByCacheKey.set(cacheKey, serialized);
+  payloadByHandler.set(handlerKey, serialized);
   await onData(data);
 }
 
@@ -180,7 +196,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 async function requestGet<T>(path: string): Promise<T> {
   await ensureClientSessionStoragePolicy();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetchApi(path, {
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
   });
   return handleResponse<T>(res);
@@ -262,7 +278,7 @@ async function apiGet<T>(
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
   await ensureClientSessionStoragePolicy();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetchApi(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
     body: JSON.stringify(body),
@@ -272,7 +288,7 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
 
 async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   await ensureClientSessionStoragePolicy();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetchApi(path, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
     body: JSON.stringify(body),
@@ -282,7 +298,7 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 
 async function apiDelete<T>(path: string): Promise<T> {
   await ensureClientSessionStoragePolicy();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetchApi(path, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
   });
@@ -411,6 +427,7 @@ export type DeliveryLog = {
   houseId: number;
   supplierId: string;
   shift: 'morning' | 'evening';
+  billGenerated: boolean;
   items: DeliveryLogItem[];
   totalAmount: string;
   openingBalance: string;
@@ -788,6 +805,7 @@ export const deliveryLogsApi = {
     shift: 'morning' | 'evening';
     items: DeliveryLogItem[];
     note?: string;
+    billGenerated?: boolean;
   }) => {
     const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
     if (isBrowser()) {
@@ -801,6 +819,7 @@ export const deliveryLogsApi = {
     data: {
       items?: DeliveryLogItem[];
       note?: string;
+      billGenerated?: boolean;
     },
   ) => {
     if (isOnline()) {

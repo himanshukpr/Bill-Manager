@@ -17,54 +17,15 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
+import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
 
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
 
-export type AlertDays = {
-  Monday: boolean;
-  Tuesday: boolean;
-  Wednesday: boolean;
-  Thursday: boolean;
-  Friday: boolean;
-  Saturday: boolean;
-  Sunday: boolean;
-}
-
-export type HouseAlert = {
-  id: string; 
-  text: string;
-  schedule: AlertDays;
-}
-
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
-  if (!jsonStr) return [];
-  const trimmed = jsonStr.trim();
-  if (!trimmed) return [];
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    // Backward compatibility for legacy plain-text alert values.
-    return [
-      {
-        id: 'legacy-alert',
-        text: trimmed,
-        schedule: {
-          Monday: true,
-          Tuesday: true,
-          Wednesday: true,
-          Thursday: true,
-          Friday: true,
-          Saturday: true,
-          Sunday: true,
-        },
-      },
-    ];
-  }
+  return parseDailyAlerts(jsonStr);
 }
 
 const DAYS_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;

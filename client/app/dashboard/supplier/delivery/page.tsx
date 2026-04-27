@@ -33,6 +33,8 @@ import {
     type House,
     type HouseConfig,
 } from '@/lib/api'
+import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
+import { useHouseConfigs } from '@/hooks/use-house-configs'
 import {
     Select,
     SelectContent,
@@ -66,22 +68,6 @@ const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
 
 type MilkType = DeliveryItemForm['milkType']
 
-type AlertDays = {
-    Monday: boolean
-    Tuesday: boolean
-    Wednesday: boolean
-    Thursday: boolean
-    Friday: boolean
-    Saturday: boolean
-    Sunday: boolean
-}
-
-type HouseAlert = {
-    id: string
-    text: string
-    schedule: AlertDays
-}
-
 const DAYS_BY_INDEX: Array<keyof AlertDays> = [
     'Sunday',
     'Monday',
@@ -93,31 +79,7 @@ const DAYS_BY_INDEX: Array<keyof AlertDays> = [
 ]
 
 function parseHouseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
-    if (!jsonStr) return []
-    const trimmed = jsonStr.trim()
-    if (!trimmed) return []
-
-    try {
-        const parsed = JSON.parse(trimmed)
-        return Array.isArray(parsed) ? parsed : []
-    } catch {
-        // Backward compatibility for legacy plain-text alert values.
-        return [
-            {
-                id: 'legacy-alert',
-                text: trimmed,
-                schedule: {
-                    Monday: true,
-                    Tuesday: true,
-                    Wednesday: true,
-                    Thursday: true,
-                    Friday: true,
-                    Saturday: true,
-                    Sunday: true,
-                },
-            },
-        ]
-    }
+    return parseDailyAlerts(jsonStr)
 }
 
 function normalizeProductName(name?: string | null): string {
@@ -206,6 +168,7 @@ export default function DeliveryPage() {
     const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
 
     const [houses, setHouses] = useState<House[]>([])
+    const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
     const [globalRateMap, setGlobalRateMap] = useState<Record<MilkType, number>>({
         buffalo: 0,
         cow: 0,
@@ -245,6 +208,32 @@ export default function DeliveryPage() {
         [availableHeight],
     )
 
+    const visibleHouses = useMemo(() => {
+        if (houses.length === 0) return []
+
+        const configsMap = new Map<number, HouseConfig[]>()
+        const sourceConfigs = rawConfigs.length > 0 ? rawConfigs : houses.flatMap((house) => house.configs ?? [])
+
+        for (const config of sourceConfigs) {
+            const existing = configsMap.get(config.houseId) || []
+            existing.push(config)
+            configsMap.set(config.houseId, existing)
+        }
+
+        return houses
+            .map((house) => ({
+                ...house,
+                configs: (configsMap.get(house.id) || house.configs || [])
+                    .filter((config) => {
+                        if (config.shift !== selectedShift) return false
+                        if (selectedShift === 'morning') return config.supplierId === auth?.uuid
+                        return true
+                    })
+                    .sort((a, b) => a.position - b.position),
+            }))
+            .filter((house) => house.configs.length > 0)
+    }, [houses, rawConfigs, selectedShift, auth?.uuid])
+
     // AUTH
     useEffect(() => {
         const session = getSessionAuth()
@@ -281,36 +270,13 @@ export default function DeliveryPage() {
         try {
             setLoading(true)
 
-            const [data, configs, rates] = await Promise.all([
+            const [data, rates] = await Promise.all([
                 housesApi.list(),
-                houseConfigApi.list(),
                 productRatesApi.list(),
             ])
 
             setGlobalRateMap(resolveGlobalRateMap(rates))
-
-            const configsMap = new Map<number, HouseConfig[]>()
-
-            configs.forEach((c) => {
-                const arr = configsMap.get(c.houseId) || []
-                arr.push(c)
-                configsMap.set(c.houseId, arr)
-            })
-
-            const filtered = data
-                .map((house) => ({
-                    ...house,
-                    configs: (configsMap.get(house.id) || [])
-                        .filter((c) => {
-                            if (c.shift !== selectedShift) return false
-                            if (selectedShift === 'morning') return c.supplierId === auth.uuid
-                            return true
-                        })
-                        .sort((a, b) => a.position - b.position),
-                }))
-                .filter((h) => h.configs.length > 0)
-
-            setHouses(filtered)
+            setHouses(data)
             setCurrentIndex(0)
         } catch (err: any) {
             toast.error(err.message)
@@ -323,7 +289,13 @@ export default function DeliveryPage() {
         loadHouses()
     }, [loadHouses])
 
-    const currentHouse = houses[currentIndex]
+    const currentHouse = visibleHouses[currentIndex]
+
+    useEffect(() => {
+        if (currentIndex >= visibleHouses.length && visibleHouses.length > 0) {
+            setCurrentIndex(0)
+        }
+    }, [currentIndex, visibleHouses.length])
 
     useEffect(() => {
         if (!currentHouse) return
@@ -413,9 +385,9 @@ export default function DeliveryPage() {
 
     const searchedAllocatedHouses = useMemo(() => {
         const query = houseSearch.trim().toLowerCase()
-        if (!query) return houses
+        if (!query) return visibleHouses
 
-        return houses.filter((house) => {
+        return visibleHouses.filter((house) => {
             const configAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
             const todayKey = DAYS_BY_INDEX[new Date().getDay()]
             const alertText = configAlerts
@@ -434,7 +406,7 @@ export default function DeliveryPage() {
 
             return searchable.some((value) => value.toLowerCase().includes(query))
         })
-    }, [houses, houseSearch, allocatedHouseProducts])
+    }, [visibleHouses, houseSearch, allocatedHouseProducts])
 
     const loadTodayDeliveredSummary = useCallback(async () => {
         if (!auth || !selectedShift) return
@@ -599,9 +571,9 @@ export default function DeliveryPage() {
 
     // NAVIGATION HANDLERS
     const handleNext = () => {
-        if (currentIndex < houses.length - 1) {
+        if (currentIndex < visibleHouses.length - 1) {
             setSwipeOffset(0)
-            const nextHouse = houses[currentIndex + 1]
+            const nextHouse = visibleHouses[currentIndex + 1]
             setHouseChangeDirection('next')
             setHouseChangeMessage(nextHouse ? `House ${nextHouse.houseNo} loaded` : 'House changed')
             if (houseChangeTimerRef.current) {
@@ -619,7 +591,7 @@ export default function DeliveryPage() {
     const handlePrevious = () => {
         if (currentIndex > 0) {
             setSwipeOffset(0)
-            const prevHouse = houses[currentIndex - 1]
+            const prevHouse = visibleHouses[currentIndex - 1]
             setHouseChangeDirection('prev')
             setHouseChangeMessage(prevHouse ? `House ${prevHouse.houseNo} loaded` : 'House changed')
             if (houseChangeTimerRef.current) {
@@ -731,7 +703,7 @@ export default function DeliveryPage() {
         setSwipeOffset(direction === 'next' ? -128 : 128)
         setHouseChangeDirection(direction)
 
-        const targetHouse = direction === 'next' ? houses[currentIndex + 1] : houses[currentIndex - 1]
+        const targetHouse = direction === 'next' ? visibleHouses[currentIndex + 1] : visibleHouses[currentIndex - 1]
         setHouseChangeMessage(targetHouse ? `House ${targetHouse.houseNo} loaded` : 'House changed')
 
         if (swipeCommitTimerRef.current) {
@@ -739,7 +711,7 @@ export default function DeliveryPage() {
         }
 
         swipeCommitTimerRef.current = setTimeout(() => {
-            if (direction === 'next' && currentIndex < houses.length - 1) {
+            if (direction === 'next' && currentIndex < visibleHouses.length - 1) {
                 setCurrentIndex((index) => index + 1)
                 resetForm()
             }
@@ -1240,11 +1212,11 @@ export default function DeliveryPage() {
 
                 <div className="text-center">
                     <p className="text-xs font-semibold sm:text-sm">
-                        {currentIndex + 1} / {houses.length}
+                            {currentIndex + 1} / {visibleHouses.length}
                     </p>
                 </div>
 
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === houses.length - 1}>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === visibleHouses.length - 1}>
                     <ChevronRight />
                 </Button>
             </div>

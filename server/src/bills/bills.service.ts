@@ -159,6 +159,20 @@ export class BillsService {
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
       }),
+      this.prisma.deliveryLog.updateMany({
+        where: {
+          houseId: dto.houseId,
+          deliveredAt: {
+            gte: new Date(year, month - 1, 1, 0, 0, 0, 0),
+            lt: (() => {
+              const end = new Date(selectedDate);
+              end.setHours(23, 59, 59, 999);
+              return end;
+            })(),
+          },
+        },
+        data: { billGenerated: true },
+      }),
       // Add bill amount to previousBalance, reset currentBalance
       this.prisma.houseBalance.update({
         where: { houseId: dto.houseId },
@@ -259,8 +273,27 @@ export class BillsService {
   }
 
   async remove(id: number) {
-    await this.findOne(id);
-    return this.prisma.bill.delete({ where: { id } });
+    const bill = await this.findOne(id);
+
+    const periodStart = new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
+    const periodEnd = new Date(bill.generatedDate);
+    periodEnd.setHours(23, 59, 59, 999);
+
+    const [deleted] = await this.prisma.$transaction([
+      this.prisma.bill.delete({ where: { id } }),
+      this.prisma.deliveryLog.updateMany({
+        where: {
+          houseId: bill.houseId,
+          deliveredAt: {
+            gte: periodStart,
+            lt: periodEnd,
+          },
+        },
+        data: { billGenerated: false },
+      }),
+    ]);
+
+    return deleted;
   }
 
   async getMonthlyStats(year: number) {

@@ -120,6 +120,7 @@ model DeliveryLog {
   closingBalance Decimal  @map("closing_balance") @db.Decimal(10, 2)
   note           String?
   deliveredAt    DateTime @default(now()) @map("delivered_at")
+  billGenerated  Boolean  @default(false) @map("bill_generated")
   house          House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier       User     @relation(fields: [supplierId], references: [uuid], onDelete: Cascade)
 
