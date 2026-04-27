@@ -17,7 +17,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
+import { parseDailyAlerts, createAlertId, type AlertDays, type HouseAlert } from '@/lib/alerts'
 
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
@@ -62,7 +62,7 @@ function ManageAlertsDialog({ house, config }: { house: House, config: HouseConf
 
   const addAlert = () => {
      setAlerts(prev => [...prev, { 
-       id: crypto.randomUUID(), 
+       id: createAlertId(), 
        text: '', 
        schedule: { Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true }
      }])
