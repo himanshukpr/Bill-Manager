@@ -14,6 +14,35 @@ export type HouseAlert = {
   schedule: AlertDays;
 };
 
+let alertIdCounter = 0;
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function createAlertId(prefix = 'alert'): string {
+  const cryptoLike = globalThis.crypto;
+
+  if (cryptoLike && typeof cryptoLike.randomUUID === 'function') {
+    return cryptoLike.randomUUID();
+  }
+
+  if (cryptoLike && typeof cryptoLike.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoLike.getRandomValues(bytes);
+
+    // UUID v4 layout bits for broad compatibility with existing id format usage.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = bytesToHex(bytes);
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  alertIdCounter += 1;
+  return `${prefix}-${Date.now().toString(36)}-${alertIdCounter.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export const ALL_DAYS_ALERT_SCHEDULE: AlertDays = {
   Monday: true,
   Tuesday: true,
@@ -74,31 +103,57 @@ function normalizeSchedule(value: unknown): AlertDays {
   return foundAny ? schedule : defaultSchedule();
 }
 
-function normalizeAlertEntry(entry: unknown, index: number): HouseAlert | null {
+function tryParseNestedAlertEntries(text: string, seedIndex: number): HouseAlert[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (!trimmed.startsWith('[')) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.flatMap((item, itemIndex) => normalizeAlertEntries(item, seedIndex * 100 + itemIndex));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeAlertEntries(entry: unknown, index: number): HouseAlert[] {
   if (typeof entry === 'string') {
     const text = entry.trim();
-    if (!text) return null;
-    return {
-      id: `legacy-alert-${index}`,
-      text,
-      schedule: defaultSchedule(),
-    };
+    if (!text) return [];
+
+    const nested = tryParseNestedAlertEntries(text, index);
+    if (nested.length > 0) return nested;
+
+    return [
+      {
+        id: `legacy-alert-${index}`,
+        text,
+        schedule: defaultSchedule(),
+      },
+    ];
   }
 
-  if (!entry || typeof entry !== 'object') return null;
+  if (!entry || typeof entry !== 'object') return [];
 
   const raw = entry as Record<string, unknown>;
   const text = String(raw.text ?? raw.message ?? raw.note ?? '').trim();
-  if (!text) return null;
+  if (!text) return [];
+
+  const nested = tryParseNestedAlertEntries(text, index);
+  if (nested.length > 0) return nested;
 
   const schedule = normalizeSchedule(raw.schedule ?? raw.days);
-  const rawId = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `alert-${index}`;
+  const rawId = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : createAlertId(`alert-${index}`);
 
-  return {
-    id: rawId,
-    text,
-    schedule,
-  };
+  return [
+    {
+      id: rawId,
+      text,
+      schedule,
+    },
+  ];
 }
 
 export function parseDailyAlerts(rawValue: string | null | undefined): HouseAlert[] {
@@ -113,9 +168,7 @@ export function parseDailyAlerts(rawValue: string | null | undefined): HouseAler
       return [];
     }
 
-    return parsed
-      .map((entry, index) => normalizeAlertEntry(entry, index))
-      .filter((entry): entry is HouseAlert => entry !== null);
+    return parsed.flatMap((entry, index) => normalizeAlertEntries(entry, index));
   } catch {
     return [
       {

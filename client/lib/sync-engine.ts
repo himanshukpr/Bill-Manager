@@ -34,9 +34,8 @@ class SyncEngine {
 
     if (method === 'PATCH') {
       const existing = await db.syncQueue
-        .where('url')
-        .equals(url)
-        .filter((entry) => entry.method === 'PATCH')
+        .toCollection()
+        .filter((entry) => entry.url === url && entry.method === 'PATCH')
         .last();
 
       if (existing?.id) {
@@ -61,7 +60,13 @@ class SyncEngine {
         });
       }
     } else if (method === 'DELETE') {
-      await db.syncQueue.where('url').equals(url).delete();
+      const existingForUrl = await db.syncQueue
+        .toCollection()
+        .filter((entry) => entry.url === url)
+        .primaryKeys();
+      if (existingForUrl.length > 0) {
+        await db.syncQueue.bulkDelete(existingForUrl as number[]);
+      }
       await db.syncQueue.add({
         url,
         method,

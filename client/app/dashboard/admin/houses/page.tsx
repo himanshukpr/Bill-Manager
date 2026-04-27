@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   parseDailyAlerts,
+  createAlertId,
   ALL_DAYS_ALERT_SCHEDULE,
   type AlertDays,
   type HouseAlert,
@@ -42,13 +43,28 @@ function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
   return parseDailyAlerts(jsonStr)
 }
 
+function formatAlertPreview(rawValue: string | null | undefined): string {
+  const text = parseAlerts(rawValue)
+    .map((alert) => alert.text.trim())
+    .filter(Boolean)
+    .join(', ')
+
+  if (!text) return ''
+  return text.length > 96 ? `${text.slice(0, 93)}...` : text
+}
+
 function toAlertStorageValue(input: string): string | undefined {
   const text = input.trim()
   if (!text) return undefined
 
+  const parsed = parseAlerts(text)
+  if (parsed.length > 0) {
+    return serializeAlerts(parsed)
+  }
+
   return JSON.stringify([
     {
-      id: `auto-${Date.now()}`,
+      id: createAlertId('auto'),
       text,
       schedule: ALL_DAYS_ALERT_SCHEDULE,
     },
@@ -57,14 +73,13 @@ function toAlertStorageValue(input: string): string | undefined {
 
 function toAlertInputValue(rawValue: string | null | undefined): string {
   const parsed = parseAlerts(rawValue)
-  const firstText = parsed.find((alert) => alert.text?.trim())?.text
-  return firstText?.trim() ?? ''
+  return serializeAlerts(parsed) ?? ''
 }
 
 function serializeAlerts(alerts: HouseAlert[]): string | undefined {
   const normalized = alerts
     .map((alert) => ({
-      id: alert.id || crypto.randomUUID(),
+      id: alert.id || createAlertId(),
       text: alert.text.trim(),
       schedule: alert.schedule,
     }))
@@ -646,9 +661,12 @@ export default function HousesPage() {
                                 {config.shift === 'morning' ? (config.supplier?.username ?? 'Unassigned supplier') : 'Shared evening route'}
                               </span>
                               <span className="text-muted-foreground">Position {config.position + 1}</span>
-                              {config.dailyAlerts ? (
-                                <span className="text-xs text-amber-700 dark:text-amber-400">{config.dailyAlerts}</span>
-                              ) : null}
+                              {(() => {
+                                const alertPreview = formatAlertPreview(config.dailyAlerts)
+                                if (!alertPreview) return null
+
+                                return <span className="text-xs text-amber-700 dark:text-amber-400">{alertPreview}</span>
+                              })()}
                             </div>
                             <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
                               <Pencil className="h-3.5 w-3.5" /> Edit
@@ -812,7 +830,7 @@ function DailyAlertsDialog({
 
   const addAlert = () => {
     setAlerts(prev => [...prev, {
-      id: crypto.randomUUID(),
+      id: createAlertId(),
       text: '',
       schedule: ALL_DAYS_ALERT_SCHEDULE,
     }])

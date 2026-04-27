@@ -27,11 +27,22 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { houseConfigApi, housesApi, type House, type HouseConfig } from '@/lib/api'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { parseDailyAlerts } from '@/lib/alerts'
 import { toast } from 'sonner'
 
 const SHIFT_LABEL: Record<string, string> = {
     morning: 'Morning',
     evening: 'Evening',
+}
+
+function formatAlertPreview(rawValue: string | null | undefined): string {
+    const text = parseDailyAlerts(rawValue)
+        .map((alert) => alert.text.trim())
+        .filter(Boolean)
+        .join(', ')
+
+    if (!text) return ''
+    return text.length > 96 ? `${text.slice(0, 93)}...` : text
 }
 
 export default function SupplierHousesPage() {
@@ -555,11 +566,16 @@ function ConfigBlock({ title, items, emptyText }: { title: string; items: HouseC
                             <Badge variant="outline" className="rounded-full">{SHIFT_LABEL[config.shift]}</Badge>
                             {config.supplier?.username ? <span className="font-medium">{config.supplier.username}</span> : <span className="font-medium text-muted-foreground">Shared route</span>}
                             <span className="text-muted-foreground">Position {config.position + 1}</span>
-                            {config.dailyAlerts ? (
-                                <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-                                    <BadgeAlert className="h-3.5 w-3.5" /> {config.dailyAlerts}
-                                </span>
-                            ) : null}
+                            {(() => {
+                                const alertPreview = formatAlertPreview(config.dailyAlerts)
+                                if (!alertPreview) return null
+
+                                return (
+                                    <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                                        <BadgeAlert className="h-3.5 w-3.5" /> {alertPreview}
+                                    </span>
+                                )
+                            })()}
                         </div>
                     ))}
                 </div>
