@@ -203,6 +203,7 @@ export default function DeliveryPage() {
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
+    const [miniMapLocationWarning, setMiniMapLocationWarning] = useState<string | null>(null)
     const pageContainerRef = useRef<HTMLDivElement | null>(null)
     const [availableHeight, setAvailableHeight] = useState<number | null>(null)
 
@@ -304,14 +305,20 @@ export default function DeliveryPage() {
         if (!currentHouse) return
 
         let active = true
+        const rawLocation = currentHouse.location?.trim() ?? ''
         const storedLocation = parseHouseLocation(currentHouse.location)
         const query = `${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`.trim()
 
         if (storedLocation) {
             setMiniMapCenter(storedLocation)
+            setMiniMapLocationWarning(null)
             setMiniMapLoading(false)
             return
         }
+
+        setMiniMapLocationWarning(
+            rawLocation ? null : 'Location not set for this house yet.'
+        )
 
         const loadMiniMap = async () => {
             setMiniMapLoading(true)
@@ -1239,6 +1246,11 @@ export default function DeliveryPage() {
                     {miniMapLoading ? (
                         <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
                             Loading map...
+                        </div>
+                    ) : null}
+                    {miniMapLocationWarning ? (
+                        <div className="absolute left-2 right-2 top-2 rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
+                            {miniMapLocationWarning}
                         </div>
                     ) : null}
                     <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
