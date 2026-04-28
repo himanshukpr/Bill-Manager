@@ -10,7 +10,6 @@ import { apiRegister, dashboardPath } from "@/lib/auth"
 export function SignUpForm() {
   const router = useRouter()
   const [username, setUsername] = useState("")
-  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
@@ -22,12 +21,6 @@ export function SignUpForm() {
 
     if (!username.trim()) {
       setErrorMessage("Please enter a username.")
-      return
-    }
-
-    const trimmedEmail = email.trim()
-    if (!trimmedEmail || !trimmedEmail.includes("@")) {
-      setErrorMessage("Please enter a valid email.")
       return
     }
 
@@ -45,7 +38,7 @@ export function SignUpForm() {
     setIsSubmitting(true)
 
     try {
-      const session = await apiRegister(username.trim(), trimmedEmail, password)
+      const session = await apiRegister(username.trim(), password)
       router.replace(dashboardPath(session.role))
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Sign up failed. Please try again."
@@ -92,18 +85,6 @@ export function SignUpForm() {
             autoComplete="username"
             autoCapitalize="none"
             placeholder="johndoe"
-            className="h-11 w-full rounded-xl border border-border bg-background/80 px-3 text-base text-foreground outline-none transition-all duration-300 placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
-          />
-        </label>
-
-        <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Email</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
-            placeholder="name@example.com"
             className="h-11 w-full rounded-xl border border-border bg-background/80 px-3 text-base text-foreground outline-none transition-all duration-300 placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
           />
         </label>

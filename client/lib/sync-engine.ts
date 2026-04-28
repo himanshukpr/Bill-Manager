@@ -1,6 +1,7 @@
 import { db } from './db';
 import { getAuthHeader } from './auth';
 import { fetchApi } from './api-base';
+import { SYNC_DEBOUNCE_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
 
@@ -39,13 +40,12 @@ class SyncEngine {
       // Periodic fallback flush for queued writes.
       setInterval(() => {
         if (navigator.onLine) this.processQueue();
-      }, 5000);
+      }, GLOBAL_SYNC_INTERVAL_MS);
     }
   }
 
   async enqueue(url: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown) {
     const now = Date.now();
-
     if (method === 'PATCH') {
       const existing = await db.syncQueue
         .toCollection()
@@ -98,7 +98,6 @@ class SyncEngine {
         nextRetryAt: now,
       });
     }
-    
     if (typeof navigator !== 'undefined' && navigator.onLine) {
       this.scheduleProcessQueue();
     }
@@ -156,6 +155,7 @@ class SyncEngine {
           break;
         }
       }
+
     } finally {
       this.syncing = false;
     }
