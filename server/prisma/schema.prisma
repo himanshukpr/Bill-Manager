@@ -7,15 +7,16 @@ datasource db {
 }
 
 model User {
-  uuid         String        @id @default(uuid()) @db.Uuid
-  username     String        @unique
-  email        String        @unique
-  password     String
-  role         Role          @default(supplier)
-  createdAt    DateTime      @default(now()) @map("created_at")
-  isVerified   Boolean       @default(false)
-  deliveries   DeliveryLog[]
-  houseConfigs HouseConfig[]
+  uuid           String           @id @default(uuid()) @db.Uuid
+  username       String           @unique
+  email          String           @unique
+  password       String
+  role           Role             @default(supplier)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  isVerified     Boolean          @default(false)
+  deliveries     DeliveryLog[]
+  delivery_plans delivery_plans[]
+  houseConfigs   HouseConfig[]
 
   @@map("users")
 }
@@ -127,6 +128,20 @@ model DeliveryLog {
   @@index([houseId, deliveredAt])
   @@index([supplierId, deliveredAt])
   @@map("delivery_logs")
+}
+
+model delivery_plans {
+  id              Int      @id @default(autoincrement())
+  supplier_id     String   @db.Uuid
+  product_name    String
+  quantity_per_go Decimal  @db.Decimal(10, 2)
+  number_of_goes  Int
+  total_quantity  Decimal  @db.Decimal(10, 2)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @db.Timestamptz(6)
+  users           User     @relation(fields: [supplier_id], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([supplier_id, created_at])
 }
 
 enum Role {

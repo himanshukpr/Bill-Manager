@@ -1,6 +1,7 @@
 import {
     IsArray,
     IsBoolean,
+    IsIn,
     IsNumber,
     IsOptional,
     IsString,
