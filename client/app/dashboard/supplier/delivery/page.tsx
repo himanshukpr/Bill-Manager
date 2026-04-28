@@ -182,6 +182,8 @@ export default function DeliveryPage() {
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
     const [currentHouseLogs, setCurrentHouseLogs] = useState<DeliveryLog[]>([])
+    const [houseLogsCache, setHouseLogsCache] = useState<Record<number, DeliveryLog[]>>({})
+    const [loadedHouseLogIds, setLoadedHouseLogIds] = useState<Set<number>>(new Set())
     const [logsLoading, setLogsLoading] = useState(false)
 
     const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
@@ -193,6 +195,7 @@ export default function DeliveryPage() {
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
     const houseChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const swipeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const loadingHouseLogIdsRef = useRef<Set<number>>(new Set())
     const [houseChangeMessage, setHouseChangeMessage] = useState('')
     const [houseChangeDirection, setHouseChangeDirection] = useState<'next' | 'prev' | null>(null)
     const [swipeOffset, setSwipeOffset] = useState(0)
@@ -200,6 +203,7 @@ export default function DeliveryPage() {
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
+    const [miniMapLocationWarning, setMiniMapLocationWarning] = useState<string | null>(null)
     const pageContainerRef = useRef<HTMLDivElement | null>(null)
     const [availableHeight, setAvailableHeight] = useState<number | null>(null)
 
@@ -301,14 +305,20 @@ export default function DeliveryPage() {
         if (!currentHouse) return
 
         let active = true
+        const rawLocation = currentHouse.location?.trim() ?? ''
         const storedLocation = parseHouseLocation(currentHouse.location)
         const query = `${currentHouse.houseNo}${currentHouse.area ? `, ${currentHouse.area}` : ''}`.trim()
 
         if (storedLocation) {
             setMiniMapCenter(storedLocation)
+            setMiniMapLocationWarning(null)
             setMiniMapLoading(false)
             return
         }
+
+        setMiniMapLocationWarning(
+            rawLocation ? null : 'Location not set for this house yet.'
+        )
 
         const loadMiniMap = async () => {
             setMiniMapLoading(true)
@@ -478,15 +488,77 @@ export default function DeliveryPage() {
             setCompletedHouses(new Set())
             setAllocatedHouseProducts({})
             setCurrentHouseLogs([])
+            setHouseLogsCache({})
+            setLoadedHouseLogIds(new Set())
             void loadTodayDeliveredSummary()
         }, 60_000)
 
         return () => clearInterval(timer)
     }, [todayKey, loadTodayDeliveredSummary])
 
+    const buildDeliveryItemsFromLogs = useCallback((logs: DeliveryLog[]): DeliveryItemForm[] => {
+        if (logs.length === 0) return [{ ...emptyDeliveryItem }]
+
+        const grouped = new Map<MilkType, number>()
+
+        for (const log of logs) {
+            for (const item of log.items) {
+                const milkType = item.milkType as MilkType
+                grouped.set(milkType, (grouped.get(milkType) ?? 0) + Number(item.qty || 0))
+            }
+        }
+
+        const nextItems = Array.from(grouped.entries()).map(([milkType, qty]) => ({
+            milkType,
+            qty: String(qty),
+        }))
+
+        return nextItems.length > 0 ? nextItems : [{ ...emptyDeliveryItem }]
+    }, [])
+
+    const preloadHouseLogs = useCallback(async (houseId: number) => {
+        if (!selectedShift) return
+        if (loadedHouseLogIds.has(houseId)) return
+        if (loadingHouseLogIdsRef.current.has(houseId)) return
+
+        loadingHouseLogIdsRef.current.add(houseId)
+        try {
+            const logs = await deliveryLogsApi.list({
+                houseId,
+                shift: selectedShift,
+            })
+
+            const today = new Date()
+            const todayLogs = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+
+            setHouseLogsCache((prev) => ({
+                ...prev,
+                [houseId]: todayLogs,
+            }))
+            setLoadedHouseLogIds((prev) => new Set([...prev, houseId]))
+            setCompletedHouses((prev) => {
+                const next = new Set(prev)
+                if (todayLogs.length > 0) next.add(houseId)
+                else next.delete(houseId)
+                return next
+            })
+        } catch {
+            // Keep swipe smooth even if a neighbor preload fails.
+        } finally {
+            loadingHouseLogIdsRef.current.delete(houseId)
+        }
+    }, [selectedShift, loadedHouseLogIds])
+
     useEffect(() => {
         if (!currentHouse || !selectedShift) {
             setCurrentHouseLogs([])
+            return
+        }
+
+        const cachedLogs = houseLogsCache[currentHouse.id]
+        if (cachedLogs) {
+            setCurrentHouseLogs(cachedLogs)
+            setLogsLoading(false)
             return
         }
 
@@ -509,6 +581,11 @@ export default function DeliveryPage() {
                 if (!active) return
 
                 setCurrentHouseLogs(todayLogs)
+                setHouseLogsCache((prev) => ({
+                    ...prev,
+                    [currentHouse.id]: todayLogs,
+                }))
+                setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
                 if (todayLogs.length > 0) {
                     setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
                 } else {
@@ -530,30 +607,26 @@ export default function DeliveryPage() {
         return () => {
             active = false
         }
-    }, [currentHouse?.id, selectedShift, todayKey])
+    }, [currentHouse?.id, selectedShift, todayKey, houseLogsCache])
 
     useEffect(() => {
-        if (currentHouseLogs.length === 0) {
-            setDeliveryItems([{ ...emptyDeliveryItem }])
-            return
+        if (!selectedShift || visibleHouses.length === 0) return
+
+        const previous = currentIndex > 0 ? visibleHouses[currentIndex - 1] : null
+        const next = currentIndex < visibleHouses.length - 1 ? visibleHouses[currentIndex + 1] : null
+
+        if (previous) {
+            void preloadHouseLogs(previous.id)
         }
 
-        const grouped = new Map<MilkType, number>()
-
-        for (const log of currentHouseLogs) {
-            for (const item of log.items) {
-                const milkType = item.milkType as MilkType
-                grouped.set(milkType, (grouped.get(milkType) ?? 0) + Number(item.qty || 0))
-            }
+        if (next) {
+            void preloadHouseLogs(next.id)
         }
+    }, [selectedShift, currentIndex, visibleHouses, preloadHouseLogs])
 
-        const nextItems = Array.from(grouped.entries()).map(([milkType, qty]) => ({
-            milkType,
-            qty: String(qty),
-        }))
-
-        setDeliveryItems(nextItems.length > 0 ? nextItems : [{ ...emptyDeliveryItem }])
-    }, [currentHouseLogs])
+    useEffect(() => {
+        setDeliveryItems(buildDeliveryItemsFromLogs(currentHouseLogs))
+    }, [currentHouseLogs, buildDeliveryItemsFromLogs])
 
     const getEffectiveRate = (house: House | undefined, milkType: MilkType): { rate: number; source: 'house' | 'global' | 'none' } => {
         const houseRate = resolveHouseRate(house, milkType)
@@ -633,11 +706,6 @@ export default function DeliveryPage() {
         }
     }, [])
 
-    const handleNavTouchStart = (event: TouchEvent<HTMLDivElement>) => {
-        const touch = event.touches[0]
-        navSwipeStartRef.current = { x: touch.clientX, y: touch.clientY }
-    }
-
     const handleHouseTouchStart = (event: TouchEvent<HTMLDivElement>) => {
         const touch = event.touches[0]
         navSwipeStartRef.current = { x: touch.clientX, y: touch.clientY }
@@ -656,29 +724,10 @@ export default function DeliveryPage() {
 
         event.preventDefault()
 
-        const maxOffset = 96
+        const panelWidth = pageContainerRef.current?.clientWidth ?? window.innerWidth
+        const maxOffset = Math.max(160, Math.floor(panelWidth * 0.9))
         const nextOffset = Math.max(-maxOffset, Math.min(maxOffset, deltaX))
         setSwipeOffset(nextOffset)
-    }
-
-    const handleNavTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
-        const start = navSwipeStartRef.current
-        navSwipeStartRef.current = null
-        if (!start) return
-
-        const touch = event.changedTouches[0]
-        const deltaX = touch.clientX - start.x
-        const deltaY = touch.clientY - start.y
-
-        if (Math.abs(deltaX) < 40) return
-        if (Math.abs(deltaX) < Math.abs(deltaY)) return
-
-        if (deltaX < 0) {
-            handleNext()
-            return
-        }
-
-        handlePrevious()
     }
 
     const handleHouseTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
@@ -693,14 +742,16 @@ export default function DeliveryPage() {
         const touch = event.changedTouches[0]
         const deltaX = touch.clientX - start.x
         const deltaY = touch.clientY - start.y
+        const panelWidth = pageContainerRef.current?.clientWidth ?? window.innerWidth
+        const commitThreshold = Math.max(72, Math.floor(panelWidth * 0.26))
 
-        if (Math.abs(deltaX) < 40 || Math.abs(deltaX) < Math.abs(deltaY)) {
+        if (Math.abs(deltaX) < commitThreshold || Math.abs(deltaX) < Math.abs(deltaY)) {
             setSwipeOffset(0)
             return
         }
 
         const direction = deltaX < 0 ? 'next' : 'prev'
-        setSwipeOffset(direction === 'next' ? -128 : 128)
+        setSwipeOffset(direction === 'next' ? -panelWidth : panelWidth)
         setHouseChangeDirection(direction)
 
         const targetHouse = direction === 'next' ? visibleHouses[currentIndex + 1] : visibleHouses[currentIndex - 1]
@@ -723,7 +774,7 @@ export default function DeliveryPage() {
 
             setSwipeOffset(0)
             setHouseChangeDirection(null)
-        }, 140)
+        }, 180)
     }
 
     const resetForm = () => {
@@ -825,6 +876,11 @@ export default function DeliveryPage() {
                 }
 
                 setCurrentHouseLogs([updated as DeliveryLog])
+                setHouseLogsCache((prev) => ({
+                    ...prev,
+                    [currentHouse.id]: [updated as DeliveryLog],
+                }))
+                setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
             } else {
                 await deliveryLogsApi.create({
                     houseId: currentHouse.id,
@@ -841,6 +897,11 @@ export default function DeliveryPage() {
                 setCurrentHouseLogs(
                     refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
                 )
+                setHouseLogsCache((prev) => ({
+                    ...prev,
+                    [currentHouse.id]: refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today)),
+                }))
+                setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
             }
 
             await loadTodayDeliveredSummary()
@@ -989,6 +1050,34 @@ export default function DeliveryPage() {
             : 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms cubic-bezier(0.22, 1, 0.36, 1)',
         willChange: 'transform, opacity',
     } as const
+    const previousHouse = currentIndex > 0 ? visibleHouses[currentIndex - 1] : null
+    const nextHouse = currentIndex < visibleHouses.length - 1 ? visibleHouses[currentIndex + 1] : null
+    const swipePreviewDirection = swipeOffset < 0 ? 'next' : swipeOffset > 0 ? 'prev' : null
+    const swipePanelWidth = pageContainerRef.current?.clientWidth ?? 360
+    const swipePreviewHouse =
+        swipePreviewDirection === 'next'
+            ? nextHouse
+            : swipePreviewDirection === 'prev'
+                ? previousHouse
+                : null
+    const swipePreviewLogs = swipePreviewHouse ? (houseLogsCache[swipePreviewHouse.id] ?? []) : []
+    const swipePreviewItems = swipePreviewHouse ? buildDeliveryItemsFromLogs(swipePreviewLogs) : []
+    const isSwipePreviewLogsLoaded = swipePreviewHouse ? loadedHouseLogIds.has(swipePreviewHouse.id) : false
+    const swipePreviewTotal = swipePreviewHouse
+        ? swipePreviewItems.reduce((sum, item) => {
+            const qty = Number(item.qty)
+            if (!qty || qty <= 0) return sum
+            return sum + qty * getEffectiveRate(swipePreviewHouse, item.milkType).rate
+        }, 0)
+        : 0
+    const swipePreviewStyle = swipePreviewDirection
+        ? {
+            transform: `translate3d(calc(${swipePreviewDirection === 'next' ? '100%' : '-100%'} + ${swipeOffset}px), 0, 0)`,
+            opacity: Math.min(1, Math.abs(swipeOffset) / Math.max(120, swipePanelWidth * 0.35)),
+            transition: isSwiping ? 'none' : 'transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease-out',
+            willChange: 'transform, opacity',
+        }
+        : undefined
 
     return (
         <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
@@ -1014,23 +1103,129 @@ export default function DeliveryPage() {
             </div> */}
 
             <div
-                key={currentHouse.id}
                 className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${houseMotionClass}`}
-                style={houseSwipeStyle}
-                onTouchStart={handleHouseTouchStart}
-                onTouchMove={handleHouseTouchMove}
-                onTouchEnd={handleHouseTouchEnd}
-                onTouchCancel={() => {
-                    navSwipeStartRef.current = null
-                    setSwipeOffset(0)
-                    setIsSwiping(false)
-                }}
             >
             {houseChangeMessage ? (
                 <div className="pointer-events-none absolute right-2 top-2 z-20 rounded-full bg-primary/90 px-3 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg shadow-primary/20">
                     {houseChangeMessage}
                 </div>
             ) : null}
+            {swipePreviewHouse ? (
+                <div className="pointer-events-none absolute inset-0 z-0" style={swipePreviewStyle}>
+                    <div className="flex h-full min-h-0 flex-col">
+                        <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
+                            <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2">
+                                <div className="absolute inset-0 bg-emerald-900/10" />
+                                <div className="absolute inset-x-0 bottom-2 flex items-center justify-between px-2">
+                                    <span className="rounded-md bg-background/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                        {swipePreviewDirection === 'next' ? 'Next House' : 'Previous House'}
+                                    </span>
+                                    <Maximize2 className="h-3.5 w-3.5 text-foreground/80" />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
+                                <div className="space-y-1.5 sm:col-span-2">
+                                    <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                                        <div>
+                                            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                            <h2 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{swipePreviewHouse.houseNo}</h2>
+                                        </div>
+                                        <div>
+                                            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
+                                            {completedHouses.has(swipePreviewHouse.id) ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
+                                        <MapPin className="h-4 w-4" />
+                                        <span>{swipePreviewHouse.area || 'Area not set'}</span>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
+                                        <Phone className="h-4 w-4" />
+                                        <span>{swipePreviewHouse.phoneNo || 'Phone not set'}</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
+                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                        <span className="sm:hidden">Buf ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
+                                        <span className="hidden sm:inline">Buffalo ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
+                                    </Badge>
+                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                        <span className="sm:hidden">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
+                                        <span className="hidden sm:inline">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
+                                    </Badge>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-card rounded-t-none overflow-y-auto">
+                            <div className="border-t border-border/40 p-3 space-y-3">
+                                <div className="overflow-x-auto rounded-xl border border-border/70">
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead className="w-22.5 sm:w-30">Product</TableHead>
+                                                <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
+                                                <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
+                                                <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {!isSwipePreviewLogsLoaded ? (
+                                                <TableRow>
+                                                    <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
+                                                        Loading products...
+                                                    </TableCell>
+                                                </TableRow>
+                                            ) : swipePreviewItems.filter((item) => Number(item.qty) > 0).length === 0 ? (
+                                                <TableRow>
+                                                    <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
+                                                        No products delivered yet for today
+                                                    </TableCell>
+                                                </TableRow>
+                                            ) : (
+                                                swipePreviewItems
+                                                    .filter((item) => Number(item.qty) > 0)
+                                                    .map((item, idx) => {
+                                                        const qty = Number(item.qty)
+                                                        const rate = getEffectiveRate(swipePreviewHouse, item.milkType).rate
+                                                        const amount = qty * rate
+
+                                                        return (
+                                                            <TableRow key={`${item.milkType}-${idx}`}>
+                                                                <TableCell className="font-medium capitalize">{item.milkType}</TableCell>
+                                                                <TableCell>{qty}</TableCell>
+                                                                <TableCell>₹{rate}/L</TableCell>
+                                                                <TableCell className="hidden sm:table-cell">₹{amount.toLocaleString('en-IN')}</TableCell>
+                                                            </TableRow>
+                                                        )
+                                                    })
+                                            )}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <Button size="sm" className="text-xs" disabled>
+                                        <Plus className="mr-1 h-3 w-3" /> Add Item
+                                    </Button>
+                                    <div className="text-sm font-bold">Total: ₹{swipePreviewTotal.toLocaleString('en-IN')}</div>
+                                </div>
+                            </div>
+
+                            <div className="shrink-0 sticky bottom-0 z-10 bg-card">
+                                <Button disabled className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+                                    {completedHouses.has(swipePreviewHouse.id) ? 'Update Delivery' : 'Mark Delivered'}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+            <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
             {/* HOUSE CARD */}
             <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
                 <button
@@ -1051,6 +1246,11 @@ export default function DeliveryPage() {
                     {miniMapLoading ? (
                         <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
                             Loading map...
+                        </div>
+                    ) : null}
+                    {miniMapLocationWarning ? (
+                        <div className="absolute left-2 right-2 top-2 rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
+                            {miniMapLocationWarning}
                         </div>
                     ) : null}
                     <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
@@ -1203,10 +1403,13 @@ export default function DeliveryPage() {
 
             <div
                 className="flex shrink-0 items-center justify-between px-0.5 py-0.5"
-                onTouchStart={handleNavTouchStart}
-                onTouchEnd={handleNavTouchEnd}
+                onTouchStart={handleHouseTouchStart}
+                onTouchMove={handleHouseTouchMove}
+                onTouchEnd={handleHouseTouchEnd}
                 onTouchCancel={() => {
                     navSwipeStartRef.current = null
+                    setSwipeOffset(0)
+                    setIsSwiping(false)
                 }}
             >
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handlePrevious} disabled={currentIndex === 0}>
@@ -1222,6 +1425,7 @@ export default function DeliveryPage() {
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === visibleHouses.length - 1}>
                     <ChevronRight />
                 </Button>
+            </div>
             </div>
 
             </div>
