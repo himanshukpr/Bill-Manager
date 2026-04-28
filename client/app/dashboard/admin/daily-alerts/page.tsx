@@ -328,22 +328,25 @@ export default function AdminDailyAlertsPage() {
   }
 
   const handleAddDialogAddAlert = () => {
-    setAddDialogAlerts((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        text: '',
-        schedule: {
-          Monday: true,
-          Tuesday: true,
-          Wednesday: true,
-          Thursday: true,
-          Friday: true,
-          Saturday: true,
-          Sunday: true,
+    setAddDialogAlerts((prev) => {
+      if (prev.length >= 1) return prev
+
+      return [
+        {
+          id: crypto.randomUUID(),
+          text: '',
+          schedule: {
+            Monday: true,
+            Tuesday: true,
+            Wednesday: true,
+            Thursday: true,
+            Friday: true,
+            Saturday: true,
+            Sunday: true,
+          },
         },
-      },
-    ])
+      ]
+    })
   }
 
   const handleAddDialogUpdateText = (index: number, text: string) => {
@@ -375,9 +378,15 @@ export default function AdminDailyAlertsPage() {
   const handleSaveSelectedHouseAlerts = async () => {
     if (!selectedAddHouse) return
 
+    const nextAlerts = addDialogAlerts.slice(0, 1).filter((alert) => alert.text.trim().length > 0)
+    if (nextAlerts.length === 0) {
+      toast.error('Add one alert before saving')
+      return
+    }
+
     setAddDialogSaving(true)
     try {
-      const payload = JSON.stringify(addDialogAlerts)
+      const payload = JSON.stringify(nextAlerts)
       if (selectedAddHouseConfig?.id) {
         await houseConfigApi.update(selectedAddHouseConfig.id, { dailyAlerts: payload })
       } else {
@@ -491,8 +500,8 @@ export default function AdminDailyAlertsPage() {
                       {addDialogAlerts.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-10 text-muted-foreground border rounded-xl border-dashed">
                           <CalendarDays className="mb-3 h-10 w-10 opacity-30" />
-                          <p className="font-medium">No alerts configured</p>
-                          <p className="text-xs mt-1">Create an alert schedule to notify suppliers.</p>
+                          <p className="font-medium">No alert configured</p>
+                          <p className="text-xs mt-1">Create one alert schedule to notify suppliers.</p>
                         </div>
                       ) : (
                         <div className="space-y-4">
@@ -536,8 +545,13 @@ export default function AdminDailyAlertsPage() {
                         </div>
                       )}
 
-                      <Button onClick={handleAddDialogAddAlert} variant="secondary" className="w-full mt-4 gap-2 border border-dashed border-border">
-                        <Plus className="w-4 h-4" /> Create New Alert
+                      <Button
+                        onClick={handleAddDialogAddAlert}
+                        variant="secondary"
+                        className="w-full mt-4 gap-2 border border-dashed border-border"
+                        disabled={addDialogAlerts.length >= 1}
+                      >
+                        <Plus className="w-4 h-4" /> {addDialogAlerts.length >= 1 ? 'Only one alert allowed per house' : 'Create Alert'}
                       </Button>
                     </div>
 

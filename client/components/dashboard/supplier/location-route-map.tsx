@@ -350,7 +350,9 @@ export function LocationRouteMap({
             </Button>
           </div>
         </div>
-       
+        {status ? (
+          <p className="mt-2 text-xs text-muted-foreground">{status}</p>
+        ) : null}
       </div>
 
       <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card">

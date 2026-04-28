@@ -15,3 +15,9 @@ export class RecordPaymentDto {
   @IsString()
   note?: string;
 }
+
+export class UpdatePreviousBalanceDto {
+  @Type(() => Number)
+  @IsNumber()
+  previousBalance: number;
+}

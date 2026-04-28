@@ -651,6 +651,49 @@ export const balanceApi = {
   get: (houseId: number) => apiGet<HouseBalance>(`/house-balance/${houseId}`),
   payments: (houseId: number) => apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`),
   allPayments: () => apiGet<PaymentHistory[]>('/house-balance/payments'),
+  updatePrevious: async (houseId: number, previousBalance: number) => {
+    const payload = { previousBalance };
+
+    if (isOnline()) {
+      if (isBrowser()) {
+        const existingHouse = await db.houses.get(houseId);
+        if (existingHouse) {
+          await db.houses.put({
+            ...existingHouse,
+            balance: {
+              ...(existingHouse.balance ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+              houseId,
+              previousBalance: String(previousBalance),
+            },
+          });
+        }
+        await invalidateCache('/house-balance');
+        await invalidateCache('/houses');
+      }
+
+      return apiPatch<HouseBalance>(`/house-balance/${houseId}`, payload);
+    }
+
+    if (isBrowser()) {
+      const existingHouse = await db.houses.get(houseId);
+      if (existingHouse) {
+        await db.houses.put({
+          ...existingHouse,
+          balance: {
+            ...(existingHouse.balance ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId,
+            previousBalance: String(previousBalance),
+          },
+        });
+      }
+
+      await invalidateCache('/house-balance');
+      await invalidateCache('/houses');
+      await syncEngine.enqueue(`/house-balance/${houseId}`, 'PATCH', payload);
+    }
+
+    return { queued: true };
+  },
   record: async (data: { houseId: number; amount: number; note?: string }) => {
     if (isOnline()) {
       if (isBrowser()) {

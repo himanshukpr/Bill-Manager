@@ -2,13 +2,14 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
 import { HouseBalanceService } from './house-balance.service';
-import { RecordPaymentDto } from './dto/payment.dto';
+import { RecordPaymentDto, UpdatePreviousBalanceDto } from './dto/payment.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -34,5 +35,13 @@ export class HouseBalanceController {
   @Post('payment')
   recordPayment(@Body() dto: RecordPaymentDto) {
     return this.service.recordPayment(dto);
+  }
+
+  @Patch(':houseId')
+  updatePreviousBalance(
+    @Param('houseId', ParseIntPipe) houseId: number,
+    @Body() dto: UpdatePreviousBalanceDto,
+  ) {
+    return this.service.updatePreviousBalance(houseId, dto.previousBalance);
   }
 }
