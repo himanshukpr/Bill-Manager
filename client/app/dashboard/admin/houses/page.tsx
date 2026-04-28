@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   Plus, Search, Phone, MapPin, Building2, Bell, CalendarDays,
-  Pencil, Trash2, Eye, Settings2, Save
+  Pencil, Trash2, Eye, Settings2, Save, Rows3
 } from 'lucide-react'
-import { balanceApi, houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import { balanceApi, deliveryLogsApi, houseConfigApi, housesApi, usersApi, type DeliveryLog, type House, type HouseConfig, type User } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -19,6 +21,7 @@ import {
   SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -38,6 +41,108 @@ const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
+
+type SummaryCell = {
+  qty: number
+  amount: number
+}
+
+type HouseDeliverySummaryRow = {
+  dateKey: string
+  dayLabel: string
+  productsLabel: string
+  hasDelivery: boolean
+}
+
+function createSummaryCell(): SummaryCell {
+  return { qty: 0, amount: 0 }
+}
+
+function getLocalDateKey(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getLogPeriod(logs: DeliveryLog[]): { year: number; month: number } {
+  const latest = logs
+    .map((log) => new Date(log.deliveredAt))
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((left, right) => right.getTime() - left.getTime())[0]
+
+  if (!latest) {
+    const now = new Date()
+    return { year: now.getFullYear(), month: now.getMonth() }
+  }
+
+  return {
+    year: latest.getFullYear(),
+    month: latest.getMonth(),
+  }
+}
+
+function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: number): HouseDeliverySummaryRow[] {
+  const byDate = new Map<string, HouseDeliverySummaryRow>()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+  for (const log of logs) {
+    const deliveredAt = new Date(log.deliveredAt)
+    if (deliveredAt.getFullYear() !== year || deliveredAt.getMonth() !== month) continue
+
+    const dateKey = getLocalDateKey(deliveredAt)
+    const existing = byDate.get(dateKey) ?? {
+      dateKey,
+      dayLabel: deliveredAt.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }),
+      productsLabel: '',
+      hasDelivery: false,
+    }
+
+    existing.hasDelivery = true
+
+    const productParts = (log.items ?? []).map((item) => {
+      const qty = Number(item.qty ?? 0)
+      if (!qty) return null
+
+      const milkType = item.milkType === 'cow' ? 'cow' : 'buffalo'
+      return `${milkType} ${qty.toLocaleString('en-IN')}L`
+    }).filter((part): part is string => Boolean(part))
+
+    const productText = productParts.join(', ')
+
+    existing.productsLabel = existing.productsLabel
+      ? `${existing.productsLabel}, ${productText}`
+      : productText || '-'
+
+    byDate.set(dateKey, existing)
+  }
+
+  const rows: HouseDeliverySummaryRow[] = []
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month, day)
+    const dateKey = getLocalDateKey(date)
+    const row = byDate.get(dateKey)
+
+    rows.push(
+      row ?? {
+        dateKey,
+        dayLabel: date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
+        productsLabel: '-',
+        hasDelivery: false,
+      },
+    )
+  }
+
+  return rows
+}
 
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
   return parseDailyAlerts(jsonStr)
@@ -135,6 +240,68 @@ export default function HousesPage() {
   const [configSaving, setConfigSaving] = useState(false)
   const [configEditingId, setConfigEditingId] = useState<number | null>(null)
   const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
+  const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
+    const now = new Date()
+    return { year: now.getFullYear(), month: now.getMonth() }
+  })
+
+  const summaryRows = useMemo(() => {
+    if (!summaryHouse) return []
+    return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const handleExportSummaryPdf = useCallback(() => {
+    if (!summaryHouse) return
+
+    if (summaryRows.length === 0) {
+      toast.error('No summary data available to export')
+      return
+    }
+
+    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+    const title = `House ${summaryHouse.houseNo} Delivery Summary`
+    const periodLabel = `${MONTH_NAMES[summaryPeriod.month + 1]} ${summaryPeriod.year}`
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(16)
+    doc.text(title, 14, 16)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`Period: ${periodLabel}`, 14, 23)
+    if (summaryHouse.area) {
+      doc.text(`Area: ${summaryHouse.area}`, 14, 29)
+    }
+
+    autoTable(doc, {
+      startY: summaryHouse.area ? 34 : 30,
+      head: [['Date', 'Products']],
+      body: summaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
+      styles: {
+        font: 'helvetica',
+        fontSize: 9,
+        cellPadding: 3,
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [17, 24, 39],
+        textColor: 255,
+      },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { cellWidth: 'auto' },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      margin: { top: 30, left: 14, right: 14 },
+    })
+
+    doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
+  }, [summaryHouse, summaryPeriod, summaryRows])
 
   const load = useCallback(async () => {
     try {
@@ -260,6 +427,23 @@ export default function HousesPage() {
       load()
     } catch (e: any) {
       toast.error(e.message)
+    }
+  }
+
+  async function openSummary(house: House) {
+    setSummaryHouse(house)
+    setSummaryLogs([])
+    setSummaryOpen(true)
+    setSummaryLoading(true)
+
+    try {
+      const logs = await deliveryLogsApi.list({ houseId: house.id })
+      setSummaryLogs(logs)
+      setSummaryPeriod(getLogPeriod(logs))
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setSummaryLoading(false)
     }
   }
 
@@ -434,6 +618,9 @@ export default function HousesPage() {
                       <div className="flex items-center justify-end gap-1">
                         <Button variant="ghost" size="icon" onClick={() => openView(h)} title="View">
                           <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => openSummary(h)} title="Summary">
+                          <Rows3 className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
                           <Pencil className="h-4 w-4" />
@@ -780,6 +967,76 @@ export default function HousesPage() {
                   <Pencil className="h-4 w-4 mr-2" /> Edit
                 </Button>
                 <Button onClick={() => setViewHouse(null)}>Close</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={summaryOpen} onOpenChange={(open) => {
+        setSummaryOpen(open)
+        if (!open) {
+          setSummaryHouse(null)
+          setSummaryLogs([])
+        }
+      }}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          {summaryHouse && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Rows3 className="h-5 w-5 text-primary" />
+                  House {summaryHouse.houseNo} Delivery Summary
+                </DialogTitle>
+                <DialogDescription>
+                  Daily delivery summary for {MONTH_NAMES[summaryPeriod.month + 1]} {summaryPeriod.year}.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  {summaryLoading ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                    </div>
+                  ) : summaryRows.length === 0 ? (
+                    <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                      <Rows3 className="h-10 w-10 opacity-30" />
+                      <p className="font-medium">No delivery summary available</p>
+                      <p className="text-sm">This house has no delivery logs for the selected month.</p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-35">Date</TableHead>
+                          <TableHead>Products</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {summaryRows.map((row) => {
+                          return (
+                            <TableRow key={row.dateKey}>
+                              <TableCell className="font-medium text-foreground">{row.dayLabel}</TableCell>
+                              <TableCell className="whitespace-normal text-foreground">
+                                {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || summaryRows.length === 0}>
+                  Export PDF
+                </Button>
+                <Button onClick={() => setSummaryOpen(false)}>Close</Button>
               </DialogFooter>
             </>
           )}

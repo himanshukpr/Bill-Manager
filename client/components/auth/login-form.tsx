@@ -9,7 +9,7 @@ import { apiLogin, dashboardPath, getSessionAuth } from "@/lib/auth"
 
 export function LoginForm() {
   const router = useRouter()
-  const [emailOrUsername, setEmailOrUsername] = useState("")
+  const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -26,9 +26,9 @@ export function LoginForm() {
     event.preventDefault()
     if (isSubmitting) return
 
-    const trimmed = emailOrUsername.trim()
+    const trimmed = username.trim()
     if (!trimmed) {
-      setErrorMessage("Please enter your email or username.")
+      setErrorMessage("Please enter your username.")
       return
     }
     if (!password.trim()) {
@@ -78,15 +78,15 @@ export function LoginForm() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Email or Username</span>
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Username</span>
           <input
             type="text"
-            value={emailOrUsername}
-            onChange={(event) => setEmailOrUsername(event.target.value)}
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
             autoComplete="username"
             autoCapitalize="none"
             autoCorrect="off"
-            placeholder="name@example.com or username"
+            placeholder="Enter your username"
             className="h-12 w-full rounded-xl border border-border bg-background/80 px-3 text-base text-foreground outline-none transition-all duration-300 placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
           />
         </label>
