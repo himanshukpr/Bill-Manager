@@ -5,10 +5,10 @@ import { fetchApi } from './api-base';
 import {
   readHouseConfigSessionCache,
   writeHouseConfigSessionCache,
+  clearHouseConfigSessionCache,
 } from './house-config-cache';
+import { DEFAULT_CACHE_FRESH_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
-const DEFAULT_CACHE_FRESH_MS = 5_000;
-const GLOBAL_SYNC_INTERVAL_MS = 5_000;
 const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'theme', 'next-theme']);
 const revalidationLocks = new Map<string, Promise<void>>();
 const activeGetQueries = new Map<
@@ -180,6 +180,37 @@ async function invalidateCache(path: string): Promise<void> {
   const prefixes = CACHE_INVALIDATION[resource] ?? [`/${resource}`];
   await Promise.all(
     prefixes.map((prefix) => db.queryCache.where('key').startsWith(`GET:${prefix}`).delete()),
+  );
+}
+
+async function updateCachedQueries<T>(
+  matches: (cacheKey: string) => boolean,
+  update: (data: T) => T | null,
+): Promise<void> {
+  if (!isBrowser()) return;
+
+  const entries = await db.queryCache.toArray();
+  const targets = entries.filter((entry) => entry.key.startsWith('GET:') && matches(entry.key));
+
+  await Promise.all(
+    targets.map(async (entry) => {
+      try {
+        const data = JSON.parse(entry.payload) as T;
+        const next = update(data);
+        if (next === null) {
+          await db.queryCache.delete(entry.key);
+          return;
+        }
+
+        await db.queryCache.put({
+          key: entry.key,
+          payload: JSON.stringify(next),
+          updatedAt: Date.now(),
+        });
+      } catch {
+        await db.queryCache.delete(entry.key);
+      }
+    }),
   );
 }
 
@@ -429,7 +460,7 @@ export type ProductRate = {
 };
 
 export type DeliveryLogItem = {
-  milkType: 'buffalo' | 'cow';
+  milkType: string;
   qty: number;
   rate: number;
   amount: number;
@@ -477,78 +508,129 @@ export const housesApi = {
   },
   update: async (id: number, data: Partial<House>) => {
     if (isBrowser()) {
-       const existing = await db.houses.get(id);
-       if (existing) await db.houses.put({ ...existing, ...data });
-       await invalidateCache('/houses');
-       await syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
+      const existing = await db.houses.get(id);
+      const next = existing ? { ...existing, ...data } : ({ id, ...data } as House);
+      await db.houses.put(next);
+
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+        (cached) => {
+          if (Array.isArray(cached)) {
+            return cached.map((item) => (item.id === id ? next : item));
+          }
+
+          return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+        },
+      );
+
+      void syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
+      return next;
     }
-    return apiPatch<House>(`/houses/${id}`, data).catch(console.error);
+
+    return apiPatch<House>(`/houses/${id}`, data);
   },
   updateLocation: async (id: number, data: { latitude: number; longitude: number }) => {
     if (isBrowser()) {
       const existing = await db.houses.get(id)
       if (existing) {
-        await db.houses.put({
+        const next = {
           ...existing,
           location: `${data.latitude.toFixed(6)},${data.longitude.toFixed(6)}`,
-        })
+        }
+
+        await db.houses.put(next)
+
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+          (cached) => {
+            if (Array.isArray(cached)) {
+              return cached.map((item) => (item.id === id ? next : item));
+            }
+
+            return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+          },
+        )
       }
-      await invalidateCache('/houses')
-      await syncEngine.enqueue(`/houses/${id}/location`, 'PATCH', data)
+
+      void syncEngine.enqueue(`/houses/${id}/location`, 'PATCH', data)
+      return existing ? { ...existing, location: `${data.latitude.toFixed(6)},${data.longitude.toFixed(6)}` } : null
     }
 
     return apiPatch<House>(`/houses/${id}/location`, data)
     },
     deactivate: async (id: number) => {
-      if (isOnline()) {
-        const res = await apiPatch<House>(`/houses/${id}/deactivate`, {});
-        if (isBrowser()) {
-          const existing = await db.houses.get(id);
-          if (existing) await db.houses.put({ ...existing, active: false });
-          await invalidateCache('/houses');
-        }
-        return res;
-      }
       if (isBrowser()) {
         const existing = await db.houses.get(id);
-        if (existing) await db.houses.put({ ...existing, active: false });
-        await invalidateCache('/houses');
-        await syncEngine.enqueue(`/houses/${id}/deactivate`, 'PATCH', {});
+        if (existing) {
+          const next = { ...existing, active: false };
+          await db.houses.put(next);
+          await updateCachedQueries<House[]>(
+            (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+            (cached) => {
+              if (Array.isArray(cached)) {
+                return cached.map((item) => (item.id === id ? next : item));
+              }
+
+              return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+            },
+          );
+        }
+        void syncEngine.enqueue(`/houses/${id}/deactivate`, 'PATCH', {});
+        return existing ? { ...existing, active: false } : null;
       }
+
+      if (isOnline()) {
+        return apiPatch<House>(`/houses/${id}/deactivate`, {});
+      }
+
       return null;
     },
     reactivate: async (id: number) => {
-      if (isOnline()) {
-        const res = await apiPatch<House>(`/houses/${id}/reactivate`, {});
-        if (isBrowser()) {
-          const existing = await db.houses.get(id);
-          if (existing) await db.houses.put({ ...existing, active: true });
-          await invalidateCache('/houses');
-        }
-        return res;
-      }
       if (isBrowser()) {
         const existing = await db.houses.get(id);
-        if (existing) await db.houses.put({ ...existing, active: true });
-        await invalidateCache('/houses');
-        await syncEngine.enqueue(`/houses/${id}/reactivate`, 'PATCH', {});
+        if (existing) {
+          const next = { ...existing, active: true };
+          await db.houses.put(next);
+          await updateCachedQueries<House[]>(
+            (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+            (cached) => {
+              if (Array.isArray(cached)) {
+                return cached.map((item) => (item.id === id ? next : item));
+              }
+
+              return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+            },
+          );
+        }
+        void syncEngine.enqueue(`/houses/${id}/reactivate`, 'PATCH', {});
+        return existing ? { ...existing, active: true } : null;
       }
+
+      if (isOnline()) {
+        return apiPatch<House>(`/houses/${id}/reactivate`, {});
+      }
+
       return null;
   },
   delete: async (id: number) => {
-    if (isOnline()) {
-      const res = await apiDelete<House>(`/houses/${id}`);
-      if (isBrowser()) {
-        await db.houses.delete(id);
-        await invalidateCache('/houses');
-      }
-      return res;
-    }
-
     if (isBrowser()) {
       await db.houses.delete(id);
-      await invalidateCache('/houses');
-      await syncEngine.enqueue(`/houses/${id}`, 'DELETE');
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+        (cached) => {
+          if (Array.isArray(cached)) {
+            return cached.filter((item) => item.id !== id);
+          }
+
+          return null;
+        },
+      );
+      void syncEngine.enqueue(`/houses/${id}`, 'DELETE');
+      return null;
+    }
+
+    if (isOnline()) {
+      return apiDelete<House>(`/houses/${id}`);
     }
 
     return null;
@@ -571,74 +653,174 @@ export const houseConfigApi = {
     return data;
   },
   create: async (data: Partial<HouseConfig>) => {
-    // Session-only cache for house configs; sync to the backend immediately when possible.
-    if (isOnline()) {
-      const res = await apiPost<HouseConfig>('/house-config', data);
-      if (isBrowser()) {
-        const cached = readHouseConfigSessionCache();
-        writeHouseConfigSessionCache([...cached.filter((item) => item.id !== res.id), res]);
-      }
-      return res;
-    }
-
     const tempId = -Math.floor(Math.random() * 100000);
     const stub = { id: tempId, ...data } as unknown as HouseConfig;
     if (isBrowser()) {
       const cached = readHouseConfigSessionCache();
-      writeHouseConfigSessionCache([...cached.filter((item) => item.id !== stub.id), stub]);
-      await syncEngine.enqueue('/house-config', 'POST', data);
+      writeHouseConfigSessionCache(
+        [...cached.filter((item) => item.id !== stub.id && item.houseId !== stub.houseId), stub],
+      );
+
+      if (typeof stub.houseId === 'number') {
+        const existingHouse = await db.houses.get(stub.houseId);
+        if (existingHouse) {
+          await db.houses.put({
+            ...existingHouse,
+            configs: [stub],
+          });
+        }
+      }
+
+      await updateCachedQueries<HouseConfig[]>(
+        (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return [...cached.filter((item) => item.id !== stub.id && item.houseId !== stub.houseId), stub];
+        },
+      );
+
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses',
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return cached.map((house) =>
+            house.id === stub.houseId ? { ...house, configs: [stub] } : house,
+          );
+        },
+      );
+
+      void syncEngine.enqueue('/house-config', 'POST', data);
     }
     return stub;
   },
   update: async (id: number, data: Partial<HouseConfig>) => {
-    if (isOnline()) {
-      const res = await apiPatch<HouseConfig>(`/house-config/${id}`, data);
-      if (isBrowser()) {
-        const cached = readHouseConfigSessionCache();
-        const next = cached.map((item) => (item.id === id ? res : item));
-        writeHouseConfigSessionCache(next);
-      }
-      return res;
-    }
-
     if (isBrowser()) {
       const cached = readHouseConfigSessionCache();
       const next = cached.map((item) => (item.id === id ? { ...item, ...data } : item));
       writeHouseConfigSessionCache(next);
-      await syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
+
+      const updated = next.find((item) => item.id === id);
+      if (updated && typeof updated.houseId === 'number') {
+        const existingHouse = await db.houses.get(updated.houseId);
+        if (existingHouse) {
+          await db.houses.put({
+            ...existingHouse,
+            configs: [updated],
+          });
+        }
+      }
+
+      await updateCachedQueries<HouseConfig[]>(
+        (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return cached.map((item) => (item.id === id ? ({ ...item, ...data } as HouseConfig) : item));
+        },
+      );
+
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses',
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return cached.map((house) =>
+            house.id === updated?.houseId ? { ...house, configs: updated ? [updated] : house.configs } : house,
+          );
+        },
+      );
+
+      void syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
+      return updated ? ({ ...updated, ...data } as HouseConfig) : data;
+    }
+
+    if (isOnline()) {
+      return apiPatch<HouseConfig>(`/house-config/${id}`, data);
     }
 
     return data;
   },
   reorder: async (orderedIds: number[]) => {
-    if (isOnline()) {
-      const res = await apiPatch('/house-config/reorder', { orderedIds });
-      if (isBrowser()) {
-        await houseConfigApi.list();
+    if (isBrowser()) {
+      try {
+        // Send to server first and wait for response
+        if (isOnline()) {
+          await apiPatch('/house-config/reorder', { orderedIds });
+        } else {
+          void syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
+        }
+      } catch (error) {
+        throw error;
       }
-      return res;
+
+      // Then clear caches after server confirms the change
+      const byId = new Map(orderedIds.map((idValue, index) => [idValue, index]));
+      const reorderConfigs = (cached: HouseConfig[]) => {
+        if (!Array.isArray(cached)) return cached;
+
+        return [...cached]
+          .map((item) => {
+            const nextPosition = byId.get(item.id);
+            return typeof nextPosition === 'number' ? { ...item, position: nextPosition } : item;
+          })
+          .sort((left, right) => left.position - right.position);
+      };
+
+      await updateCachedQueries<HouseConfig[]>(
+        (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+        reorderConfigs,
+      );
+
+      clearHouseConfigSessionCache();
+      await invalidateCache('/house-config');
+
+      return { orderedIds };
     }
 
-    if (isBrowser()) {
-      await syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
+    if (isOnline()) {
+      return apiPatch('/house-config/reorder', { orderedIds });
     }
 
     return { orderedIds };
   },
   delete: async (id: number) => {
-    if (isOnline()) {
-      const res = await apiDelete(`/house-config/${id}`);
-      if (isBrowser()) {
-        const cached = readHouseConfigSessionCache();
-        writeHouseConfigSessionCache(cached.filter((item) => item.id !== id));
-      }
-      return res;
-    }
-
     if (isBrowser()) {
       const cached = readHouseConfigSessionCache();
+      const removed = cached.find((item) => item.id === id);
       writeHouseConfigSessionCache(cached.filter((item) => item.id !== id));
-      await syncEngine.enqueue(`/house-config/${id}`, 'DELETE');
+
+      if (removed && typeof removed.houseId === 'number') {
+        const existingHouse = await db.houses.get(removed.houseId);
+        if (existingHouse) {
+          await db.houses.put({
+            ...existingHouse,
+            configs: [],
+          });
+        }
+      }
+
+      await updateCachedQueries<HouseConfig[]>(
+        (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return cached.filter((item) => item.id !== id);
+        },
+      );
+
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses',
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return cached.map((house) =>
+            house.id === removed?.houseId ? { ...house, configs: [] } : house,
+          );
+        },
+      );
+
+      void syncEngine.enqueue(`/house-config/${id}`, 'DELETE');
+      return null;
+    }
+
+    if (isOnline()) {
+      return apiDelete(`/house-config/${id}`);
     }
 
     return null;
@@ -654,57 +836,55 @@ export const balanceApi = {
   updatePrevious: async (houseId: number, previousBalance: number) => {
     const payload = { previousBalance };
 
-    if (isOnline()) {
-      if (isBrowser()) {
-        const existingHouse = await db.houses.get(houseId);
-        if (existingHouse) {
-          await db.houses.put({
-            ...existingHouse,
-            balance: {
-              ...(existingHouse.balance ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
-              houseId,
-              previousBalance: String(previousBalance),
-            },
-          });
-        }
-        await invalidateCache('/house-balance');
-        await invalidateCache('/houses');
-      }
-
-      return apiPatch<HouseBalance>(`/house-balance/${houseId}`, payload);
-    }
-
     if (isBrowser()) {
       const existingHouse = await db.houses.get(houseId);
       if (existingHouse) {
-        await db.houses.put({
+        const next = {
           ...existingHouse,
           balance: {
             ...(existingHouse.balance ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
             houseId,
             previousBalance: String(previousBalance),
           },
-        });
+        };
+
+        await db.houses.put(next);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${houseId}`,
+          (cached) => {
+            if (!Array.isArray(cached)) return cached;
+            return cached.map((house) => (house.id === houseId ? next : house));
+          },
+        );
+
+        await updateCachedQueries<HouseBalance>(
+          (cacheKey) => cacheKey === `GET:/house-balance/${houseId}`,
+          (cached) => ({
+            ...(cached ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId,
+            previousBalance: String(previousBalance),
+          }),
+        );
       }
 
-      await invalidateCache('/house-balance');
-      await invalidateCache('/houses');
-      await syncEngine.enqueue(`/house-balance/${houseId}`, 'PATCH', payload);
+      void syncEngine.enqueue(`/house-balance/${houseId}`, 'PATCH', payload);
+      return { queued: true };
+    }
+
+    if (isOnline()) {
+      return apiPatch<HouseBalance>(`/house-balance/${houseId}`, payload);
     }
 
     return { queued: true };
   },
   record: async (data: { houseId: number; amount: number; note?: string }) => {
-    if (isOnline()) {
-      if (isBrowser()) {
-        await invalidateCache('/house-balance');
-      }
-      return apiPost('/house-balance/payment', data);
+    if (isBrowser()) {
+      void syncEngine.enqueue('/house-balance/payment', 'POST', data);
+      return { queued: true };
     }
 
-    if (isBrowser()) {
-      await invalidateCache('/house-balance');
-      await syncEngine.enqueue('/house-balance/payment', 'POST', data);
+    if (isOnline()) {
+      return apiPost('/house-balance/payment', data);
     }
 
     return { queued: true };
@@ -805,7 +985,7 @@ export const usersApi = {
     }
 
     if (isOnline()) {
-      return apiDelete(`/users/${uuid}`).catch(console.error);
+      return apiDelete(`/users/${uuid}`);
     }
 
     return null;
@@ -836,7 +1016,7 @@ export const productRatesApi = {
     }
 
     if (isOnline()) {
-      return apiDelete(`/product-rates/${id}`).catch(console.error);
+      return apiDelete(`/product-rates/${id}`);
     }
 
     return null;

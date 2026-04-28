@@ -55,18 +55,18 @@ import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
 type DeliveryItemForm = {
-    milkType: 'buffalo' | 'cow'
+    milkType: string
     qty: string
 }
 
 const emptyDeliveryItem: DeliveryItemForm = {
-    milkType: 'buffalo',
+    milkType: '',
     qty: '',
 }
 
 const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
 
-type MilkType = DeliveryItemForm['milkType']
+type MilkType = string
 
 const DAYS_BY_INDEX: Array<keyof AlertDays> = [
     'Sunday',
@@ -86,11 +86,8 @@ function normalizeProductName(name?: string | null): string {
     return (name ?? '').trim().toLowerCase()
 }
 
-function resolveGlobalRateMap(rates: ProductRate[]): Record<MilkType, number> {
-    const next: Record<MilkType, number> = {
-        buffalo: 0,
-        cow: 0,
-    }
+function resolveGlobalRateMap(rates: ProductRate[]): Record<string, number> {
+    const next: Record<string, number> = {}
 
     for (const rate of rates) {
         if (!rate.isActive) continue
@@ -98,15 +95,9 @@ function resolveGlobalRateMap(rates: ProductRate[]): Record<MilkType, number> {
         const name = normalizeProductName(rate.name)
         const parsedRate = Number(rate.rate)
 
-        if (!Number.isFinite(parsedRate) || parsedRate <= 0) continue
+        if (!name || !Number.isFinite(parsedRate) || parsedRate <= 0) continue
 
-        if (!next.buffalo && name.includes('buffalo')) {
-            next.buffalo = parsedRate
-        }
-
-        if (!next.cow && (name.includes('cow') || name.includes('cows'))) {
-            next.cow = parsedRate
-        }
+        next[name] = parsedRate
     }
 
     return next
@@ -169,10 +160,8 @@ export default function DeliveryPage() {
 
     const [houses, setHouses] = useState<House[]>([])
     const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
-    const [globalRateMap, setGlobalRateMap] = useState<Record<MilkType, number>>({
-        buffalo: 0,
-        cow: 0,
-    })
+    const [productRates, setProductRates] = useState<ProductRate[]>([])
+    const [globalRateMap, setGlobalRateMap] = useState<Record<string, number>>({})
     const [loading, setLoading] = useState(true)
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
@@ -191,8 +180,13 @@ export default function DeliveryPage() {
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
     const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
+    const [swipedDeliveryItem, setSwipedDeliveryItem] = useState<{ index: number | null; offset: number }>({
+        index: null,
+        offset: 0,
+    })
 
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
+    const deliveryItemSwipeStartRef = useRef<{ x: number; y: number; index: number } | null>(null)
     const houseChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const swipeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const loadingHouseLogIdsRef = useRef<Set<number>>(new Set())
@@ -212,6 +206,19 @@ export default function DeliveryPage() {
         [availableHeight],
     )
 
+    const activeProductRates = useMemo(
+        () => productRates.filter((rate) => rate.isActive && Number(rate.rate) > 0),
+        [productRates],
+    )
+
+    const productRateOptions = useMemo(
+        () => activeProductRates.map((rate) => ({
+            label: rate.name.trim(),
+            value: rate.name.trim(),
+        })),
+        [activeProductRates],
+    )
+
     const visibleHouses = useMemo(() => {
         if (houses.length === 0) return []
 
@@ -225,17 +232,23 @@ export default function DeliveryPage() {
         }
 
         return houses
-            .map((house) => ({
-                ...house,
-                configs: (configsMap.get(house.id) || house.configs || [])
+            .map((house) => {
+                const configs = (configsMap.get(house.id) || house.configs || [])
                     .filter((config) => {
                         if (config.shift !== selectedShift) return false
                         if (selectedShift === 'morning') return config.supplierId === auth?.uuid
                         return true
                     })
-                    .sort((a, b) => a.position - b.position),
-            }))
+                    .sort((a, b) => a.position - b.position)
+
+                return {
+                    ...house,
+                    configs,
+                    routePosition: configs[0]?.position ?? Number.POSITIVE_INFINITY,
+                }
+            })
             .filter((house) => house.configs.length > 0)
+            .sort((left, right) => left.routePosition - right.routePosition)
     }, [houses, rawConfigs, selectedShift, auth?.uuid])
 
     // AUTH
@@ -279,7 +292,12 @@ export default function DeliveryPage() {
                 productRatesApi.list(),
             ])
 
+            setProductRates(rates)
             setGlobalRateMap(resolveGlobalRateMap(rates))
+            setDeliveryItems((prev) => {
+                const defaultProduct = rates.find((rate) => rate.isActive && Number(rate.rate) > 0)?.name.trim() ?? ''
+                return prev.map((item) => (item.milkType ? item : { ...item, milkType: defaultProduct }))
+            })
             setHouses(data)
             setCurrentIndex(0)
         } catch (err: any) {
@@ -395,27 +413,33 @@ export default function DeliveryPage() {
 
     const searchedAllocatedHouses = useMemo(() => {
         const query = houseSearch.trim().toLowerCase()
-        if (!query) return visibleHouses
 
-        return visibleHouses.filter((house) => {
-            const configAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
-            const todayKey = DAYS_BY_INDEX[new Date().getDay()]
-            const alertText = configAlerts
-                .filter((alert) => alert.schedule?.[todayKey])
-                .map((alert) => alert.text.trim())
-                .filter(Boolean)
-                .join(', ')
+        return visibleHouses
+            .map((house, index) => ({
+                house,
+                routeNumber: index + 1,
+            }))
+            .filter(({ house }) => {
+                if (!query) return true
 
-            const searchable = [
-                house.houseNo,
-                house.area ?? '',
-                house.phoneNo,
-                allocatedHouseProducts[house.id] ?? '',
-                alertText,
-            ]
+                const configAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
+                const todayKey = DAYS_BY_INDEX[new Date().getDay()]
+                const alertText = configAlerts
+                    .filter((alert) => alert.schedule?.[todayKey])
+                    .map((alert) => alert.text.trim())
+                    .filter(Boolean)
+                    .join(', ')
 
-            return searchable.some((value) => value.toLowerCase().includes(query))
-        })
+                const searchable = [
+                    house.houseNo,
+                    house.area ?? '',
+                    house.phoneNo,
+                    allocatedHouseProducts[house.id] ?? '',
+                    alertText,
+                ]
+
+                return searchable.some((value) => value.toLowerCase().includes(query))
+            })
     }, [visibleHouses, houseSearch, allocatedHouseProducts])
 
     const loadTodayDeliveredSummary = useCallback(async () => {
@@ -499,11 +523,12 @@ export default function DeliveryPage() {
     const buildDeliveryItemsFromLogs = useCallback((logs: DeliveryLog[]): DeliveryItemForm[] => {
         if (logs.length === 0) return [{ ...emptyDeliveryItem }]
 
-        const grouped = new Map<MilkType, number>()
+        const grouped = new Map<string, number>()
 
         for (const log of logs) {
             for (const item of log.items) {
-                const milkType = item.milkType as MilkType
+                const milkType = String(item.milkType ?? '').trim()
+                if (!milkType) continue
                 grouped.set(milkType, (grouped.get(milkType) ?? 0) + Number(item.qty || 0))
             }
         }
@@ -628,15 +653,16 @@ export default function DeliveryPage() {
         setDeliveryItems(buildDeliveryItemsFromLogs(currentHouseLogs))
     }, [currentHouseLogs, buildDeliveryItemsFromLogs])
 
-    const getEffectiveRate = (house: House | undefined, milkType: MilkType): { rate: number; source: 'house' | 'global' | 'none' } => {
-        const houseRate = resolveHouseRate(house, milkType)
-        if (houseRate > 0) {
-            return { rate: houseRate, source: 'house' }
-        }
-
-        const globalRate = Number(globalRateMap[milkType] ?? 0)
+    const getEffectiveRate = (house: House | undefined, productName: string): { rate: number; source: 'house' | 'global' | 'none' } => {
+        const normalizedName = normalizeProductName(productName)
+        const globalRate = Number(globalRateMap[normalizedName] ?? 0)
         if (globalRate > 0) {
             return { rate: globalRate, source: 'global' }
+        }
+
+        const houseRate = resolveHouseRate(house, productName as MilkType)
+        if (houseRate > 0) {
+            return { rate: houseRate, source: 'house' }
         }
 
         return { rate: 0, source: 'none' }
@@ -808,7 +834,7 @@ export default function DeliveryPage() {
 
         setDeliveryItems((prev) =>
             prev.map((item, i) =>
-                i === idx ? { ...item, milkType: value as MilkType } : item
+                i === idx ? { ...item, milkType: value } : item
             )
         )
         setHasUnsavedChanges(true)
@@ -819,6 +845,53 @@ export default function DeliveryPage() {
         setDeliveryItems((prev) => [...prev, { ...emptyDeliveryItem }])
         setHasUnsavedChanges(true)
         setSaveStatus('idle')
+    }
+
+    const removeDeliveryItem = (idx: number) => {
+        setDeliveryItems((prev) => {
+            if (prev.length <= 1) return [{ ...emptyDeliveryItem }]
+            return prev.filter((_, i) => i !== idx)
+        })
+        setSwipedDeliveryItem({ index: null, offset: 0 })
+        setHasUnsavedChanges(true)
+        setSaveStatus('idle')
+    }
+
+    const handleDeliveryItemTouchStart = (index: number, event: TouchEvent<HTMLDivElement>) => {
+        const touch = event.touches[0]
+        if (!touch) return
+
+        setSwipedDeliveryItem((current) => (current.index === index ? current : { index: null, offset: 0 }))
+        deliveryItemSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, index }
+    }
+
+    const handleDeliveryItemTouchMove = (index: number, event: TouchEvent<HTMLDivElement>) => {
+        const start = deliveryItemSwipeStartRef.current
+        if (!start || start.index !== index) return
+
+        const touch = event.touches[0]
+        if (!touch) return
+
+        const deltaX = touch.clientX - start.x
+        const deltaY = Math.abs(touch.clientY - start.y)
+
+        if (deltaY > Math.abs(deltaX)) return
+        if (deltaX >= 0) {
+            setSwipedDeliveryItem({ index: null, offset: 0 })
+            return
+        }
+
+        const nextOffset = Math.max(deltaX, -64)
+        setSwipedDeliveryItem({ index, offset: nextOffset })
+    }
+
+    const handleDeliveryItemTouchEnd = (index: number) => {
+        const start = deliveryItemSwipeStartRef.current
+        if (!start || start.index !== index) return
+
+        const shouldRevealDelete = swipedDeliveryItem.index === index && swipedDeliveryItem.offset <= -56
+        setSwipedDeliveryItem(shouldRevealDelete ? { index, offset: -84 } : { index: null, offset: 0 })
+        deliveryItemSwipeStartRef.current = null
     }
 
     // TOTAL CALCULATION
@@ -995,6 +1068,7 @@ export default function DeliveryPage() {
                     <Table>
                         <TableHeader>
                             <TableRow>
+                                <TableHead className="w-20">Route</TableHead>
                                 <TableHead>House Number</TableHead>
                                 <TableHead>Products</TableHead>
                                 <TableHead>Daily Alert</TableHead>
@@ -1003,12 +1077,12 @@ export default function DeliveryPage() {
                         <TableBody>
                             {searchedAllocatedHouses.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={3} className="text-center text-muted-foreground">
+                                    <TableCell colSpan={4} className="text-center text-muted-foreground">
                                         No houses match your search.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                searchedAllocatedHouses.map((house) => {
+                                searchedAllocatedHouses.map(({ house, routeNumber }) => {
                                     const allAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
                                     const todayKey = DAYS_BY_INDEX[new Date().getDay()]
                                     const todayAlerts = allAlerts
@@ -1018,6 +1092,11 @@ export default function DeliveryPage() {
 
                                     return (
                                         <TableRow key={house.id}>
+                                            <TableCell>
+                                                <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-semibold">
+                                                    #{routeNumber}
+                                                </Badge>
+                                            </TableCell>
                                             <TableCell className="font-semibold">{house.houseNo}</TableCell>
                                             <TableCell>{allocatedHouseProducts[house.id] ?? '_'}</TableCell>
                                             <TableCell>{todayAlerts.length > 0 ? todayAlerts.join(', ') : '_'}</TableCell>
@@ -1036,6 +1115,7 @@ export default function DeliveryPage() {
 
     const isCompleted = completedHouses.has(currentHouse.id)
     const canSubmitDelivery = !marking && (!isCompleted || hasUnsavedChanges)
+    const currentRouteNumber = currentIndex + 1
     const houseMotionClass =
         houseChangeDirection === 'next'
             ? 'animate-in fade-in slide-in-from-right-4 duration-300'
@@ -1060,6 +1140,12 @@ export default function DeliveryPage() {
             : swipePreviewDirection === 'prev'
                 ? previousHouse
                 : null
+    const swipePreviewRouteNumber =
+        swipePreviewDirection === 'next'
+            ? currentIndex + 2
+            : swipePreviewDirection === 'prev'
+                ? currentIndex
+                : currentIndex + 1
     const swipePreviewLogs = swipePreviewHouse ? (houseLogsCache[swipePreviewHouse.id] ?? []) : []
     const swipePreviewItems = swipePreviewHouse ? buildDeliveryItemsFromLogs(swipePreviewLogs) : []
     const isSwipePreviewLogsLoaded = swipePreviewHouse ? loadedHouseLogIds.has(swipePreviewHouse.id) : false
@@ -1082,20 +1168,6 @@ export default function DeliveryPage() {
     return (
         <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
             
-            <div className="flex shrink-0 items-center justify-between gap-1.5 py-0 sm:py-1">
-                <Badge variant="outline" className="capitalize">
-                    {selectedShift} Shift
-                </Badge>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 gap-1.5 px-3 rounded-full"
-                    onClick={() => setPanelView('allocated-houses')}
-                >
-                    <Rows3 className="h-2 w-2" /> Switch View
-                </Button>
-            </div>
-
             {/* <div className="flex justify-end">
                 <Button asChild variant="outline" size="sm">
                     <Link href="/dashboard/supplier/rates">Rate List</Link>
@@ -1130,6 +1202,9 @@ export default function DeliveryPage() {
                                         <div>
                                             <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
                                             <h2 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{swipePreviewHouse.houseNo}</h2>
+                                            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                                Route #{swipePreviewRouteNumber}
+                                            </p>
                                         </div>
                                         <div>
                                             <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
@@ -1137,14 +1212,15 @@ export default function DeliveryPage() {
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
-                                        <MapPin className="h-4 w-4" />
-                                        <span>{swipePreviewHouse.area || 'Area not set'}</span>
-                                    </div>
-
-                                    <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
-                                        <Phone className="h-4 w-4" />
-                                        <span>{swipePreviewHouse.phoneNo || 'Phone not set'}</span>
+                                    <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <MapPin className="h-4 w-4 shrink-0" />
+                                            <span className="truncate">{swipePreviewHouse.area || 'Area not set'}</span>
+                                        </div>
+                                        <div className="flex min-w-0 items-center gap-2 text-right">
+                                            <Phone className="h-4 w-4 shrink-0" />
+                                            <span className="truncate">{swipePreviewHouse.phoneNo || 'Phone not set'}</span>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1264,21 +1340,35 @@ export default function DeliveryPage() {
                             <div>
                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
                                 <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{currentHouse.houseNo}</h1>
+                                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                    Route #{currentRouteNumber}
+                                </p>
                             </div>
-                            <div>
+                            <div className="relative flex flex-col items-start pr-10">
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
+                                    onClick={() => setPanelView((view) => (view === 'delivery' ? 'allocated-houses' : 'delivery'))}
+                                    aria-label="Switch view"
+                                    title="Switch view"
+                                >
+                                    <Rows3 className="h-4 w-4" />
+                                </Button>
                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
                                 {isCompleted ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
-                            <MapPin className="h-4 w-4" />
-                            <span>{currentHouse.area || 'Area not set'}</span>
-                        </div>
-
-                        <div className="flex items-center gap-2 text-[13px] leading-tight sm:text-sm">
-                            <Phone className="h-4 w-4" />
-                            <span>{currentHouse.phoneNo || 'Phone not set'}</span>
+                        <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <MapPin className="h-4 w-4 shrink-0" />
+                                <span className="truncate">{currentHouse.area || 'Area not set'}</span>
+                            </div>
+                            <div className="flex min-w-0 items-center gap-2 text-right">
+                                <Phone className="h-4 w-4 shrink-0" />
+                                <span className="truncate">{currentHouse.phoneNo || 'Phone not set'}</span>
+                            </div>
                         </div>
                     </div>
 
@@ -1323,44 +1413,102 @@ export default function DeliveryPage() {
                                     const rate = effectiveRate.rate
                                     const qty = Number(item.qty)
                                     const amount = qty > 0 ? qty * rate : 0
+                                    const isSwipedOpen = swipedDeliveryItem.index === idx
+                                    const rowOffset = isSwipedOpen ? swipedDeliveryItem.offset : 0
 
                                     return (
-                                        <TableRow key={idx}>
-                                            <TableCell>
-                                                <Select
-                                                    value={item.milkType}
-                                                    onValueChange={(val) =>
-                                                        updateDeliveryItem(idx, 'milkType', val)
-                                                    }
+                                        <TableRow key={idx} className="border-0">
+                                            <TableCell colSpan={4} className="p-0">
+                                                <div
+                                                    className="relative overflow-hidden rounded-xl border border-border/70 bg-card"
+                                                    style={{ touchAction: 'pan-y' }}
+                                                    onTouchStart={(event) => handleDeliveryItemTouchStart(idx, event)}
+                                                    onTouchMove={(event) => handleDeliveryItemTouchMove(idx, event)}
+                                                    onTouchEnd={() => handleDeliveryItemTouchEnd(idx)}
+                                                    onTouchCancel={() => {
+                                                        deliveryItemSwipeStartRef.current = null
+                                                        setSwipedDeliveryItem({ index: null, offset: 0 })
+                                                    }}
                                                 >
-                                                    <SelectTrigger className="h-9">
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="buffalo">Buffalo</SelectItem>
-                                                        <SelectItem value="cow">Cow</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </TableCell>
+                                                    <div
+                                                        className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
+                                                        style={{
+                                                            opacity: rowOffset <= -16 ? 1 : 0,
+                                                            transform: `translate3d(${rowOffset <= -16 ? 0 : 8}px, 0, 0)`,
+                                                            transition: deliveryItemSwipeStartRef.current?.index === idx
+                                                                ? 'none'
+                                                                : 'opacity 180ms ease, transform 180ms ease',
+                                                            pointerEvents: rowOffset <= -16 ? 'auto' : 'none',
+                                                        }}
+                                                    >
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            className="h-full w-full rounded-none rounded-l-xl bg-transparent p-0 text-destructive shadow-none hover:bg-destructive/10"
+                                                            onClick={() => removeDeliveryItem(idx)}
+                                                            aria-label="Delete item"
+                                                        >
+                                                            <Trash2 className="h-3.25 w-3.25" />
+                                                        </Button>
+                                                    </div>
 
-                                            <TableCell className="w-24 sm:min-w-30">
-                                                <Input
-                                                    type="number"
-                                                    placeholder="0"
-                                                    value={item.qty}
-                                                    onChange={(e) =>
-                                                        updateDeliveryItem(idx, 'qty', e.target.value)
-                                                    }
-                                                    className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                />
-                                            </TableCell>
+                                                    <div
+                                                        className="relative z-10 grid grid-cols-[minmax(0,1.3fr)_minmax(5rem,0.8fr)_minmax(4.5rem,0.6fr)] gap-2 p-2 transition-transform duration-200 sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(4.75rem,0.7fr)_minmax(5.75rem,0.9fr)] sm:gap-3 sm:p-3"
+                                                        style={{
+                                                            transform: `translate3d(${rowOffset}px, 0, 0)`,
+                                                            backgroundColor: rowOffset < 0 ? 'rgba(239, 68, 68, 0.08)' : 'transparent',
+                                                            transition: deliveryItemSwipeStartRef.current?.index === idx
+                                                                ? 'none'
+                                                                : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+                                                        }}
+                                                    >
+                                                        <div>
+                                                            <Select
+                                                                value={item.milkType}
+                                                                onValueChange={(val) =>
+                                                                    updateDeliveryItem(idx, 'milkType', val)
+                                                                }
+                                                            >
+                                                                <SelectTrigger className="h-9 w-full">
+                                                                    <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {productRateOptions.length > 0 ? (
+                                                                        productRateOptions.map((option) => (
+                                                                            <SelectItem key={option.value} value={option.value}>
+                                                                                {option.label}
+                                                                            </SelectItem>
+                                                                        ))
+                                                                    ) : (
+                                                                        <SelectItem value="__no_products__" disabled>
+                                                                            No active products
+                                                                        </SelectItem>
+                                                                    )}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
 
-                                            <TableCell className="text-sm font-medium">
-                                                ₹{rate}/L
-                                            </TableCell>
+                                                        <div className="sm:min-w-30">
+                                                            <Input
+                                                                type="number"
+                                                                placeholder="0"
+                                                                value={item.qty}
+                                                                onChange={(e) =>
+                                                                    updateDeliveryItem(idx, 'qty', e.target.value)
+                                                                }
+                                                                className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                            />
+                                                        </div>
 
-                                            <TableCell className="hidden text-sm font-semibold sm:table-cell">
-                                                ₹{amount.toLocaleString('en-IN')}
+                                                        <div className="flex items-center text-sm font-medium">
+                                                            ₹{rate}/L
+                                                        </div>
+
+                                                        <div className="hidden items-center text-sm font-semibold sm:flex">
+                                                            ₹{amount.toLocaleString('en-IN')}
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     )
@@ -1418,7 +1566,7 @@ export default function DeliveryPage() {
 
                 <div className="text-center">
                     <p className="text-xs font-semibold sm:text-sm">
-                            {currentIndex + 1} / {visibleHouses.length}
+                            Route {currentRouteNumber} / {visibleHouses.length}
                     </p>
                 </div>
 
