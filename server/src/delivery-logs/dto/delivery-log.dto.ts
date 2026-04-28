@@ -1,7 +1,6 @@
 import {
     IsArray,
     IsBoolean,
-    IsIn,
     IsNumber,
     IsOptional,
     IsString,
@@ -11,8 +10,8 @@ import {
 import { Type } from 'class-transformer';
 
 export class DeliveryItemDto {
-    @IsIn(['buffalo', 'cow'])
-    milkType: 'buffalo' | 'cow';
+    @IsString()
+    milkType: string;
 
     @Type(() => Number)
     @IsNumber()

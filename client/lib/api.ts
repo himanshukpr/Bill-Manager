@@ -5,6 +5,7 @@ import { fetchApi } from './api-base';
 import {
   readHouseConfigSessionCache,
   writeHouseConfigSessionCache,
+  clearHouseConfigSessionCache,
 } from './house-config-cache';
 import { DEFAULT_CACHE_FRESH_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
@@ -459,7 +460,7 @@ export type ProductRate = {
 };
 
 export type DeliveryLogItem = {
-  milkType: 'buffalo' | 'cow';
+  milkType: string;
   qty: number;
   rate: number;
   amount: number;
@@ -739,16 +740,38 @@ export const houseConfigApi = {
   },
   reorder: async (orderedIds: number[]) => {
     if (isBrowser()) {
+      try {
+        // Send to server first and wait for response
+        if (isOnline()) {
+          await apiPatch('/house-config/reorder', { orderedIds });
+        } else {
+          void syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
+        }
+      } catch (error) {
+        throw error;
+      }
+
+      // Then clear caches after server confirms the change
+      const byId = new Map(orderedIds.map((idValue, index) => [idValue, index]));
+      const reorderConfigs = (cached: HouseConfig[]) => {
+        if (!Array.isArray(cached)) return cached;
+
+        return [...cached]
+          .map((item) => {
+            const nextPosition = byId.get(item.id);
+            return typeof nextPosition === 'number' ? { ...item, position: nextPosition } : item;
+          })
+          .sort((left, right) => left.position - right.position);
+      };
+
       await updateCachedQueries<HouseConfig[]>(
         (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
-        (cached) => {
-          if (!Array.isArray(cached)) return cached;
-          const byId = new Map(orderedIds.map((idValue, index) => [idValue, index]));
-          return [...cached].sort((left, right) => (byId.get(left.id) ?? 0) - (byId.get(right.id) ?? 0));
-        },
+        reorderConfigs,
       );
 
-      void syncEngine.enqueue('/house-config/reorder', 'PATCH', { orderedIds });
+      clearHouseConfigSessionCache();
+      await invalidateCache('/house-config');
+
       return { orderedIds };
     }
 
