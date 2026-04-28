@@ -14,6 +14,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
@@ -145,6 +151,7 @@ export default function AdminHouseConfigPage() {
   const [shiftFilter, setShiftFilter] = useState('all')
   const [supplierFilter, setSupplierFilter] = useState('all')
   const [globalStatus, setGlobalStatus] = useState<GlobalSaveStatus>('idle')
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
 
   const pendingSavesCount = useRef(0)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -287,14 +294,26 @@ export default function AdminHouseConfigPage() {
   }, [drafts, incrementPending, decrementPending])
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Administration</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight">House Configuration</h1>
+    <div className="space-y-2">
+      <div className="relative flex flex-col gap-1">
+        <div className="flex items-end justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Administration</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight">House Configuration</h1>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsSearchOpen(true)}
+            className="h-9 w-9 rounded-lg"
+            aria-label="Search"
+            title="Search"
+          >
+            <Search className="h-5 w-5 " />
+          </Button>
         </div>
-        
-        <div className="h-8 flex items-center justify-end">
+
+        <div className="absolute right-0 top-0 flex h-8 items-center justify-end">
           {globalStatus === 'saving' && (
             <span className="text-yellow-600 dark:text-yellow-500 flex items-center gap-1.5 text-sm font-medium animate-in fade-in">
               <Loader2 className="w-4 h-4 animate-spin" /> Syncing...
@@ -313,19 +332,10 @@ export default function AdminHouseConfigPage() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by house no, area, phone..."
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="pl-9"
-          />
-        </div>
+      <div className="flex flex-col gap-3 flex-row items-center">
         <Select value={shiftFilter} onValueChange={setShiftFilter}>
-          <SelectTrigger className="w-full sm:w-37.5">
-             <SelectValue placeholder="Filter shift" />
+          <SelectTrigger className="w-full sm:w-auto sm:flex-1">
+             <SelectValue placeholder="All Shifts" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Shifts</SelectItem>
@@ -334,8 +344,8 @@ export default function AdminHouseConfigPage() {
           </SelectContent>
         </Select>
         <Select value={supplierFilter} onValueChange={setSupplierFilter}>
-          <SelectTrigger className="w-full sm:w-50">
-             <SelectValue placeholder="Filter supplier" />
+          <SelectTrigger className="w-full sm:w-auto sm:flex-1">
+             <SelectValue placeholder="All Suppliers" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Suppliers</SelectItem>
@@ -346,6 +356,24 @@ export default function AdminHouseConfigPage() {
           </SelectContent>
         </Select>
       </div>
+
+      <Dialog open={isSearchOpen} onOpenChange={setIsSearchOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Search Houses</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by house no, area, phone..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="pl-9"
+              autoFocus
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         {loading ? (
