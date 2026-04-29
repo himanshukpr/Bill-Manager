@@ -237,6 +237,12 @@ function getHousePaymentStatus(house: House): Exclude<PaymentFilter, 'all'> {
   return 'clear'
 }
 
+function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefined {
+  if (!Array.isArray(configs) || configs.length === 0) return undefined
+
+  return configs.find((config) => parseDailyAlerts(config.dailyAlerts).length > 0) ?? configs[0]
+}
+
 export default function HousesPage() {
   const [houses, setHouses] = useState<House[]>([])
   const [suppliers, setSuppliers] = useState<User[]>([])
@@ -407,22 +413,42 @@ export default function HousesPage() {
     setDialogOpen(true)
   }
 
-  function openEdit(h: House) {
-    const primaryConfig = h.configs?.[0]
-    setForm({
-      houseNo: h.houseNo, area: h.area ?? '', phoneNo: h.phoneNo,
-      alternativePhone: h.alternativePhone ?? '', description: h.description ?? '',
-      rate1Type: h.rate1Type ?? '', rate1: h.rate1 ?? '',
-      rate2Type: h.rate2Type ?? '', rate2: h.rate2 ?? '',
-      shift: primaryConfig?.shift ?? 'evening',
-      supplierId: primaryConfig?.supplierId ?? '',
-      position: String(primaryConfig?.position ?? 0),
-      dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
-      previousBalance: h.balance?.previousBalance ? String(h.balance.previousBalance) : '',
-    })
-    setFormConfigId(primaryConfig?.id ?? null)
-    setEditingId(h.id)
-    setDialogOpen(true)
+  async function openEdit(h: House) {
+    try {
+      const fresh = await housesApi.get(h.id)
+      const primaryConfig = getHouseConfigWithAlerts(fresh.configs)
+      setForm({
+        houseNo: fresh.houseNo, area: fresh.area ?? '', phoneNo: fresh.phoneNo,
+        alternativePhone: fresh.alternativePhone ?? '', description: fresh.description ?? '',
+        rate1Type: fresh.rate1Type ?? '', rate1: fresh.rate1 ?? '',
+        rate2Type: fresh.rate2Type ?? '', rate2: fresh.rate2 ?? '',
+        shift: primaryConfig?.shift ?? 'evening',
+        supplierId: primaryConfig?.supplierId ?? '',
+        position: String(primaryConfig?.position ?? 0),
+        dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
+        previousBalance: fresh.balance?.previousBalance ? String(fresh.balance.previousBalance) : '',
+      })
+      setFormConfigId(primaryConfig?.id ?? null)
+      setEditingId(fresh.id)
+      setDialogOpen(true)
+      return
+    } catch {
+      const primaryConfig = getHouseConfigWithAlerts(h.configs)
+      setForm({
+        houseNo: h.houseNo, area: h.area ?? '', phoneNo: h.phoneNo,
+        alternativePhone: h.alternativePhone ?? '', description: h.description ?? '',
+        rate1Type: h.rate1Type ?? '', rate1: h.rate1 ?? '',
+        rate2Type: h.rate2Type ?? '', rate2: h.rate2 ?? '',
+        shift: primaryConfig?.shift ?? 'evening',
+        supplierId: primaryConfig?.supplierId ?? '',
+        position: String(primaryConfig?.position ?? 0),
+        dailyAlerts: toAlertInputValue(primaryConfig?.dailyAlerts),
+        previousBalance: h.balance?.previousBalance ? String(h.balance.previousBalance) : '',
+      })
+      setFormConfigId(primaryConfig?.id ?? null)
+      setEditingId(h.id)
+      setDialogOpen(true)
+    }
   }
 
   async function handleSave() {
@@ -535,7 +561,7 @@ export default function HousesPage() {
   }
 
   function openConfigDialog(house: House, config?: HouseConfig) {
-    const houseConfig = config ?? house.configs?.[0]
+    const houseConfig = config ?? getHouseConfigWithAlerts(house.configs)
     setConfigEditingId(houseConfig?.id ?? null)
     setConfigForm({
       houseId: String(house.id),
@@ -1123,7 +1149,7 @@ export default function HousesPage() {
                   {viewHouse.configs && viewHouse.configs.length > 0 ? (
                     <div className="space-y-2">
                       {(() => {
-                        const config = viewHouse.configs?.[0]
+                        const config = getHouseConfigWithAlerts(viewHouse.configs)
                         if (!config) return null
 
                         return (
@@ -1371,6 +1397,9 @@ function DailyAlertsDialog({
     }
   }, [open, value])
 
+  const activeCount = parseAlerts(value).length
+  const activePreview = formatAlertPreview(value)
+
   const addAlert = () => {
     setAlerts(prev => {
       if (prev.length >= 1) return prev
@@ -1414,8 +1443,6 @@ function DailyAlertsDialog({
     setOpen(false)
   }
 
-  const activeCount = parseAlerts(value).length
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -1424,7 +1451,9 @@ function DailyAlertsDialog({
           className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <span className="truncate text-muted-foreground">
-            {activeCount > 0 ? `${activeCount} alert${activeCount > 1 ? 's' : ''} configured` : placeholder ?? 'Open schedule editor'}
+            {activeCount > 0
+              ? activePreview || `${activeCount} alert${activeCount > 1 ? 's' : ''} configured`
+              : placeholder ?? 'Open schedule editor'}
           </span>
           <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
         </button>

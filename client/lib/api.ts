@@ -672,20 +672,22 @@ export const houseConfigApi = {
     return data;
   },
   create: async (data: Partial<HouseConfig>) => {
-    const tempId = -Math.floor(Math.random() * 100000);
-    const stub = { id: tempId, ...data } as unknown as HouseConfig;
     if (isBrowser()) {
+      const result = isOnline()
+        ? await apiPost<HouseConfig>('/house-config', data)
+        : ({ id: -Math.floor(Math.random() * 100000), ...data } as unknown as HouseConfig);
+
       const cached = readHouseConfigSessionCache();
       writeHouseConfigSessionCache(
-        [...cached.filter((item) => item.id !== stub.id && item.houseId !== stub.houseId), stub],
+        [...cached.filter((item) => item.id !== result.id && item.houseId !== result.houseId), result],
       );
 
-      if (typeof stub.houseId === 'number') {
-        const existingHouse = await db.houses.get(stub.houseId);
+      if (typeof result.houseId === 'number') {
+        const existingHouse = await db.houses.get(result.houseId);
         if (existingHouse) {
           await db.houses.put({
             ...existingHouse,
-            configs: [stub],
+            configs: [result],
           });
         }
       }
@@ -694,7 +696,7 @@ export const houseConfigApi = {
         (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
         (cached) => {
           if (!Array.isArray(cached)) return cached;
-          return [...cached.filter((item) => item.id !== stub.id && item.houseId !== stub.houseId), stub];
+          return [...cached.filter((item) => item.id !== result.id && item.houseId !== result.houseId), result];
         },
       );
 
@@ -703,14 +705,19 @@ export const houseConfigApi = {
         (cached) => {
           if (!Array.isArray(cached)) return cached;
           return cached.map((house) =>
-            house.id === stub.houseId ? { ...house, configs: [stub] } : house,
+            house.id === result.houseId ? { ...house, configs: [result] } : house,
           );
         },
       );
 
-      void syncEngine.enqueue('/house-config', 'POST', data);
+      if (!isOnline()) {
+        void syncEngine.enqueue('/house-config', 'POST', data);
+      }
+
+      return result;
     }
-    return stub;
+
+    return apiPost<HouseConfig>('/house-config', data);
   },
   update: async (id: number, data: Partial<HouseConfig>) => {
     if (isBrowser()) {
@@ -746,6 +753,44 @@ export const houseConfigApi = {
           );
         },
       );
+
+      if (isOnline()) {
+        const result = await apiPatch<HouseConfig>(`/house-config/${id}`, data);
+
+        writeHouseConfigSessionCache(
+          cached.map((item) => (item.id === id ? result : item)),
+        );
+
+        if (typeof result.houseId === 'number') {
+          const existingHouse = await db.houses.get(result.houseId);
+          if (existingHouse) {
+            await db.houses.put({
+              ...existingHouse,
+              configs: [result],
+            });
+          }
+        }
+
+        await updateCachedQueries<HouseConfig[]>(
+          (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+          (cached) => {
+            if (!Array.isArray(cached)) return cached;
+            return cached.map((item) => (item.id === id ? result : item));
+          },
+        );
+
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses',
+          (cached) => {
+            if (!Array.isArray(cached)) return cached;
+            return cached.map((house) =>
+              house.id === result.houseId ? { ...house, configs: [result] } : house,
+            );
+          },
+        );
+
+        return result;
+      }
 
       void syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
       return updated ? ({ ...updated, ...data } as HouseConfig) : data;
