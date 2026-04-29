@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
-import { Building2, MapPin, Phone, Search, Check, Loader2, AlertCircle } from 'lucide-react'
+import { Building2, MapPin, Phone, Search, X, Check, Loader2, AlertCircle } from 'lucide-react'
 import { useLiveQuery } from 'dexie-react-hooks'
 
 import { Button } from '@/components/ui/button'
@@ -38,10 +38,10 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
     <tr
       className={`border-b border-border/60 transition-colors hover:bg-muted/20 ${isLast ? 'border-b-0' : ''}`}
     >
-      <td className="px-4 py-3 align-top">
+      <td className="px-2 py-2 align-top sm:px-3">
         <div className="space-y-0.5">
           <p className="font-semibold text-foreground">{house.houseNo}</p>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               <MapPin className="h-3 w-3" />
               {house.area || 'Area not set'}
@@ -53,12 +53,12 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
           </div>
         </div>
       </td>
-      <td className="px-4 py-3 align-top">
+      <td className="px-2 py-2 align-top sm:px-3">
         <Select
           value={draft.shift}
           onValueChange={(value) => onUpdateShift(house.id, value as 'morning' | 'evening')}
         >
-          <SelectTrigger className="h-9 min-w-36">
+          <SelectTrigger className="h-9 w-28 sm:w-32">
             <SelectValue placeholder="Select shift" />
           </SelectTrigger>
           <SelectContent>
@@ -67,13 +67,13 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
           </SelectContent>
         </Select>
       </td>
-      <td className="px-4 py-3 align-top">
+      <td className="px-2 py-2 align-top sm:px-3">
         <Select
           value={draft.supplierId || '__none__'}
           onValueChange={(value) => onUpdateSupplier(house.id, value === '__none__' ? '' : value)}
           disabled={draft.shift === 'evening'}
         >
-          <SelectTrigger className="h-9 w-full min-w-48">
+          <SelectTrigger className="h-9 w-36 sm:w-44">
             <SelectValue placeholder="Select supplier" />
           </SelectTrigger>
           <SelectContent>
@@ -90,60 +90,6 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
   )
 })
 HouseRow.displayName = 'HouseRow'
-
-const HouseCard = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateSupplier }: any) => {
-  return (
-    <div className="rounded-xl border border-border bg-background p-3">
-      <div className="mb-3">
-        <p className="font-semibold text-foreground">{house.houseNo}</p>
-        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <MapPin className="h-3 w-3" />
-            {house.area || 'Area not set'}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Phone className="h-3 w-3" />
-            {house.phoneNo}
-          </span>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <Select
-          value={draft.shift}
-          onValueChange={(value) => onUpdateShift(house.id, value as 'morning' | 'evening')}
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue placeholder="Select shift" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="morning">Morning</SelectItem>
-            <SelectItem value="evening">Evening</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={draft.supplierId || '__none__'}
-          onValueChange={(value) => onUpdateSupplier(house.id, value === '__none__' ? '' : value)}
-          disabled={draft.shift === 'evening'}
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue placeholder="Select supplier" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">Unassigned</SelectItem>
-            {suppliers.map((item: User) => (
-              <SelectItem key={item.uuid} value={item.uuid}>
-                {item.username}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
-  )
-})
-HouseCard.displayName = 'HouseCard'
 
 export default function AdminHouseConfigPage() {
   const [search, setSearch] = useState('')
@@ -256,6 +202,66 @@ export default function AdminHouseConfigPage() {
     })
   }, [houses, drafts, supplierById, debouncedSearch, shiftFilter, supplierFilter])
 
+  const searchSuggestions = useMemo(() => {
+    if (!houses) return []
+
+    const query = search.trim().toLowerCase()
+    if (!query) return []
+
+    return houses
+      .map((house) => {
+        const draft = drafts[house.id]
+        if (!draft) return null
+
+        if (shiftFilter !== 'all' && draft.shift !== shiftFilter) return null
+        if (supplierFilter !== 'all') {
+          if (supplierFilter === 'unassigned' && draft.supplierId) {
+            return null
+          }
+          if (supplierFilter !== 'unassigned' && supplierFilter !== draft.supplierId) {
+            return null
+          }
+        }
+
+        const supplier = draft.supplierId ? supplierById.get(draft.supplierId) : undefined
+        const searchableText = [
+          house.houseNo,
+          house.area || '',
+          house.phoneNo,
+          draft.shift,
+          supplier?.username || '',
+        ].join(' ').toLowerCase()
+
+        if (!searchableText.includes(query)) return null
+
+        const score =
+          (house.houseNo.toLowerCase().startsWith(query) ? 0 : 10) +
+          (house.area?.toLowerCase().startsWith(query) ? 0 : 3) +
+          (supplier?.username?.toLowerCase().startsWith(query) ? 0 : 2) +
+          (searchableText.includes(query) ? 0 : 20)
+
+        return {
+          house,
+          supplierName: supplier?.username || 'Unassigned',
+          score,
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .sort((left, right) => left.score - right.score)
+      .slice(0, 6)
+  }, [houses, drafts, search, shiftFilter, supplierFilter, supplierById])
+
+  const handleSearchSelect = useCallback((value: string) => {
+    setSearch(value)
+    setDebouncedSearch(value)
+    setIsSearchOpen(false)
+  }, [])
+
+  const clearSearch = useCallback(() => {
+    setSearch('')
+    setDebouncedSearch('')
+  }, [])
+
   const updateShift = useCallback(async (houseId: number, shift: 'morning' | 'evening') => {
     const current = drafts[houseId]
     if (!current) return
@@ -358,19 +364,67 @@ export default function AdminHouseConfigPage() {
       </div>
 
       <Dialog open={isSearchOpen} onOpenChange={setIsSearchOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Search Houses</DialogTitle>
           </DialogHeader>
-          <div className="relative">
-            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by house no, area, phone..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="pl-9"
-              autoFocus
-            />
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by house no, area, phone..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="pl-9 pr-10"
+                autoFocus
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={clearSearch}
+                  className="absolute top-1/2 right-2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {search.trim() ? (
+              <div className="max-h-72 overflow-y-auto rounded-xl border border-border bg-background">
+                {searchSuggestions.length > 0 ? (
+                  <div className="divide-y divide-border">
+                    {searchSuggestions.map((item) => (
+                      <button
+                        key={item.house.id}
+                        type="button"
+                        onClick={() => handleSearchSelect(item.house.houseNo)}
+                        className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/60"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">{item.house.houseNo}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {item.house.area || 'Area not set'} • {item.house.phoneNo}
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                          {item.supplierName}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-4 text-sm text-muted-foreground">
+                    No matching houses found.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground text-center">
+                No Filtered Records.
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -389,60 +443,35 @@ export default function AdminHouseConfigPage() {
             <p className="mt-1 text-sm">Try a different search query or filter.</p>
           </div>
         ) : (
-          <>
-            <div className="space-y-3 p-3 md:hidden">
-              {filteredHouses.map((house) => {
-                const draft = drafts[house.id]
-                if (!draft) return null
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-full table-auto text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40">
+                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">House</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Shift</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Supplier</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredHouses.map((house, index) => {
+                  const draft = drafts[house.id]
+                  if (!draft) return null
 
-                return (
-                  <HouseCard
-                    key={house.id}
-                    house={house}
-                    draft={draft}
-                    suppliers={suppliers}
-                    onUpdateShift={updateShift}
-                    onUpdateSupplier={updateSupplier}
-                  />
-                )
-              })}
-            </div>
-
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-200 table-fixed text-sm">
-                <colgroup>
-                  <col className="w-[40%]" />
-                  <col className="w-[20%]" />
-                  <col className="w-[40%]" />
-                </colgroup>
-                <thead>
-                  <tr className="border-b border-border bg-muted/40">
-                    <th className="px-4 py-3.5 text-left font-semibold text-muted-foreground w-1/3">House</th>
-                    <th className="px-4 py-3.5 text-left font-semibold text-muted-foreground w-1/4">Shift</th>
-                    <th className="px-4 py-3.5 text-left font-semibold text-muted-foreground w-1/3">Supplier</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredHouses.map((house, index) => {
-                    const draft = drafts[house.id]
-                    if (!draft) return null
-
-                    return (
-                      <HouseRow
-                        key={house.id}
-                        house={house}
-                        draft={draft}
-                        suppliers={suppliers}
-                        onUpdateShift={updateShift}
-                        onUpdateSupplier={updateSupplier}
-                        isLast={index === filteredHouses.length - 1}
-                      />
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
+                  return (
+                    <HouseRow
+                      key={house.id}
+                      house={house}
+                      draft={draft}
+                      suppliers={suppliers}
+                      onUpdateShift={updateShift}
+                      onUpdateSupplier={updateSupplier}
+                      isLast={index === filteredHouses.length - 1}
+                    />
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
