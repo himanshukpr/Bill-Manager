@@ -7,16 +7,16 @@ datasource db {
 }
 
 model User {
-  uuid           String           @id @default(uuid()) @db.Uuid
-  username       String           @unique
-  email          String           @unique
-  password       String
-  role           Role             @default(supplier)
-  createdAt      DateTime         @default(now()) @map("created_at")
-  isVerified     Boolean          @default(false)
-  deliveries     DeliveryLog[]
-  deliveryPlans  DeliveryPlan[]
-  houseConfigs   HouseConfig[]
+  uuid          String         @id @default(uuid()) @db.Uuid
+  username      String         @unique
+  email         String         @unique
+  password      String
+  role          Role           @default(supplier)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  isVerified    Boolean        @default(false)
+  deliveries    DeliveryLog[]
+  deliveryPlans DeliveryPlan[]
+  houseConfigs  HouseConfig[]
 
   @@map("users")
 }

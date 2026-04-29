@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ClipboardList, Home, List } from "lucide-react"
+import { ClipboardList, Home, List, Truck } from "lucide-react"
 import { NavMain } from "@/components/dashboard/shared/nav-main"
 import { NavUser } from "@/components/dashboard/shared/nav-user"
 import {
@@ -18,6 +18,7 @@ interface SupplierSidebarProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
+  { title: "Direct Entry", url: "/dashboard/supplier/direct-entry", icon: Truck },
   { title: "Delivery Plan", url: "/dashboard/supplier/ap", icon: ClipboardList },
 ]
 

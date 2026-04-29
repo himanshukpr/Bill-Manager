@@ -576,60 +576,60 @@ export const housesApi = {
     }
 
     return apiPatch<House>(`/houses/${id}/location`, data)
-    },
-    deactivate: async (id: number) => {
-      if (isBrowser()) {
-        const existing = await db.houses.get(id);
-        if (existing) {
-          const next = { ...existing, active: false };
-          await db.houses.put(next);
-          await updateCachedQueries<House[]>(
-            (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
-            (cached) => {
-              if (Array.isArray(cached)) {
-                return cached.map((item) => (item.id === id ? next : item));
-              }
+  },
+  deactivate: async (id: number) => {
+    if (isBrowser()) {
+      const existing = await db.houses.get(id);
+      if (existing) {
+        const next = { ...existing, active: false };
+        await db.houses.put(next);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+          (cached) => {
+            if (Array.isArray(cached)) {
+              return cached.map((item) => (item.id === id ? next : item));
+            }
 
-              return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
-            },
-          );
-        }
-        void syncEngine.enqueue(`/houses/${id}/deactivate`, 'PATCH', {});
-        return existing ? { ...existing, active: false } : null;
+            return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+          },
+        );
       }
+      void syncEngine.enqueue(`/houses/${id}/deactivate`, 'PATCH', {});
+      return existing ? { ...existing, active: false } : null;
+    }
 
-      if (isOnline()) {
-        return apiPatch<House>(`/houses/${id}/deactivate`, {});
+    if (isOnline()) {
+      return apiPatch<House>(`/houses/${id}/deactivate`, {});
+    }
+
+    return null;
+  },
+  reactivate: async (id: number) => {
+    if (isBrowser()) {
+      const existing = await db.houses.get(id);
+      if (existing) {
+        const next = { ...existing, active: true };
+        await db.houses.put(next);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+          (cached) => {
+            if (Array.isArray(cached)) {
+              return cached.map((item) => (item.id === id ? next : item));
+            }
+
+            return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+          },
+        );
       }
+      void syncEngine.enqueue(`/houses/${id}/reactivate`, 'PATCH', {});
+      return existing ? { ...existing, active: true } : null;
+    }
 
-      return null;
-    },
-    reactivate: async (id: number) => {
-      if (isBrowser()) {
-        const existing = await db.houses.get(id);
-        if (existing) {
-          const next = { ...existing, active: true };
-          await db.houses.put(next);
-          await updateCachedQueries<House[]>(
-            (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
-            (cached) => {
-              if (Array.isArray(cached)) {
-                return cached.map((item) => (item.id === id ? next : item));
-              }
+    if (isOnline()) {
+      return apiPatch<House>(`/houses/${id}/reactivate`, {});
+    }
 
-              return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
-            },
-          );
-        }
-        void syncEngine.enqueue(`/houses/${id}/reactivate`, 'PATCH', {});
-        return existing ? { ...existing, active: true } : null;
-      }
-
-      if (isOnline()) {
-        return apiPatch<House>(`/houses/${id}/reactivate`, {});
-      }
-
-      return null;
+    return null;
   },
   delete: async (id: number) => {
     if (isBrowser()) {
@@ -931,7 +931,7 @@ export const billsApi = {
       },
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
-  preview: (houseId: number, date: string) => 
+  preview: (houseId: number, date: string) =>
     apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null }>(`/bills/preview?houseId=${houseId}&date=${date}`),
   generate: async (data: {
     houseId: number;

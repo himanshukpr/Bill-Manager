@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  Plus, Search, Phone, MapPin, Building2, Bell, CalendarDays,
+  Plus, Search, X, Phone, MapPin, Building2, Bell, CalendarDays,
   Pencil, Trash2, Eye, Settings2, Save, Rows3
 } from 'lucide-react'
 import jsPDF from 'jspdf'
@@ -223,11 +223,28 @@ const emptyConfigForm: HouseConfigForm = {
   dailyAlerts: '',
 }
 
+type ShiftFilter = 'all' | 'morning' | 'evening'
+type PaymentFilter = 'all' | 'clear' | 'pending' | 'advance'
+
+function getHouseShift(house: House): 'morning' | 'evening' {
+  return house.configs?.[0]?.shift ?? 'evening'
+}
+
+function getHousePaymentStatus(house: House): Exclude<PaymentFilter, 'all'> {
+  const balance = Number(house.balance?.previousBalance ?? 0)
+  if (balance > 0) return 'pending'
+  if (balance < 0) return 'advance'
+  return 'clear'
+}
+
 export default function HousesPage() {
   const [houses, setHouses] = useState<House[]>([])
   const [suppliers, setSuppliers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [shiftFilter, setShiftFilter] = useState<ShiftFilter>('all')
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all')
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -248,11 +265,19 @@ export default function HousesPage() {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
   })
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
 
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
     return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search)
+    }, 200)
+    return () => clearTimeout(handler)
+  }, [search])
 
   const handleExportSummaryPdf = useCallback(() => {
     if (!summaryHouse) return
@@ -321,11 +346,58 @@ export default function HousesPage() {
 
   useEffect(() => { load() }, [load])
 
-  const filtered = houses.filter(h =>
-    h.houseNo.toLowerCase().includes(search.toLowerCase()) ||
-    h.area?.toLowerCase().includes(search.toLowerCase()) ||
-    h.phoneNo.includes(search)
-  )
+  const filtered = useMemo(() => {
+    const query = debouncedSearch.trim().toLowerCase()
+
+    return houses.filter((house) => {
+      const shift = getHouseShift(house)
+      if (shiftFilter !== 'all' && shift !== shiftFilter) return false
+
+      const paymentStatus = getHousePaymentStatus(house)
+      if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
+
+      if (!query) return true
+
+      return (
+        house.houseNo.toLowerCase().includes(query) ||
+        (house.area || '').toLowerCase().includes(query) ||
+        house.phoneNo.includes(query)
+      )
+    })
+  }, [houses, debouncedSearch, shiftFilter, paymentFilter])
+
+  const searchSuggestions = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return []
+
+    return houses
+      .filter((house) => {
+        const shift = getHouseShift(house)
+        if (shiftFilter !== 'all' && shift !== shiftFilter) return false
+
+        const paymentStatus = getHousePaymentStatus(house)
+        if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
+
+        return (
+          house.houseNo.toLowerCase().includes(query) ||
+          (house.area || '').toLowerCase().includes(query) ||
+          house.phoneNo.includes(query)
+        )
+      })
+      .slice(0, 6)
+  }, [houses, search, shiftFilter, paymentFilter])
+
+  const handleSearchSelect = useCallback((value: string) => {
+    setSearch(value)
+    setDebouncedSearch(value)
+    setIsSearchOpen(false)
+  }, [])
+
+  const clearSearch = useCallback(() => {
+    setSearch('')
+    setDebouncedSearch('')
+  }, [])
+
   const selectedConfigHouse = houses.find(h => h.id === Number.parseInt(configForm.houseId, 10))
 
   function openAdd() {
@@ -362,15 +434,21 @@ export default function HousesPage() {
       toast.error('Select a supplier for morning shift')
       return
     }
+
     setSaving(true)
     try {
       const payload = {
-        houseNo: form.houseNo, area: form.area || undefined,
-        phoneNo: form.phoneNo, alternativePhone: form.alternativePhone || undefined,
+        houseNo: form.houseNo,
+        area: form.area || undefined,
+        phoneNo: form.phoneNo,
+        alternativePhone: form.alternativePhone || undefined,
         description: form.description || undefined,
-        rate1Type: form.rate1Type || undefined, rate1: form.rate1 ? form.rate1 : undefined,
-        rate2Type: form.rate2Type || undefined, rate2: form.rate2 ? form.rate2 : undefined,
+        rate1Type: form.rate1Type || undefined,
+        rate1: form.rate1 ? form.rate1 : undefined,
+        rate2Type: form.rate2Type || undefined,
+        rate2: form.rate2 ? form.rate2 : undefined,
       }
+
       const savedHouse = editingId
         ? await housesApi.update(editingId, payload)
         : await housesApi.create(payload)
@@ -517,34 +595,183 @@ export default function HousesPage() {
     }
   }
 
+  const handleExportHousesPdf = () => {
+    if (filtered.length === 0) {
+      toast.error('No houses to export')
+      return
+    }
+
+    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+    const title = 'Houses List'
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(16)
+    doc.text(title, 14, 16)
+
+    autoTable(doc, {
+      startY: 24,
+      head: [['House No', 'Address', 'Phone No', 'Balance']],
+      body: filtered.map((house) => [
+        String(house.houseNo),
+        house.area || '-',
+        house.phoneNo || '-',
+        house.balance?.previousBalance ? `₹${Number(house.balance.previousBalance).toLocaleString('en-IN')}` : '-',
+      ]),
+      styles: {
+        font: 'helvetica',
+        fontSize: 9,
+        cellPadding: 3,
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [17, 24, 39],
+        textColor: 255,
+      },
+      columnStyles: {
+        0: { cellWidth: 30 },
+        1: { cellWidth: 50 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 35 },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      margin: { top: 30, left: 14, right: 14 },
+    })
+
+    doc.save(`houses-list-${new Date().toISOString().split('T')[0]}.pdf`)
+    toast.success('Houses exported successfully')
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-            Administration
-          </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight">Houses</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage all registered dairy delivery houses
-          </p>
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+          Administration
+        </p>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Houses</h1>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsSearchOpen(true)}
+              className="h-9 w-9 rounded-lg"
+              aria-label="Search houses"
+              title="Search houses"
+            >
+              <Search className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleExportHousesPdf}
+              disabled={filtered.length === 0}
+              className="h-9 w-9 rounded-lg sm:w-auto sm:size-auto sm:gap-2"
+              title="Export to PDF"
+            >
+              <Building2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Export PDF</span>
+            </Button>
+            <Button onClick={openAdd} className="gap-2 sm:gap-2">
+              <Plus className="h-4 w-4" /> Add House
+            </Button>
+          </div>
         </div>
-        <Button onClick={openAdd} className="gap-2 self-start sm:self-auto">
-          <Plus className="h-4 w-4" /> Add House
-        </Button>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search by house no, area or phone..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      <div className="grid grid-cols-2 gap-2">
+        <Select value={shiftFilter} onValueChange={(value) => setShiftFilter(value as ShiftFilter)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All Houses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Houses</SelectItem>
+            <SelectItem value="morning">Morning</SelectItem>
+            <SelectItem value="evening">Evening</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={paymentFilter} onValueChange={(value) => setPaymentFilter(value as PaymentFilter)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All Payments" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Payments</SelectItem>
+            <SelectItem value="clear">Clear</SelectItem>
+            <SelectItem value="pending">Pending</SelectItem>
+            <SelectItem value="advance">Advance</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
+
+      <Dialog open={isSearchOpen} onOpenChange={setIsSearchOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Search Houses</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by house no, area, or phone..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="pl-9 pr-10"
+                autoFocus
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={clearSearch}
+                  className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {search.trim() ? (
+              <div className="max-h-72 overflow-y-auto rounded-xl border border-border bg-background">
+                {searchSuggestions.length > 0 ? (
+                  <div className="divide-y divide-border">
+                    {searchSuggestions.map((house) => (
+                      <button
+                        key={house.id}
+                        type="button"
+                        onClick={() => handleSearchSelect(house.houseNo)}
+                        className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/60"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">{house.houseNo}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {house.area || 'Area not set'} • {house.phoneNo}
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                          {getHousePaymentStatus(house)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-4 text-sm text-muted-foreground">
+                    No matching houses found.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+                Type to search houses.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Table */}
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -560,16 +787,16 @@ export default function HousesPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-full table-auto text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40">
-                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House No</th>
-                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Area</th>
-                  <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Phone</th>
-                  <th className="hidden lg:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Rate 1</th>
-                  <th className="hidden lg:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Rate 2</th>
-                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Balance</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">House No</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Area</th>
+                  <th className="hidden md:table-cell whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Phone</th>
+                  <th className="hidden lg:table-cell whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Rate 1</th>
+                  <th className="hidden lg:table-cell whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Rate 2</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Balance</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-right font-semibold text-muted-foreground sm:px-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -578,43 +805,43 @@ export default function HousesPage() {
                     key={h.id}
                     className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
                   >
-                    <td className="px-4 py-3">
+                    <td className="px-2 py-2 sm:px-3">
                       <span className="font-semibold text-foreground">{h.houseNo}</span>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
+                    <td className="px-2 py-2 text-muted-foreground sm:px-3">
                       <div className="flex items-center gap-1">
                         {h.area && <MapPin className="h-3 w-3 shrink-0" />}
                         {h.area || '—'}
                       </div>
                     </td>
-                    <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">
+                    <td className="hidden md:table-cell px-2 py-2 text-muted-foreground sm:px-3">
                       <div className="flex items-center gap-1">
                         <Phone className="h-3 w-3 shrink-0" />
                         {h.phoneNo}
                       </div>
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-3">
+                    <td className="hidden lg:table-cell px-2 py-2 sm:px-3">
                       {h.rate1Type ? (
                         <Badge variant="outline" className="gap-1 font-medium">
                           {h.rate1Type} — ₹{h.rate1}
                         </Badge>
                       ) : '—'}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-3">
+                    <td className="hidden lg:table-cell px-2 py-2 sm:px-3">
                       {h.rate2Type ? (
                         <Badge variant="outline" className="gap-1 font-medium">
                           {h.rate2Type} — ₹{h.rate2}
                         </Badge>
                       ) : '—'}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2 py-2 sm:px-3">
                       {h.balance ? (
                         <span className={`font-semibold ${Number(h.balance.previousBalance) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                           ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
                         </span>
                       ) : '—'}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2 py-2 sm:px-3">
                       <div className="flex items-center justify-end gap-1">
                         <Button variant="ghost" size="icon" onClick={() => openView(h)} title="View">
                           <Eye className="h-4 w-4" />
