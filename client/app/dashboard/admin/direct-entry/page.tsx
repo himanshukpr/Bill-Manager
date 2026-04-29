@@ -215,23 +215,6 @@ export default function DeliveryEntryPage() {
 
   return (
     <div className="space-y-6">
-      {/* <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-3">
-            <Badge variant="outline" className="w-fit gap-1.5 px-3 py-1">
-              <Truck className="h-3.5 w-3.5" />
-              Direct Entry
-            </Badge>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">Add direct entries</h1>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Record delivered milk and product quantities from the admin section without switching into the supplier flow.
-              </p>
-            </div>
-          </div>
-
-        </div>
-      </div> */}
 
       <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
         <Card className="rounded-3xl border border-border bg-card py-0">
@@ -252,7 +235,7 @@ export default function DeliveryEntryPage() {
             ) : (
               <>
                 <div className="space-y-1">
-                  <Label htmlFor="delivery-house">House</Label>
+                  <Label htmlFor="delivery-house" className="font-semibold">Which house?</Label>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                     <Input
@@ -327,7 +310,6 @@ export default function DeliveryEntryPage() {
                         >
                           <CirclePlus className="h-3.5 w-3.5 text-primary" />
                           {rate.name}
-                          <span className="text-xs text-muted-foreground">{formatMoney(rate.rate)}/{rate.unit}</span>
                         </button>
                       ))
                     )}
