@@ -11,6 +11,33 @@ import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 export class BillsService {
   constructor(private prisma: PrismaService) {}
 
+  private async getLatestHouseNote(houseId: number): Promise<string | null> {
+    const house = await this.prisma.house.findUnique({
+      where: { id: houseId },
+      select: { houseNo: true },
+    });
+
+    if (!house) {
+      return null;
+    }
+
+    const lastNote = await this.prisma.billNote.findFirst({
+      where: { houseNo: house.houseNo },
+      orderBy: { id: 'desc' },
+    });
+
+    if (!lastNote) {
+      return null;
+    }
+
+    if (typeof lastNote.note === 'object' && lastNote.note !== null) {
+      const noteText = (lastNote.note as { text?: unknown }).text;
+      return typeof noteText === 'string' && noteText.trim().length > 0 ? noteText.trim() : null;
+    }
+
+    return null;
+  }
+
   private resolvePeriod(dto: { date?: string; fromDate?: string; toDate?: string }) {
     const fromInput = dto.fromDate ?? dto.date;
     const toInput = dto.toDate ?? dto.date;
@@ -225,6 +252,7 @@ export class BillsService {
         await tx.billNote.create({
           data: {
             billId: bill.id,
+            houseNo: bill.house.houseNo,
             note: noteData,
           },
         });
@@ -334,6 +362,7 @@ export class BillsService {
       grandTotal: totalAmount + previousBalance,
       logCount: deliveryLogs.length,
       existingBillId: existingBill?.id ?? null,
+      lastNote: await this.getLatestHouseNote(houseId),
     };
   }
 

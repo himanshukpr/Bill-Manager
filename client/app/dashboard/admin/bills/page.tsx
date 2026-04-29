@@ -64,7 +64,7 @@ export default function BillsPage() {
   const [genNote, setGenNote] = useState('')
 
   // Preview State
-  const [previewData, setPreviewData] = useState<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null } | null>(null)
+  const [previewData, setPreviewData] = useState<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const hasLoadedOnceRef = useRef(false)
 
@@ -112,6 +112,7 @@ export default function BillsPage() {
       try {
         const data = await billsApi.preview(parseInt(genHouseId), { fromDate: genFromDate, toDate: genToDate })
         setPreviewData(data)
+        setGenNote(data.lastNote ?? '')
       } catch (e: any) {
         setPreviewData(null)
       } finally {
@@ -326,7 +327,11 @@ export default function BillsPage() {
                 <Button
                   type="button"
                   variant={generateMode === 'all' ? 'default' : 'outline'}
-                  onClick={() => setGenerateMode('all')}
+                  onClick={() => {
+                    setGenerateMode('all')
+                    setGenNote('')
+                    setPreviewData(null)
+                  }}
                   disabled={saving}
                 >
                   All Houses

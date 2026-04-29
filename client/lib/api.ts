@@ -932,7 +932,7 @@ export const billsApi = {
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
     preview: (houseId: number, period: { fromDate: string; toDate: string }) =>
-      apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null }>(
+        apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
         `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
       ),
   generate: async (data: {

@@ -100,10 +100,11 @@ model Bill {
 }
 
 model BillNote {
-  id      Int   @id @default(autoincrement())
-  billId  Int   @map("bill_id")
+  id      Int     @id @default(autoincrement())
+  billId  Int     @map("bill_id")
+  houseNo String? @map("house_no")
   note    Json
-  bill    Bill  @relation(fields: [billId], references: [id], onDelete: Cascade)
+  bill    Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
 
   @@map("bill_notes")
 }
