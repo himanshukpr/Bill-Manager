@@ -412,9 +412,6 @@ export default function AdminDailyAlertsPage() {
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Administration</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">Daily Alerts Manager</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Build custom delivery alert schedules tailored for each day of the week, per house.
-        </p>
       </div>
 
       <div className="relative">
