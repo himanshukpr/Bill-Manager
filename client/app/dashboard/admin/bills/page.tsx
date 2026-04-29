@@ -30,6 +30,20 @@ const MONTH_NAMES = [
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i)
 
+function getMonthStart(value: Date = new Date()): string {
+  const date = new Date(value)
+  date.setDate(1)
+  return date.toISOString().split('T')[0]
+}
+
+function isValidRange(fromDate: string, toDate: string): boolean {
+  if (!fromDate || !toDate) return false
+
+  const from = new Date(fromDate)
+  const to = new Date(toDate)
+  return !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && from <= to
+}
+
 export default function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([])
   const [houses, setHouses] = useState<House[]>([])
@@ -45,7 +59,8 @@ export default function BillsPage() {
 
   // Generate form
   const [genHouseId, setGenHouseId] = useState('')
-  const [genDate, setGenDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [genFromDate, setGenFromDate] = useState(() => getMonthStart())
+  const [genToDate, setGenToDate] = useState(() => new Date().toISOString().split('T')[0])
   const [genNote, setGenNote] = useState('')
 
   // Preview State
@@ -56,8 +71,8 @@ export default function BillsPage() {
   const generateDisabled =
     saving ||
     previewLoading ||
-    !genDate ||
-    (generateMode === 'single' && (!genHouseId || !!previewData?.existingBillId))
+    !isValidRange(genFromDate, genToDate) ||
+    (generateMode === 'single' && !genHouseId)
 
   const load = useCallback(async () => {
     try {
@@ -88,14 +103,14 @@ export default function BillsPage() {
       setPreviewData(null)
       return
     }
-    if (!genHouseId || !genDate) {
+    if (!genHouseId || !isValidRange(genFromDate, genToDate)) {
       setPreviewData(null)
       return
     }
     const fetchPreview = async () => {
       setPreviewLoading(true)
       try {
-        const data = await billsApi.preview(parseInt(genHouseId), genDate)
+        const data = await billsApi.preview(parseInt(genHouseId), { fromDate: genFromDate, toDate: genToDate })
         setPreviewData(data)
       } catch (e: any) {
         setPreviewData(null)
@@ -104,7 +119,7 @@ export default function BillsPage() {
       }
     }
     fetchPreview()
-  }, [genHouseId, genDate, generateMode])
+  }, [genHouseId, genFromDate, genToDate, generateMode])
 
   const filtered = bills.filter(b =>
     b.house?.houseNo.toLowerCase().includes(search.toLowerCase()) ||
@@ -114,7 +129,8 @@ export default function BillsPage() {
   function openGenerate() {
     setGenerateMode('single')
     setGenHouseId('')
-    setGenDate(new Date().toISOString().split('T')[0])
+    setGenFromDate(getMonthStart())
+    setGenToDate(new Date().toISOString().split('T')[0])
     setGenNote('')
     setPreviewData(null)
     setGenerateOpen(true)
@@ -123,25 +139,22 @@ export default function BillsPage() {
   async function handleGenerate() {
     if (generateMode === 'single') {
       if (!genHouseId) { toast.error('Please select a house'); return }
-      if (previewData?.existingBillId) {
-        const selectedDate = new Date(genDate)
-        const selectedHouse = houses.find(h => h.id === parseInt(genHouseId))
-        toast.error(
-          `Bill already exists for ${selectedHouse?.houseNo ?? `house #${genHouseId}`} in ${MONTH_NAMES[selectedDate.getMonth() + 1]} ${selectedDate.getFullYear()}. Delete it first to regenerate.`
-        )
-        return
-      }
+      if (!isValidRange(genFromDate, genToDate)) { toast.error('Please choose a valid from and upto date range'); return }
       if (!previewData || previewData.totalAmount <= 0) {
         toast.error('No delivery logs found for this period to generate a bill')
         return
       }
+    } else if (!isValidRange(genFromDate, genToDate)) {
+      toast.error('Please choose a valid from and upto date range')
+      return
     }
 
     setSaving(true)
     try {
       if (generateMode === 'all') {
         const result = await billsApi.generateAll({
-          date: genDate,
+          fromDate: genFromDate,
+          toDate: genToDate,
           note: genNote || undefined,
         })
         if (result.generatedCount > 0) {
@@ -154,20 +167,17 @@ export default function BillsPage() {
       } else {
         await billsApi.generate({
           houseId: parseInt(genHouseId),
-          date: genDate,
+          fromDate: genFromDate,
+          toDate: genToDate,
           note: genNote || undefined,
         })
-        toast.success('Bill generated successfully')
+        toast.success(previewData?.existingBillId ? 'Bill overwritten successfully' : 'Bill generated successfully')
       }
       setGenerateOpen(false)
       load()
     } catch (e: any) {
       const msg = String(e?.message ?? '')
-      if (msg.toLowerCase().includes('already exists')) {
-        toast.error('Bill for this house and month already exists. Delete the old bill to generate again.')
-      } else {
-        toast.error(msg || 'Failed to generate bill')
-      }
+      toast.error(msg || 'Failed to generate bill')
     } finally {
       setSaving(false)
     }
@@ -298,7 +308,7 @@ export default function BillsPage() {
           <DialogHeader>
             <DialogTitle>Generate Bill</DialogTitle>
             <DialogDescription>
-              Choose whether to generate for one house or for all houses up to the selected date.
+              Choose whether to generate for one house or for all houses within the selected date range.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-5 py-2">
@@ -341,8 +351,12 @@ export default function BillsPage() {
                 </div>
               )}
               <div className="space-y-1.5">
-                <Label>Generate Bill Up To Date</Label>
-                <Input type="date" value={genDate} onChange={e => setGenDate(e.target.value)} />
+                <Label>From Date</Label>
+                <Input type="date" value={genFromDate} onChange={e => setGenFromDate(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Upto Date</Label>
+                <Input type="date" value={genToDate} onChange={e => setGenToDate(e.target.value)} />
               </div>
             </div>
 
@@ -358,9 +372,17 @@ export default function BillsPage() {
                     <>
                       {previewData.existingBillId && (
                         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-                          A bill for this house and month already exists. Please delete the existing bill first if you want to generate again.
+                          A bill for this period already exists. Generating again will overwrite the existing bill.
                         </div>
                       )}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-muted-foreground">Period</span>
+                        <span className="font-semibold">
+                          {new Date(genFromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          {' '}to{' '}
+                          {new Date(genToDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-muted-foreground">Deliveries Total ({previewData.logCount} logs)</span>
                         <span className="font-semibold">₹{previewData.totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
@@ -383,8 +405,8 @@ export default function BillsPage() {
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                Bills will be generated for all houses up to {new Date(genDate).toLocaleDateString('en-IN')}.
-                Houses with no deliveries for this month or an existing bill will be skipped.
+                Bills will be generated for all houses from {new Date(genFromDate).toLocaleDateString('en-IN')} to {new Date(genToDate).toLocaleDateString('en-IN')}.
+                Houses with no deliveries in this range will be skipped.
               </div>
             )}
 

@@ -931,11 +931,14 @@ export const billsApi = {
       },
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
-  preview: (houseId: number, date: string) =>
-    apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null }>(`/bills/preview?houseId=${houseId}&date=${date}`),
+    preview: (houseId: number, period: { fromDate: string; toDate: string }) =>
+      apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null }>(
+        `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
+      ),
   generate: async (data: {
     houseId: number;
-    date: string;
+      fromDate: string;
+      toDate: string;
     note?: string;
   }) => {
     const res = await apiPost<Bill>('/bills/generate', data);
@@ -945,7 +948,7 @@ export const billsApi = {
     }
     return res;
   },
-  generateAll: async (data: { date: string; note?: string }) => {
+  generateAll: async (data: { fromDate: string; toDate: string; note?: string }) => {
     const res = await apiPost<GenerateAllBillsResult>('/bills/generate-all', data);
     if (isBrowser()) {
       await invalidateCache('/bills');

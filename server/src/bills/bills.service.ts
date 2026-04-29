@@ -1,9 +1,9 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 
@@ -11,10 +11,39 @@ import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 export class BillsService {
   constructor(private prisma: PrismaService) {}
 
+  private resolvePeriod(dto: { date?: string; fromDate?: string; toDate?: string }) {
+    const fromInput = dto.fromDate ?? dto.date;
+    const toInput = dto.toDate ?? dto.date;
+
+    if (!fromInput || !toInput) {
+      throw new BadRequestException('From and upto dates are required');
+    }
+
+    const periodStart = new Date(fromInput);
+    const periodEnd = new Date(toInput);
+
+    if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime())) {
+      throw new BadRequestException('Invalid billing period date');
+    }
+
+    periodStart.setHours(0, 0, 0, 0);
+    periodEnd.setHours(23, 59, 59, 999);
+
+    if (periodStart > periodEnd) {
+      throw new BadRequestException('From date must be before or equal to upto date');
+    }
+
+    return {
+      periodStart,
+      periodEnd,
+      month: periodEnd.getMonth() + 1,
+      year: periodEnd.getFullYear(),
+    };
+  }
+
   private async buildBillDraft(dto: GenerateBillDto) {
-    const selectedDate = new Date(dto.date);
-    const month = selectedDate.getMonth() + 1;
-    const year = selectedDate.getFullYear();
+    const { periodStart, periodEnd, month, year } = this.resolvePeriod(dto);
+    const noteText = dto.note?.trim();
 
     const existing = await this.prisma.bill.findUnique({
       where: {
@@ -25,11 +54,6 @@ export class BillsService {
         },
       },
     });
-    if (existing) {
-      throw new ConflictException(
-        `Bill for house #${dto.houseId} for ${month}/${year} already exists`,
-      );
-    }
 
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId: dto.houseId },
@@ -37,16 +61,12 @@ export class BillsService {
     if (!balance)
       throw new NotFoundException(`House #${dto.houseId} balance not found`);
 
-    const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const periodEnd = new Date(selectedDate);
-    periodEnd.setHours(23, 59, 59, 999);
-
     const deliveryLogs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId: dto.houseId,
         deliveredAt: {
           gte: periodStart,
-          lt: periodEnd,
+          lte: periodEnd,
         },
       },
       orderBy: { deliveredAt: 'asc' },
@@ -107,10 +127,13 @@ export class BillsService {
     return {
       month,
       year,
-      selectedDate,
+      periodStart,
+      periodEnd,
       totalAmount,
       billItems,
       previousBalance: Number(balance.previousBalance),
+      existingBill: existing,
+      noteText,
     };
   }
 
@@ -134,6 +157,9 @@ export class BillsService {
       where: { id },
       include: {
         house: true,
+        notes: {
+          orderBy: { id: 'asc' },
+        },
       },
     });
     if (!bill) throw new NotFoundException(`Bill #${id} not found`);
@@ -141,12 +167,45 @@ export class BillsService {
   }
 
   async generate(dto: GenerateBillDto) {
-    const { month, year, selectedDate, totalAmount, billItems, previousBalance } =
-      await this.buildBillDraft(dto);
+    const {
+      month,
+      year,
+      periodStart,
+      periodEnd,
+      totalAmount,
+      billItems,
+      previousBalance,
+      existingBill,
+      noteText,
+    } = await this.buildBillDraft(dto);
 
-    // Use transaction: create bill + update balance
-    const [bill] = await this.prisma.$transaction([
-      this.prisma.bill.create({
+    return this.prisma.$transaction(async (tx) => {
+      if (existingBill) {
+        const existingTotal = Number(existingBill.totalAmount ?? 0);
+        const existingPeriodEnd = new Date(existingBill.generatedDate);
+        existingPeriodEnd.setHours(23, 59, 59, 999);
+
+        await tx.bill.delete({ where: { id: existingBill.id } });
+        await tx.deliveryLog.updateMany({
+          where: {
+            houseId: dto.houseId,
+            deliveredAt: {
+              gte: new Date(existingBill.year, existingBill.month - 1, 1, 0, 0, 0, 0),
+              lte: existingPeriodEnd,
+            },
+          },
+          data: { billGenerated: false },
+        });
+        await tx.houseBalance.update({
+          where: { houseId: dto.houseId },
+          data: {
+            previousBalance: { decrement: existingTotal },
+            currentBalance: { increment: existingTotal },
+          },
+        });
+      }
+
+      const bill = await tx.bill.create({
         data: {
           houseId: dto.houseId,
           month,
@@ -154,36 +213,44 @@ export class BillsService {
           totalAmount,
           items: billItems as any,
           previousBalance,
-          generatedDate: selectedDate,
-          note: dto.note,
+          generatedDate: periodEnd,
+          note: noteText || undefined,
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
-      }),
-      this.prisma.deliveryLog.updateMany({
+      });
+
+      if (noteText) {
+        const noteData: Prisma.InputJsonValue = { text: noteText };
+
+        await tx.billNote.create({
+          data: {
+            billId: bill.id,
+            note: noteData,
+          },
+        });
+      }
+
+      await tx.deliveryLog.updateMany({
         where: {
           houseId: dto.houseId,
           deliveredAt: {
-            gte: new Date(year, month - 1, 1, 0, 0, 0, 0),
-            lt: (() => {
-              const end = new Date(selectedDate);
-              end.setHours(23, 59, 59, 999);
-              return end;
-            })(),
+            gte: periodStart,
+            lte: periodEnd,
           },
         },
         data: { billGenerated: true },
-      }),
-      // Add bill amount to previousBalance, reset currentBalance
-      this.prisma.houseBalance.update({
+      });
+
+      await tx.houseBalance.update({
         where: { houseId: dto.houseId },
         data: {
           previousBalance: { increment: totalAmount },
           currentBalance: { decrement: totalAmount },
         },
-      }),
-    ]);
+      });
 
-    return bill;
+      return bill;
+    });
   }
 
   async generateAll(dto: GenerateAllBillsDto) {
@@ -200,6 +267,8 @@ export class BillsService {
         const bill = await this.generate({
           houseId: house.id,
           date: dto.date,
+          fromDate: dto.fromDate,
+          toDate: dto.toDate,
           note: dto.note,
         });
         generated.push({ houseId: house.id, houseNo: house.houseNo, billId: bill.id });
@@ -212,6 +281,8 @@ export class BillsService {
 
     return {
       date: dto.date,
+      fromDate: dto.fromDate,
+      toDate: dto.toDate,
       totalHouses: houses.length,
       generatedCount: generated.length,
       skippedCount: skipped.length,
@@ -220,10 +291,8 @@ export class BillsService {
     };
   }
 
-  async preview(houseId: number, dateStr: string) {
-    const selectedDate = new Date(dateStr);
-    const month = selectedDate.getMonth() + 1;
-    const year = selectedDate.getFullYear();
+  async preview(houseId: number, period: { date?: string; fromDate?: string; toDate?: string }) {
+    const { periodStart, periodEnd, month, year } = this.resolvePeriod(period);
 
     const existingBill = await this.prisma.bill.findUnique({
       where: {
@@ -242,16 +311,12 @@ export class BillsService {
     if (!balance)
       throw new NotFoundException(`House #${houseId} balance not found`);
 
-    const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const periodEnd = new Date(selectedDate);
-    periodEnd.setHours(23, 59, 59, 999);
-
     const deliveryLogs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId,
         deliveredAt: {
           gte: periodStart,
-          lt: periodEnd,
+          lte: periodEnd,
         },
       },
     });
@@ -278,22 +343,32 @@ export class BillsService {
     const periodStart = new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
     const periodEnd = new Date(bill.generatedDate);
     periodEnd.setHours(23, 59, 59, 999);
+    const billTotal = Number(bill.totalAmount ?? 0);
 
-    const [deleted] = await this.prisma.$transaction([
-      this.prisma.bill.delete({ where: { id } }),
-      this.prisma.deliveryLog.updateMany({
+    return this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.bill.delete({ where: { id } });
+
+      await tx.deliveryLog.updateMany({
         where: {
           houseId: bill.houseId,
           deliveredAt: {
             gte: periodStart,
-            lt: periodEnd,
+            lte: periodEnd,
           },
         },
         data: { billGenerated: false },
-      }),
-    ]);
+      });
 
-    return deleted;
+      await tx.houseBalance.update({
+        where: { houseId: bill.houseId },
+        data: {
+          previousBalance: { decrement: billTotal },
+          currentBalance: { increment: billTotal },
+        },
+      });
+
+      return deleted;
+    });
   }
 
   async getMonthlyStats(year: number) {
