@@ -30,6 +30,10 @@ export default function ReceiptsPage() {
   const [formHouseId, setFormHouseId] = useState('')
   const [formAmount, setFormAmount] = useState('')
   const [formNote, setFormNote] = useState('')
+  const [formHouseQuery, setFormHouseQuery] = useState('')
+  const [formArea, setFormArea] = useState('')
+  const [formPhone, setFormPhone] = useState('')
+  const [formHouseSelected, setFormHouseSelected] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -127,6 +131,8 @@ export default function ReceiptsPage() {
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Area</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Phone</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Note</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
@@ -136,11 +142,10 @@ export default function ReceiptsPage() {
                   {filtered.map((p, idx) => (
                     <tr key={p.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
                       <td className="px-4 py-3">
-                        <div>
-                          <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
-                          {p.balance?.house?.area && <p className="text-xs text-muted-foreground">{p.balance.house.area}</p>}
-                        </div>
+                        <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
                       </td>
+                      <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.area ?? '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.phoneNo ?? '—'}</td>
                       <td className="px-4 py-3">
                         <span className="font-bold text-emerald-600 dark:text-emerald-400">
                           ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -171,30 +176,62 @@ export default function ReceiptsPage() {
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>House</Label>
-              <Select value={formHouseId} onValueChange={setFormHouseId}>
-                <SelectTrigger><SelectValue placeholder="Select house" /></SelectTrigger>
-                <SelectContent>
-                  {houses.map(h => (
-                    <SelectItem key={h.id} value={String(h.id)}>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{h.houseNo}</span>
-                        {h.area && <span className="text-muted-foreground text-xs">— {h.area}</span>}
-                        {h.balance && (
-                          <span className="ml-auto text-amber-600 dark:text-amber-400 text-xs font-semibold">
-                            ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
-                          </span>
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input placeholder="Search house no or area..." value={formHouseQuery}
+                  onChange={e => { setFormHouseQuery(e.target.value); setFormHouseSelected(false); }} className="pl-9" />
+                {formHouseQuery.trim() !== '' && !formHouseSelected && (
+                  <div className="absolute left-0 right-0 mt-1 z-20 rounded-md border border-border bg-card">
+                    {(houses.filter(h => (
+                      h.houseNo.toLowerCase().includes(formHouseQuery.toLowerCase()) ||
+                      (h.area ?? '').toLowerCase().includes(formHouseQuery.toLowerCase())
+                    )).slice(0, 8)).map(h => (
+                      <button type="button" key={h.id} className="w-full text-left px-3 py-2 hover:bg-muted/30"
+                        onClick={() => {
+                          setFormHouseId(String(h.id))
+                          setFormHouseQuery(h.houseNo)
+                          setFormArea(h.area ?? '')
+                          setFormPhone(h.phoneNo ?? '')
+                          setFormHouseSelected(true)
+                        }}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{h.houseNo}</span>
+                          {h.area && <span className="text-muted-foreground text-xs">— {h.area}</span>}
+                          {h.balance && (
+                            <span className="ml-auto text-amber-600 dark:text-amber-400 text-xs font-semibold">
+                              ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                    {(houses.filter(h => (
+                      h.houseNo.toLowerCase().includes(formHouseQuery.toLowerCase()) ||
+                      (h.area ?? '').toLowerCase().includes(formHouseQuery.toLowerCase())
+                    )).length === 0) && (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">No matching houses</div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
-              <Input id="receipt-amount" type="number" min="0.01" step="0.01" placeholder="e.g. 1500" value={formAmount}
-                onChange={e => setFormAmount(e.target.value)} />
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="space-y-1.5 sm:col-span-1">
+                <Label htmlFor="receipt-area">Area</Label>
+                <Input id="receipt-area" value={formArea} onChange={e => setFormArea(e.target.value)} placeholder="Area" />
+              </div>
+              <div className="space-y-1.5 sm:col-span-1">
+                <Label htmlFor="receipt-phone">Phone</Label>
+                <Input id="receipt-phone" value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="Phone" />
+              </div>
+              <div className="space-y-1.5 sm:col-span-1">
+                <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
+                <Input id="receipt-amount" type="number" min="0.01" step="0.01" placeholder="e.g. 1500" value={formAmount}
+                  onChange={e => setFormAmount(e.target.value)} />
+              </div>
             </div>
+
             <div className="space-y-1.5">
               <Label htmlFor="receipt-note">Note (Optional)</Label>
               <Textarea id="receipt-note" placeholder="e.g. Cash received on 1st April" value={formNote}
