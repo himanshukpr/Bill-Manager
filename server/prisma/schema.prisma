@@ -15,7 +15,7 @@ model User {
   createdAt      DateTime         @default(now()) @map("created_at")
   isVerified     Boolean          @default(false)
   deliveries     DeliveryLog[]
-  delivery_plans delivery_plans[]
+  deliveryPlans  DeliveryPlan[]
   houseConfigs   HouseConfig[]
 
   @@map("users")
@@ -130,18 +130,19 @@ model DeliveryLog {
   @@map("delivery_logs")
 }
 
-model delivery_plans {
+model DeliveryPlan {
   id              Int      @id @default(autoincrement())
-  supplier_id     String   @db.Uuid
-  product_name    String
-  quantity_per_go Decimal  @db.Decimal(10, 2)
-  number_of_goes  Int
-  total_quantity  Decimal  @db.Decimal(10, 2)
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime @default(now()) @db.Timestamptz(6)
+  supplier_id     String   @map("supplier_id") @db.Uuid
+  product_name    String   @map("product_name")
+  quantity_per_go Decimal  @map("quantity_per_go") @db.Decimal(10, 2)
+  number_of_goes  Int      @map("number_of_goes")
+  total_quantity  Decimal  @map("total_quantity") @db.Decimal(10, 2)
+  created_at      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
   users           User     @relation(fields: [supplier_id], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([supplier_id, created_at])
+  @@map("delivery_plans")
 }
 
 enum Role {

@@ -27,6 +27,7 @@ const CACHE_INVALIDATION: Record<string, string[]> = {
   users: ['/users', '/house-config'],
   'product-rates': ['/product-rates', '/delivery-logs', '/bills'],
   'delivery-logs': ['/delivery-logs', '/house-balance', '/bills', '/houses'],
+  'delivery-plans': ['/delivery-plans'],
 };
 
 function isBrowser() {
@@ -480,6 +481,24 @@ export type DeliveryLog = {
   deliveredAt: string;
   house?: { id: number; houseNo: string; area?: string };
   supplier?: { uuid: string; username: string };
+};
+
+export type DeliveryPlanItem = {
+  product: string;
+  quantity: number;
+};
+
+export type DeliveryPlan = {
+  id: number;
+  supplier_id: string;
+  product_name: string;
+  quantity_per_go: number;
+  number_of_goes: number;
+  total_quantity: number;
+  created_at: string;
+  updated_at: string;
+  unit?: string;
+  users?: { uuid: string; username: string };
 };
 
 // ─── Houses ───────────────────────────────────────────────────────────────────
@@ -1093,5 +1112,23 @@ export const deliveryLogsApi = {
     }
 
     return null;
+  },
+};
+
+// ─── Delivery Plans ──────────────────────────────────────────────────────────
+
+export const deliveryPlansApi = {
+  list: () => apiGet<DeliveryPlan[]>('/delivery-plans'),
+  create: async (data: {
+    product_name: string;
+    quantity_per_go: number;
+    number_of_goes: number;
+    total_quantity: number;
+  }) => {
+    const res = await apiPost<DeliveryPlan>('/delivery-plans', data);
+    if (isBrowser()) {
+      await invalidateCache('/delivery-plans');
+    }
+    return res;
   },
 };

@@ -12,37 +12,37 @@ import { Type } from 'class-transformer';
 
 export class DeliveryItemDto {
     @IsString()
-    milkType: string;
+    milkType!: string;
 
     @Type(() => Number)
     @IsNumber()
     @Min(0)
-    qty: number;
+    qty!: number;
 
     @Type(() => Number)
     @IsNumber()
     @Min(0)
-    rate: number;
+    rate!: number;
 
     @Type(() => Number)
     @IsNumber()
     @Min(0)
-    amount: number;
+    amount!: number;
 }
 
 export class CreateDeliveryLogDto {
     @Type(() => Number)
     @IsNumber()
     @Min(1)
-    houseId: number;
+    houseId!: number;
 
     @IsIn(['morning', 'evening'])
-    shift: 'morning' | 'evening';
+    shift!: 'morning' | 'evening';
 
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => DeliveryItemDto)
-    items: DeliveryItemDto[];
+    items!: DeliveryItemDto[];
 
     @IsOptional()
     @IsString()
