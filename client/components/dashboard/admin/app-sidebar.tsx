@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Bell, Building2, FileText, Home, Receipt, Settings2, Tag, Users } from "lucide-react"
+import { BarChart3, Bell, Building2, FileText, Home, Receipt, Settings2, Tag, Users } from "lucide-react"
 
 import { NavMain } from "@/components/dashboard/shared/nav-main"
 import { NavUser } from "@/components/dashboard/shared/nav-user"
@@ -62,6 +62,11 @@ const navItems = [
         title: "Receipts",
         url: "/dashboard/admin/recipts",
         icon: Receipt,
+    },
+    {
+        title: "Delivery Analysis",
+        url: "/dashboard/admin/delivery-analysis",
+        icon: BarChart3,
     },
 ]
 

@@ -11,6 +11,7 @@ import { HouseBalanceModule } from './house-balance/house-balance.module';
 import { BillsModule } from './bills/bills.module';
 import { ProductRatesModule } from './product-rates/product-rates.module';
 import { DeliveryLogsModule } from './delivery-logs/delivery-logs.module';
+import { DeliveryPlansModule } from './delivery-plans/delivery-plans.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { DeliveryLogsModule } from './delivery-logs/delivery-logs.module';
     BillsModule,
     ProductRatesModule,
     DeliveryLogsModule,
+    DeliveryPlansModule,
   ],
   controllers: [AppController],
   providers: [AppService],

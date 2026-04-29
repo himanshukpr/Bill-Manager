@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react'
 import {
   FileText, Home, DollarSign, Users,
-  TrendingUp, AlertCircle, ArrowUpRight, ArrowDownRight,
+  TrendingUp, AlertCircle, ArrowUpRight, ArrowDownRight, BarChart3,
 } from 'lucide-react'
 import { billsApi, housesApi } from '@/lib/api'
+import Link from 'next/link'
 
 export default function AdminDashboardPage() {
   const [houseStats, setHouseStats] = useState({ totalHouses: 0, totalPreviousBalance: '0' })
@@ -95,6 +96,31 @@ export default function AdminDashboardPage() {
             </div>
           )
         })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Operations Analysis</p>
+              <h2 className="mt-2 text-xl font-bold">Delivery Plan vs Delivery Logs</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Compare supplier plans with actual delivery records to spot overdraws or short deliveries.
+              </p>
+            </div>
+            <div className="rounded-xl bg-emerald-500/15 p-3">
+              <BarChart3 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            </div>
+          </div>
+          <div className="mt-5">
+            <Link
+              href="/dashboard/admin/delivery-analysis"
+              className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:opacity-90"
+            >
+              Open analysis
+            </Link>
+          </div>
+        </div>
       </div>
 
       {/* Recent Bills */}
