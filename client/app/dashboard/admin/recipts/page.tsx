@@ -60,6 +60,12 @@ export default function ReceiptsPage() {
       house.area?.toLowerCase().includes(search.toLowerCase())
   })
 
+  const getHousePhone = (houseId?: number) => {
+    if (houseId === undefined) return '—'
+
+    return houses.find((house) => house.id === houseId)?.phoneNo ?? '—'
+  }
+
   const totalReceived = payments.reduce((sum, p) => sum + Number(p.amount), 0)
 
   async function handleRecord() {
@@ -145,7 +151,7 @@ export default function ReceiptsPage() {
                         <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.area ?? '—'}</td>
-                      <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.phoneNo ?? '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-sm">{getHousePhone(p.balance?.house?.id)}</td>
                       <td className="px-4 py-3">
                         <span className="font-bold text-emerald-600 dark:text-emerald-400">
                           ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -188,15 +194,15 @@ export default function ReceiptsPage() {
                     )).slice(0, 8)).map(h => (
                       <button type="button" key={h.id} className="w-full text-left px-3 py-2 hover:bg-muted/30"
                         onClick={() => {
-                                  setFormHouseId(String(h.id))
-                                  setFormHouseQuery(h.houseNo)
-                                  setFormArea(h.area ?? '')
-                                  setFormPhone(h.phoneNo ?? '')
-                                  // Autofill amount with currentBalance if available, else previousBalance
-                                  const amt = h.balance?.currentBalance ?? h.balance?.previousBalance ?? ''
-                                  setFormAmount(String(amt))
-                                  setFormHouseSelected(true)
-                                }}>
+                          setFormHouseId(String(h.id))
+                          setFormHouseQuery(h.houseNo)
+                          setFormArea(h.area ?? '')
+                          setFormPhone(h.phoneNo ?? '')
+                          // Autofill amount with currentBalance if available, else previousBalance
+                          const amt = h.balance?.currentBalance ?? h.balance?.previousBalance ?? ''
+                          setFormAmount(String(amt))
+                          setFormHouseSelected(true)
+                        }}>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{h.houseNo}</span>
                           {h.area && <span className="text-muted-foreground text-xs">— {h.area}</span>}
@@ -212,8 +218,8 @@ export default function ReceiptsPage() {
                       h.houseNo.toLowerCase().includes(formHouseQuery.toLowerCase()) ||
                       (h.area ?? '').toLowerCase().includes(formHouseQuery.toLowerCase())
                     )).length === 0) && (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">No matching houses</div>
-                    )}
+                        <div className="px-3 py-2 text-sm text-muted-foreground">No matching houses</div>
+                      )}
                   </div>
                 )}
               </div>

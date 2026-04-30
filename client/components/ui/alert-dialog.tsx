@@ -10,13 +10,14 @@ function shouldPreventOutsideDismissOnMobile(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
 }
 
-type AlertDialogPointerOutsideEvent = Parameters<
-  NonNullable<React.ComponentProps<typeof AlertDialogPrimitive.Content>["onPointerDownOutside"]>
->[0]
+type AlertDialogContentProps = React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  size?: "default" | "sm"
+  onPointerDownOutside?: (event: { preventDefault(): void }) => void
+  onInteractOutside?: (event: { preventDefault(): void }) => void
+}
 
-type AlertDialogInteractOutsideEvent = Parameters<
-  NonNullable<React.ComponentProps<typeof AlertDialogPrimitive.Content>["onInteractOutside"]>
->[0]
+const AlertDialogContentPrimitive =
+  AlertDialogPrimitive.Content as React.ComponentType<AlertDialogContentProps>
 
 function AlertDialog({
   ...props
@@ -62,22 +63,20 @@ function AlertDialogContent({
   onPointerDownOutside,
   onInteractOutside,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
-  size?: "default" | "sm"
-}) {
+}: AlertDialogContentProps) {
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
-      <AlertDialogPrimitive.Content
+      <AlertDialogContentPrimitive
         data-slot="alert-dialog-content"
         data-size={size}
-        onPointerDownOutside={(event: AlertDialogPointerOutsideEvent) => {
+        onPointerDownOutside={(event) => {
           if (shouldPreventOutsideDismissOnMobile()) {
             event.preventDefault()
           }
           onPointerDownOutside?.(event)
         }}
-        onInteractOutside={(event: AlertDialogInteractOutsideEvent) => {
+        onInteractOutside={(event) => {
           if (shouldPreventOutsideDismissOnMobile()) {
             event.preventDefault()
           }

@@ -107,12 +107,13 @@ export default function DeliveryAnalysisPage() {
   const analysisRows = useMemo(() => {
     return logs
       .map((log) => {
-        const supplierName = log.supplier?.username || log.supplierId
+        const supplierId = log.supplierId ?? ''
+        const supplierName = log.supplier?.username ?? supplierId ?? 'Unknown supplier'
         const quantity = (log.items ?? []).reduce((sum, item) => sum + toNumber(item.qty), 0)
 
         return {
           id: log.id,
-          supplierId: log.supplierId,
+          supplierId,
           dateLabel: formatDate(log.deliveredAt),
           supplierName,
           itemsLabel: formatItems(log.items),
@@ -128,75 +129,75 @@ export default function DeliveryAnalysisPage() {
   }, [logs])
 
   const selectedSupplierPlans = useMemo(() => {
-      if (!selectedRow) return []
+    if (!selectedRow) return []
 
     return plans
-        .filter((plan) => plan.supplier_id === selectedRow.supplierId)
+      .filter((plan) => plan.supplier_id === selectedRow.supplierId)
       .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
-    }, [plans, selectedRow])
+  }, [plans, selectedRow])
 
-    const selectedSupplierHouseLogs = useMemo(() => {
-      if (!selectedRow) return []
+  const selectedSupplierHouseLogs = useMemo(() => {
+    if (!selectedRow) return []
 
-      const selectedDate = new Date(selectedRow.deliveredAt)
+    const selectedDate = new Date(selectedRow.deliveredAt)
 
-      return logs
-        .filter((log) => log.supplierId === selectedRow.supplierId && isSameLocalDate(new Date(log.deliveredAt), selectedDate))
-        .map((log) => ({
-          id: log.id,
-          deliveredAt: log.deliveredAt,
-          houseNo: log.house?.houseNo || `House ${log.houseId}`,
-          area: log.house?.area || '-',
-          shift: log.shift,
-          itemsLabel: formatItems(log.items),
-          quantity: (log.items ?? []).reduce((sum, item) => sum + toNumber(item.qty), 0),
-        }))
-        .sort((left, right) => new Date(left.deliveredAt).getTime() - new Date(right.deliveredAt).getTime())
-    }, [logs, selectedRow])
+    return logs
+      .filter((log) => log.supplierId === selectedRow.supplierId && isSameLocalDate(new Date(log.deliveredAt), selectedDate))
+      .map((log) => ({
+        id: log.id,
+        deliveredAt: log.deliveredAt,
+        houseNo: log.house?.houseNo || `House ${log.houseId}`,
+        area: log.house?.area || '-',
+        shift: log.shift,
+        itemsLabel: formatItems(log.items),
+        quantity: (log.items ?? []).reduce((sum, item) => sum + toNumber(item.qty), 0),
+      }))
+      .sort((left, right) => new Date(left.deliveredAt).getTime() - new Date(right.deliveredAt).getTime())
+  }, [logs, selectedRow])
 
-    const selectedSupplierLeftovers = useMemo(() => {
-      if (!selectedRow) return []
+  const selectedSupplierLeftovers = useMemo(() => {
+    if (!selectedRow) return []
 
-      const plannedByProduct = new Map<string, number>()
-      for (const plan of selectedSupplierPlans) {
-        const productName = normalizeProductName(plan.product_name)
+    const plannedByProduct = new Map<string, number>()
+    for (const plan of selectedSupplierPlans) {
+      const productName = normalizeProductName(plan.product_name)
+      if (!productName) continue
+
+      plannedByProduct.set(productName, (plannedByProduct.get(productName) ?? 0) + toNumber(plan.total_quantity))
+    }
+
+    const deliveredByProduct = new Map<string, number>()
+    for (const log of selectedSupplierHouseLogs) {
+      const matchedLog = logs.find((entry) => entry.id === log.id)
+      if (!matchedLog) continue
+
+      for (const item of matchedLog.items ?? []) {
+        const productName = normalizeProductName(String(item.milkType ?? ''))
         if (!productName) continue
 
-        plannedByProduct.set(productName, (plannedByProduct.get(productName) ?? 0) + toNumber(plan.total_quantity))
+        deliveredByProduct.set(productName, (deliveredByProduct.get(productName) ?? 0) + toNumber(item.qty))
       }
+    }
 
-      const deliveredByProduct = new Map<string, number>()
-      for (const log of selectedSupplierHouseLogs) {
-        const matchedLog = logs.find((entry) => entry.id === log.id)
-        if (!matchedLog) continue
+    return Array.from(plannedByProduct.entries())
+      .map(([productName, plannedQuantity]) => {
+        const deliveredQuantity = deliveredByProduct.get(productName) ?? 0
+        const leftoverQuantity = Math.max(plannedQuantity - deliveredQuantity, 0)
 
-        for (const item of matchedLog.items ?? []) {
-          const productName = normalizeProductName(String(item.milkType ?? ''))
-          if (!productName) continue
-
-          deliveredByProduct.set(productName, (deliveredByProduct.get(productName) ?? 0) + toNumber(item.qty))
+        return {
+          productName,
+          leftoverQuantity,
         }
-      }
+      })
+      .filter((entry) => entry.leftoverQuantity > 0)
+      .sort((left, right) => right.leftoverQuantity - left.leftoverQuantity)
+  }, [logs, selectedRow, selectedSupplierHouseLogs, selectedSupplierPlans])
 
-      return Array.from(plannedByProduct.entries())
-        .map(([productName, plannedQuantity]) => {
-          const deliveredQuantity = deliveredByProduct.get(productName) ?? 0
-          const leftoverQuantity = Math.max(plannedQuantity - deliveredQuantity, 0)
+  const selectedSupplierName = useMemo(() => {
+    if (!selectedRow) return ''
 
-          return {
-            productName,
-            leftoverQuantity,
-          }
-        })
-        .filter((entry) => entry.leftoverQuantity > 0)
-        .sort((left, right) => right.leftoverQuantity - left.leftoverQuantity)
-    }, [logs, selectedRow, selectedSupplierHouseLogs, selectedSupplierPlans])
-
-    const selectedSupplierName = useMemo(() => {
-      if (!selectedRow) return ''
-
-      return selectedRow.supplierName
-    }, [selectedRow])
+    return selectedRow.supplierName
+  }, [selectedRow])
 
   function handleExportPdf() {
     if (analysisRows.length === 0) {
