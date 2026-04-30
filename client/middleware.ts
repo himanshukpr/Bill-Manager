@@ -14,6 +14,10 @@ const AUTH_PAGES = ["/", "/signup"]
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  if (pathname.startsWith("/api")) {
+    return NextResponse.next()
+  }
+
   const token = request.cookies.get("bill-manager-token")?.value
   const role = request.cookies.get("bill-manager-role")?.value
   const verified = request.cookies.get("bill-manager-verified")?.value

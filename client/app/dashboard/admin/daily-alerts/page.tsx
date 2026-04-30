@@ -333,7 +333,7 @@ export default function AdminDailyAlertsPage() {
 
       return [
         {
-          id: crypto.randomUUID(),
+          id: createAlertId(),
           text: '',
           schedule: {
             Monday: true,

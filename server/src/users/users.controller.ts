@@ -30,6 +30,14 @@ export class UsersController {
     return this.usersService.verify(uuid, isVerified);
   }
 
+  @Patch(':uuid/role')
+  changeRole(
+    @Param('uuid') uuid: string,
+    @Body('role') role: Role,
+  ) {
+    return this.usersService.changeRole(uuid, role);
+  }
+
   @Delete(':uuid')
   remove(@Param('uuid') uuid: string) {
     return this.usersService.remove(uuid);

@@ -93,9 +93,20 @@ model Bill {
   generatedDate   DateTime @default(now()) @map("generated_date")
   note            String?
   house           House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  notes           BillNote[]
 
   @@unique([houseId, month, year])
   @@map("bills")
+}
+
+model BillNote {
+  id      Int     @id @default(autoincrement())
+  billId  Int     @map("bill_id")
+  houseNo String? @map("house_no")
+  note    Json
+  bill    Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@map("bill_notes")
 }
 
 model ProductRate {

@@ -32,8 +32,17 @@ export class GenerateBillDto {
   @IsInt()
   houseId: number;
 
+  @IsOptional()
   @IsString()
-  date: string;
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
+
+  @IsOptional()
+  @IsString()
+  toDate?: string;
 
   @IsOptional()
   @IsArray()
@@ -47,8 +56,17 @@ export class GenerateBillDto {
 }
 
 export class GenerateAllBillsDto {
+  @IsOptional()
   @IsString()
-  date: string;
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
+
+  @IsOptional()
+  @IsString()
+  toDate?: string;
 
   @IsOptional()
   @IsString()

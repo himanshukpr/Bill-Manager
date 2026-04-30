@@ -8,14 +8,23 @@ import { deliveryLogsApi, deliveryPlansApi, type DeliveryLog, type DeliveryPlan 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { downloadDeliveryAnalysisPdf } from './export-utils'
 
-type SupplierSummary = {
+type DeliveryAnalysisRow = {
+  id: number
   supplierId: string
+  deliveredAt: string
+  dateLabel: string
   supplierName: string
-  plannedQuantity: number
-  deliveredQuantity: number
+  itemsLabel: string
+  quantity: number
 }
 
 function toNumber(value: string | number | undefined | null): number {
@@ -27,10 +36,49 @@ function formatCount(value: number): string {
   return value.toLocaleString('en-IN')
 }
 
+function formatDate(value: string): string {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
+function isSameLocalDate(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  )
+}
+
+function formatItems(items: DeliveryLog['items']): string {
+  const parts = (items ?? [])
+    .map((item) => {
+      const quantity = toNumber(item.qty)
+      if (!quantity) return null
+
+      const label = String(item.milkType ?? '').trim() || 'Item'
+      return `${label} ${quantity.toLocaleString('en-IN')}`
+    })
+    .filter((part): part is string => Boolean(part))
+
+  return parts.length > 0 ? parts.join(', ') : '-'
+}
+
+function normalizeProductName(value: string): string {
+  return value.trim().toLowerCase()
+}
+
 export default function DeliveryAnalysisPage() {
   const [loading, setLoading] = useState(true)
-  const [plans, setPlans] = useState<DeliveryPlan[]>([])
   const [logs, setLogs] = useState<DeliveryLog[]>([])
+  const [plans, setPlans] = useState<DeliveryPlan[]>([])
+  const [selectedRow, setSelectedRow] = useState<DeliveryAnalysisRow | null>(null)
 
   useEffect(() => {
     let active = true
@@ -38,10 +86,10 @@ export default function DeliveryAnalysisPage() {
     async function load() {
       try {
         setLoading(true)
-        const [planData, logData] = await Promise.all([deliveryPlansApi.list(), deliveryLogsApi.list()])
+        const [logData, planData] = await Promise.all([deliveryLogsApi.list(), deliveryPlansApi.list()])
         if (!active) return
-        setPlans(planData)
         setLogs(logData)
+        setPlans(planData)
       } catch (error: any) {
         toast.error(error.message || 'Failed to load delivery analysis')
       } finally {
@@ -56,54 +104,112 @@ export default function DeliveryAnalysisPage() {
     }
   }, [])
 
-  const summaryRows = useMemo(() => {
-    const rows = new Map<string, SupplierSummary>()
+  const analysisRows = useMemo(() => {
+    return logs
+      .map((log) => {
+        const supplierName = log.supplier?.username || log.supplierId
+        const quantity = (log.items ?? []).reduce((sum, item) => sum + toNumber(item.qty), 0)
 
-    for (const plan of plans) {
-      const supplierId = plan.supplier_id
-      const supplierName = plan.users?.username || supplierId
-      const existing = rows.get(supplierId) ?? {
-        supplierId,
-        supplierName,
-        plannedQuantity: 0,
-        deliveredQuantity: 0,
+        return {
+          id: log.id,
+          supplierId: log.supplierId,
+          dateLabel: formatDate(log.deliveredAt),
+          supplierName,
+          itemsLabel: formatItems(log.items),
+          quantity,
+          deliveredAt: log.deliveredAt,
+        }
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left.deliveredAt).getTime()
+        const rightTime = new Date(right.deliveredAt).getTime()
+        return rightTime - leftTime
+      })
+  }, [logs])
+
+  const selectedSupplierPlans = useMemo(() => {
+      if (!selectedRow) return []
+
+    return plans
+        .filter((plan) => plan.supplier_id === selectedRow.supplierId)
+      .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+    }, [plans, selectedRow])
+
+    const selectedSupplierHouseLogs = useMemo(() => {
+      if (!selectedRow) return []
+
+      const selectedDate = new Date(selectedRow.deliveredAt)
+
+      return logs
+        .filter((log) => log.supplierId === selectedRow.supplierId && isSameLocalDate(new Date(log.deliveredAt), selectedDate))
+        .map((log) => ({
+          id: log.id,
+          deliveredAt: log.deliveredAt,
+          houseNo: log.house?.houseNo || `House ${log.houseId}`,
+          area: log.house?.area || '-',
+          shift: log.shift,
+          itemsLabel: formatItems(log.items),
+          quantity: (log.items ?? []).reduce((sum, item) => sum + toNumber(item.qty), 0),
+        }))
+        .sort((left, right) => new Date(left.deliveredAt).getTime() - new Date(right.deliveredAt).getTime())
+    }, [logs, selectedRow])
+
+    const selectedSupplierLeftovers = useMemo(() => {
+      if (!selectedRow) return []
+
+      const plannedByProduct = new Map<string, number>()
+      for (const plan of selectedSupplierPlans) {
+        const productName = normalizeProductName(plan.product_name)
+        if (!productName) continue
+
+        plannedByProduct.set(productName, (plannedByProduct.get(productName) ?? 0) + toNumber(plan.total_quantity))
       }
 
-      existing.supplierName = supplierName
-      existing.plannedQuantity += toNumber(plan.total_quantity)
-      rows.set(supplierId, existing)
-    }
+      const deliveredByProduct = new Map<string, number>()
+      for (const log of selectedSupplierHouseLogs) {
+        const matchedLog = logs.find((entry) => entry.id === log.id)
+        if (!matchedLog) continue
 
-    for (const log of logs) {
-      const supplierId = log.supplierId
-      const supplierName = log.supplier?.username || supplierId
-      const existing = rows.get(supplierId) ?? {
-        supplierId,
-        supplierName,
-        plannedQuantity: 0,
-        deliveredQuantity: 0,
+        for (const item of matchedLog.items ?? []) {
+          const productName = normalizeProductName(String(item.milkType ?? ''))
+          if (!productName) continue
+
+          deliveredByProduct.set(productName, (deliveredByProduct.get(productName) ?? 0) + toNumber(item.qty))
+        }
       }
 
-      existing.supplierName = supplierName
-      existing.deliveredQuantity += (log.items ?? []).reduce((sum, item) => sum + toNumber(item.qty), 0)
-      rows.set(supplierId, existing)
-    }
+      return Array.from(plannedByProduct.entries())
+        .map(([productName, plannedQuantity]) => {
+          const deliveredQuantity = deliveredByProduct.get(productName) ?? 0
+          const leftoverQuantity = Math.max(plannedQuantity - deliveredQuantity, 0)
 
-    return Array.from(rows.values()).sort((left, right) => right.plannedQuantity - left.plannedQuantity)
-  }, [plans, logs])
+          return {
+            productName,
+            leftoverQuantity,
+          }
+        })
+        .filter((entry) => entry.leftoverQuantity > 0)
+        .sort((left, right) => right.leftoverQuantity - left.leftoverQuantity)
+    }, [logs, selectedRow, selectedSupplierHouseLogs, selectedSupplierPlans])
+
+    const selectedSupplierName = useMemo(() => {
+      if (!selectedRow) return ''
+
+      return selectedRow.supplierName
+    }, [selectedRow])
 
   function handleExportPdf() {
-    if (summaryRows.length === 0) {
+    if (analysisRows.length === 0) {
       toast.error('No analysis data available to export')
       return
     }
 
     downloadDeliveryAnalysisPdf(
-      summaryRows.map((row) => ({
+      analysisRows.map((row) => ({
+        dateLabel: row.dateLabel,
         supplierName: row.supplierName,
-        plannedQuantity: row.plannedQuantity,
-        deliveredQuantity: row.deliveredQuantity,
-        delta: row.deliveredQuantity - row.plannedQuantity,
+        itemsLabel: row.itemsLabel,
+        quantity: row.quantity,
       })),
     )
   }
@@ -117,9 +223,9 @@ export default function DeliveryAnalysisPage() {
             Delivery Analysis
           </Badge>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Plans vs delivery logs</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Delivery log analytics</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Review how much each supplier has planned versus how much has been recorded in delivery logs.
+              Review delivery entries by date, supplier, items, and total quantity.
             </p>
           </div>
         </div>
@@ -128,13 +234,13 @@ export default function DeliveryAnalysisPage() {
       <Card className="overflow-hidden rounded-3xl border border-border bg-card p-0">
         <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div>
-            <h2 className="text-base font-bold">Supplier comparison</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Sorted by planned quantity</p>
+            <h2 className="text-base font-bold">Delivery entries</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Sorted by most recent delivery</p>
           </div>
 
           <Button
             onClick={handleExportPdf}
-            disabled={loading || summaryRows.length === 0}
+            disabled={loading || analysisRows.length === 0}
             size="sm"
             variant="outline"
             className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-[11px] font-medium"
@@ -146,38 +252,156 @@ export default function DeliveryAnalysisPage() {
 
         {loading ? (
           <div className="px-5 py-6 text-sm text-muted-foreground">Loading analysis...</div>
-        ) : summaryRows.length === 0 ? (
-          <div className="px-5 py-10 text-sm text-muted-foreground">No delivery plans or logs found yet.</div>
+        ) : analysisRows.length === 0 ? (
+          <div className="px-5 py-10 text-sm text-muted-foreground">No delivery logs found yet.</div>
         ) : (
           <Table className="table-auto text-xs sm:text-sm">
             <TableHeader>
               <TableRow>
+                <TableHead className="whitespace-nowrap px-3 py-3">Date</TableHead>
                 <TableHead className="px-3 py-3">Supplier</TableHead>
-                <TableHead className="whitespace-nowrap px-3 py-3 text-right">Planned</TableHead>
-                <TableHead className="whitespace-nowrap px-3 py-3 text-right">Delivered</TableHead>
-                <TableHead className="whitespace-nowrap px-3 py-3 text-right">Leftover</TableHead>
+                <TableHead className="px-3 py-3">Items</TableHead>
+                <TableHead className="whitespace-nowrap px-3 py-3 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {summaryRows.map((row) => {
-                const delta = row.deliveredQuantity - row.plannedQuantity
-                return (
-                  <TableRow key={row.supplierId}>
-                    <TableCell className="whitespace-normal wrap-break-word px-3 py-2 font-medium">{row.supplierName}</TableCell>
-                    <TableCell className="whitespace-nowrap px-3 py-2 text-right">{formatCount(row.plannedQuantity)}</TableCell>
-                    <TableCell className="whitespace-nowrap px-3 py-2 text-right">{formatCount(row.deliveredQuantity)}</TableCell>
-                    <TableCell className="whitespace-nowrap px-3 py-2 text-right">
-                      <span className={delta >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                        {delta >= 0 ? '+' : ''}{formatCount(delta)}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
+              {analysisRows.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{row.dateLabel}</TableCell>
+                  <TableCell className="whitespace-normal wrap-break-word px-3 py-2">{row.supplierName}</TableCell>
+                  <TableCell className="whitespace-normal wrap-break-word px-3 py-2">{row.itemsLabel}</TableCell>
+                  <TableCell className="whitespace-nowrap px-3 py-2 text-right">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-full px-3 text-[11px] font-medium"
+                      onClick={() => setSelectedRow(row)}
+                    >
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         )}
       </Card>
+
+      <Dialog open={Boolean(selectedRow)} onOpenChange={(open) => !open && setSelectedRow(null)}>
+        <DialogContent className="max-w-6xl gap-0 overflow-hidden p-0">
+          <div className="border-b border-border bg-muted/30 px-5 py-4 sm:px-6">
+            <DialogHeader className="space-y-3">
+              <DialogTitle className="text-xl font-bold tracking-tight">
+                Delivery details for {selectedSupplierName}
+              </DialogTitle>
+
+              {selectedRow ? (
+                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span className="rounded-full border border-border bg-background px-3 py-1 font-medium text-foreground">
+                    {selectedRow.dateLabel}
+                  </span>
+                  <span className="rounded-full border border-border bg-background px-3 py-1">
+                    {selectedRow.itemsLabel}
+                  </span>
+                </div>
+              ) : null}
+            </DialogHeader>
+          </div>
+
+          <div className="grid gap-0 lg:grid-cols-2">
+            <div className="min-w-0 border-b border-border lg:border-b-0 lg:border-r">
+              <div className="border-b border-border px-5 py-4 sm:px-6">
+                <h3 className="text-sm font-semibold">House logs for this day</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Each row shows the houses delivered for the selected supplier and date.</p>
+              </div>
+              <div className="max-h-[60vh] overflow-auto px-3 py-3 sm:px-4">
+                {selectedSupplierHouseLogs.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
+                    No house logs found for this supplier on the selected day.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="whitespace-nowrap px-3 py-3">House</TableHead>
+                        <TableHead className="whitespace-nowrap px-3 py-3">Shift</TableHead>
+                        <TableHead className="px-3 py-3">Items</TableHead>
+                        <TableHead className="whitespace-nowrap px-3 py-3 text-right">Qty</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedSupplierHouseLogs.map((log) => (
+                        <TableRow key={log.id}>
+                          <TableCell className="whitespace-normal wrap-break-word px-3 py-2 font-medium">
+                            {log.houseNo}
+                            {log.area && log.area !== '-' ? (
+                              <span className="block text-xs text-muted-foreground">{log.area}</span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 capitalize">{log.shift}</TableCell>
+                          <TableCell className="whitespace-normal wrap-break-word px-3 py-2">{log.itemsLabel}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right">{formatCount(log.quantity)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </div>
+
+            <div className="min-w-0">
+              <div className="border-b border-border px-5 py-4 sm:px-6">
+                <h3 className="text-sm font-semibold">Delivery plan table</h3>
+                <p className="mt-1 text-xs text-muted-foreground">The supplier’s current plan entries are shown here for context.</p>
+              </div>
+              <div className="max-h-[60vh] overflow-auto px-3 py-3 sm:px-4">
+                {selectedSupplierPlans.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
+                    No delivery plans found for this supplier.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="whitespace-nowrap px-3 py-3">Created At</TableHead>
+                        <TableHead className="px-3 py-3">Product</TableHead>
+                        <TableHead className="whitespace-nowrap px-3 py-3 text-right">Qty / Go</TableHead>
+                        <TableHead className="whitespace-nowrap px-3 py-3 text-right">Goes</TableHead>
+                        <TableHead className="whitespace-nowrap px-3 py-3 text-right">Total Qty</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedSupplierPlans.map((plan) => (
+                        <TableRow key={plan.id}>
+                          <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{formatDate(plan.created_at)}</TableCell>
+                          <TableCell className="whitespace-normal wrap-break-word px-3 py-2">{plan.product_name}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right">{formatCount(plan.quantity_per_go)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right">{formatCount(plan.number_of_goes)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right">{formatCount(plan.total_quantity)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-border bg-muted/20 px-5 py-4 sm:px-6">
+            <h3 className="text-sm font-semibold">Left over products after delivery</h3>
+            {selectedSupplierLeftovers.length === 0 ? (
+              <p className="mt-1 text-sm text-muted-foreground">No leftover products for this delivery day.</p>
+            ) : (
+              <p className="mt-1 text-sm text-foreground">
+                {selectedSupplierLeftovers
+                  .map((item) => `${item.productName} ${formatCount(item.leftoverQuantity)}`)
+                  .join(', ')}
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

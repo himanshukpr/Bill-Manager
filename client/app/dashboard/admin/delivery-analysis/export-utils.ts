@@ -2,10 +2,10 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
 type DeliveryAnalysisRow = {
+  dateLabel: string
   supplierName: string
-  plannedQuantity: number
-  deliveredQuantity: number
-  delta: number
+  itemsLabel: string
+  quantity: number
 }
 
 export function downloadDeliveryAnalysisPdf(rows: DeliveryAnalysisRow[]) {
@@ -17,21 +17,21 @@ export function downloadDeliveryAnalysisPdf(rows: DeliveryAnalysisRow[]) {
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
-  doc.text('Plans vs delivery logs by supplier', 14, 23)
+  doc.text('Delivery entries by date, supplier, items, and quantity', 14, 23)
 
   autoTable(doc, {
     startY: 30,
     head: [[
+      'Date',
       'Supplier',
-      'Planned Qty',
-      'Delivered Qty',
-      'Delta',
+      'Items',
+      'Quantity',
     ]],
     body: rows.map((row) => [
+      row.dateLabel,
       row.supplierName,
-      String(row.plannedQuantity),
-      String(row.deliveredQuantity),
-      String(row.delta),
+      row.itemsLabel,
+      String(row.quantity),
     ]),
     styles: {
       fontSize: 9,

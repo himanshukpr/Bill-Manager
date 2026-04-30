@@ -44,9 +44,11 @@ export class BillsController {
   @Get('preview')
   preview(
     @Query('houseId', ParseIntPipe) houseId: number,
-    @Query('date') date: string,
+    @Query('date') date?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
   ) {
-    return this.service.preview(houseId, date);
+    return this.service.preview(houseId, { date, fromDate, toDate });
   }
 
   @Get(':id')
