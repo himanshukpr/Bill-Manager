@@ -188,12 +188,15 @@ export default function ReceiptsPage() {
                     )).slice(0, 8)).map(h => (
                       <button type="button" key={h.id} className="w-full text-left px-3 py-2 hover:bg-muted/30"
                         onClick={() => {
-                          setFormHouseId(String(h.id))
-                          setFormHouseQuery(h.houseNo)
-                          setFormArea(h.area ?? '')
-                          setFormPhone(h.phoneNo ?? '')
-                          setFormHouseSelected(true)
-                        }}>
+                                  setFormHouseId(String(h.id))
+                                  setFormHouseQuery(h.houseNo)
+                                  setFormArea(h.area ?? '')
+                                  setFormPhone(h.phoneNo ?? '')
+                                  // Autofill amount with currentBalance if available, else previousBalance
+                                  const amt = h.balance?.currentBalance ?? h.balance?.previousBalance ?? ''
+                                  setFormAmount(String(amt))
+                                  setFormHouseSelected(true)
+                                }}>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{h.houseNo}</span>
                           {h.area && <span className="text-muted-foreground text-xs">— {h.area}</span>}
@@ -218,12 +221,12 @@ export default function ReceiptsPage() {
 
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <div className="space-y-1.5 sm:col-span-1">
-                <Label htmlFor="receipt-area">Area</Label>
-                <Input id="receipt-area" value={formArea} onChange={e => setFormArea(e.target.value)} placeholder="Area" />
+                <Label>Area</Label>
+                <div className="h-10 flex items-center px-3 rounded-md border border-border bg-card text-sm text-foreground">{formArea || '—'}</div>
               </div>
               <div className="space-y-1.5 sm:col-span-1">
-                <Label htmlFor="receipt-phone">Phone</Label>
-                <Input id="receipt-phone" value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="Phone" />
+                <Label>Phone</Label>
+                <div className="h-10 flex items-center px-3 rounded-md border border-border bg-card text-sm text-foreground">{formPhone || '—'}</div>
               </div>
               <div className="space-y-1.5 sm:col-span-1">
                 <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>

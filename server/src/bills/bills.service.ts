@@ -12,30 +12,13 @@ export class BillsService {
   constructor(private prisma: PrismaService) {}
 
   private async getLatestHouseNote(houseId: number): Promise<string | null> {
-    const house = await this.prisma.house.findUnique({
-      where: { id: houseId },
-      select: { houseNo: true },
+    const lastBill = await this.prisma.bill.findFirst({
+      where: { houseId },
+      orderBy: { generatedDate: 'desc' },
+      select: { note: true },
     });
 
-    if (!house) {
-      return null;
-    }
-
-    const lastNote = await this.prisma.billNote.findFirst({
-      where: { houseNo: house.houseNo },
-      orderBy: { id: 'desc' },
-    });
-
-    if (!lastNote) {
-      return null;
-    }
-
-    if (typeof lastNote.note === 'object' && lastNote.note !== null) {
-      const noteText = (lastNote.note as { text?: unknown }).text;
-      return typeof noteText === 'string' && noteText.trim().length > 0 ? noteText.trim() : null;
-    }
-
-    return null;
+    return lastBill?.note ?? null;
   }
 
   private resolvePeriod(dto: { date?: string; fromDate?: string; toDate?: string }) {
@@ -184,9 +167,6 @@ export class BillsService {
       where: { id },
       include: {
         house: true,
-        notes: {
-          orderBy: { id: 'asc' },
-        },
       },
     });
     if (!bill) throw new NotFoundException(`Bill #${id} not found`);
@@ -245,18 +225,6 @@ export class BillsService {
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
       });
-
-      if (noteText) {
-        const noteData: Prisma.InputJsonValue = { text: noteText };
-
-        await tx.billNote.create({
-          data: {
-            billId: bill.id,
-            houseNo: bill.house.houseNo,
-            note: noteData,
-          },
-        });
-      }
 
       await tx.deliveryLog.updateMany({
         where: {

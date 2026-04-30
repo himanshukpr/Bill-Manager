@@ -982,6 +982,7 @@ export const billsApi = {
       ),
   generate: async (data: {
     houseId: number;
+    date?: string;
       fromDate: string;
       toDate: string;
     note?: string;
@@ -993,7 +994,7 @@ export const billsApi = {
     }
     return res;
   },
-  generateAll: async (data: { fromDate: string; toDate: string; note?: string }) => {
+  generateAll: async (data: { date?: string; fromDate: string; toDate: string; note?: string }) => {
     const res = await apiPost<GenerateAllBillsResult>('/bills/generate-all', data);
     if (isBrowser()) {
       await invalidateCache('/bills');
@@ -1031,6 +1032,12 @@ export const usersApi = {
         if (isBrowser()) await db.users.bulkPut(data);
       },
     }),
+  create: async (data: { username: string; email: string; password: string; role?: 'admin' | 'supplier' }) => {
+    if (isBrowser()) {
+      await invalidateCache('/users');
+    }
+    return apiPost<User>('/auth/register', data);
+  },
   verify: async (uuid: string, isVerified: boolean) => {
     if (isBrowser()) {
       await db.users.update(uuid, { isVerified });
@@ -1043,6 +1050,19 @@ export const usersApi = {
     }
 
     return { uuid, isVerified };
+  },
+  changeRole: async (uuid: string, role: 'admin' | 'supplier') => {
+    if (isBrowser()) {
+      await db.users.update(uuid, { role });
+      await invalidateCache('/users');
+      await syncEngine.enqueue(`/users/${uuid}/role`, 'PATCH', { role });
+    }
+
+    if (isOnline()) {
+      return apiPatch(`/users/${uuid}/role`, { role });
+    }
+
+    return { uuid, role };
   },
   delete: async (uuid: string) => {
     if (isBrowser()) {

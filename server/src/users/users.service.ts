@@ -52,6 +52,14 @@ export class UsersService {
     });
   }
 
+  async changeRole(uuid: string, role: Role) {
+    return this.prisma.user.update({
+      where: { uuid },
+      data: { role },
+      select: { uuid: true, username: true, email: true, role: true, isVerified: true },
+    });
+  }
+
   async remove(uuid: string) {
     return this.prisma.user.delete({ where: { uuid } });
   }

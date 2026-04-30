@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays } from 'lucide-react'
 import { billsApi, housesApi, type Bill, type House, type BillItem } from '@/lib/api'
 import { toast } from 'sonner'
@@ -30,10 +30,17 @@ const MONTH_NAMES = [
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i)
 
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function getMonthStart(value: Date = new Date()): string {
   const date = new Date(value)
   date.setDate(1)
-  return date.toISOString().split('T')[0]
+  return formatLocalDate(date)
 }
 
 function isValidRange(fromDate: string, toDate: string): boolean {
@@ -42,6 +49,21 @@ function isValidRange(fromDate: string, toDate: string): boolean {
   const from = new Date(fromDate)
   const to = new Date(toDate)
   return !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && from <= to
+}
+
+function parseDateFieldToString(value: string): string {
+  const normalized = value.trim()
+  if (!normalized) return ''
+
+  // Keep date input values untouched to avoid timezone shifts.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized
+
+  // If an ISO datetime is provided, keep only the date portion.
+  if (/^\d{4}-\d{2}-\d{2}T/.test(normalized)) return normalized.slice(0, 10)
+
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return normalized
+  return formatLocalDate(date)
 }
 
 export default function BillsPage() {
@@ -59,8 +81,9 @@ export default function BillsPage() {
 
   // Generate form
   const [genHouseId, setGenHouseId] = useState('')
+  const [genHouseSearch, setGenHouseSearch] = useState('')
   const [genFromDate, setGenFromDate] = useState(() => getMonthStart())
-  const [genToDate, setGenToDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [genToDate, setGenToDate] = useState(() => formatLocalDate(new Date()))
   const [genNote, setGenNote] = useState('')
 
   // Preview State
@@ -110,7 +133,10 @@ export default function BillsPage() {
     const fetchPreview = async () => {
       setPreviewLoading(true)
       try {
-        const data = await billsApi.preview(parseInt(genHouseId), { fromDate: genFromDate, toDate: genToDate })
+        const data = await billsApi.preview(parseInt(genHouseId), {
+          fromDate: parseDateFieldToString(genFromDate),
+          toDate: parseDateFieldToString(genToDate),
+        })
         setPreviewData(data)
         setGenNote(data.lastNote ?? '')
       } catch (e: any) {
@@ -122,6 +148,17 @@ export default function BillsPage() {
     fetchPreview()
   }, [genHouseId, genFromDate, genToDate, generateMode])
 
+  const filteredGenHouses = useMemo(() => {
+    const q = genHouseSearch.trim().toLowerCase()
+    if (!q) return houses.slice().sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    return houses
+      .filter((h) => h.houseNo.toLowerCase().includes(q) || (h.area || '').toLowerCase().includes(q))
+      .sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+  }, [houses, genHouseSearch])
+
+  const selectedGenHouse = useMemo(() => houses.find((h) => String(h.id) === genHouseId), [houses, genHouseId])
+
   const filtered = bills.filter(b =>
     b.house?.houseNo.toLowerCase().includes(search.toLowerCase()) ||
     b.house?.area?.toLowerCase().includes(search.toLowerCase())
@@ -131,7 +168,7 @@ export default function BillsPage() {
     setGenerateMode('single')
     setGenHouseId('')
     setGenFromDate(getMonthStart())
-    setGenToDate(new Date().toISOString().split('T')[0])
+    setGenToDate(formatLocalDate(new Date()))
     setGenNote('')
     setPreviewData(null)
     setGenerateOpen(true)
@@ -152,10 +189,14 @@ export default function BillsPage() {
 
     setSaving(true)
     try {
+      const fromDate = parseDateFieldToString(genFromDate)
+      const toDate = parseDateFieldToString(genToDate)
+
       if (generateMode === 'all') {
         const result = await billsApi.generateAll({
-          fromDate: genFromDate,
-          toDate: genToDate,
+          date: toDate,
+          fromDate,
+          toDate,
           note: genNote || undefined,
         })
         if (result.generatedCount > 0) {
@@ -168,8 +209,9 @@ export default function BillsPage() {
       } else {
         await billsApi.generate({
           houseId: parseInt(genHouseId),
-          fromDate: genFromDate,
-          toDate: genToDate,
+          date: toDate,
+          fromDate,
+          toDate,
           note: genNote || undefined,
         })
         toast.success(previewData?.existingBillId ? 'Bill overwritten successfully' : 'Bill generated successfully')
@@ -343,25 +385,52 @@ export default function BillsPage() {
               {generateMode === 'single' && (
                 <div className="space-y-1.5">
                   <Label>House</Label>
-                  <Select value={genHouseId} onValueChange={setGenHouseId}>
-                    <SelectTrigger><SelectValue placeholder="Select house" /></SelectTrigger>
-                    <SelectContent>
-                      {houses.map(h => (
-                        <SelectItem key={h.id} value={String(h.id)}>
-                          {h.houseNo}{h.area ? ` — ${h.area}` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                    <Input
+                      placeholder="Search by house number or area..."
+                      value={genHouseSearch}
+                      onChange={(e) => setGenHouseSearch(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+
+                  {genHouseSearch && filteredGenHouses.length > 0 && (
+                    <div className="mt-2 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+                      <div className="max-h-48 overflow-y-auto">
+                        {filteredGenHouses.map((house) => (
+                          <button
+                            key={house.id}
+                            type="button"
+                            onClick={() => {
+                              setGenHouseId(String(house.id))
+                              setGenHouseSearch('')
+                            }}
+                            className={`w-full text-left px-4 py-3 text-sm transition-colors border-b border-border/50 last:border-b-0 ${genHouseId === String(house.id) ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted/50'}`}
+                          >
+                            <p className="font-semibold">House {house.houseNo}</p>
+                            {house.area && <p className="text-xs text-muted-foreground">{house.area}</p>}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {genHouseId && selectedGenHouse && (
+                    <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
+                      <p className="text-sm font-medium">House {selectedGenHouse.houseNo}</p>
+                      {selectedGenHouse.area && <p className="text-xs text-muted-foreground">{selectedGenHouse.area}</p>}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="space-y-1.5">
                 <Label>From Date</Label>
-                <Input type="date" value={genFromDate} onChange={e => setGenFromDate(e.target.value)} />
+                <Input type="date" value={genFromDate} onChange={e => setGenFromDate(parseDateFieldToString(e.target.value))} />
               </div>
               <div className="space-y-1.5">
                 <Label>Upto Date</Label>
-                <Input type="date" value={genToDate} onChange={e => setGenToDate(e.target.value)} />
+                <Input type="date" value={genToDate} onChange={e => setGenToDate(parseDateFieldToString(e.target.value))} />
               </div>
             </div>
 
