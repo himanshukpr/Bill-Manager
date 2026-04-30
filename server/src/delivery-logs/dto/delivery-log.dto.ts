@@ -36,8 +36,8 @@ export class CreateDeliveryLogDto {
     @Min(1)
     houseId!: number;
 
-    @IsIn(['morning', 'evening'])
-    shift!: 'morning' | 'evening';
+    @IsIn(['morning', 'evening', 'shop'])
+    shift!: 'morning' | 'evening' | 'shop';
 
     @IsArray()
     @ValidateNested({ each: true })

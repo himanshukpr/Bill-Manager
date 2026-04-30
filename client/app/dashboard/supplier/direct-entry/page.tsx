@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
@@ -65,6 +66,7 @@ export default function SupplierDirectEntryPage() {
 
     const [houseId, setHouseId] = useState('')
     const [houseSearch, setHouseSearch] = useState('')
+    const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('morning')
     const [note, setNote] = useState('')
     const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
 
@@ -180,6 +182,7 @@ export default function SupplierDirectEntryPage() {
     function resetForm() {
         setHouseId('')
         setHouseSearch('')
+        setShift('morning')
         setNote('')
         setRows([createRow()])
     }
@@ -195,12 +198,17 @@ export default function SupplierDirectEntryPage() {
             return
         }
 
+        if (shift === 'shop') {
+            toast.error('Shop entries can only be added from the admin panel')
+            return
+        }
+
         setSaving(true)
         try {
             const auth = getSessionAuth()
             const response = await deliveryLogsApi.create({
                 houseId: Number(houseId),
-                shift: 'morning',
+                shift: shift,
                 items,
                 note: note.trim() || undefined,
             })
@@ -280,6 +288,19 @@ export default function SupplierDirectEntryPage() {
                                             {selectedHouse.area && <p className="text-xs text-muted-foreground">{selectedHouse.area}</p>}
                                         </div>
                                     )}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="delivery-shift">Shift</Label>
+                                    <Select value={shift} onValueChange={(v) => setShift(v as typeof shift)}>
+                                        <SelectTrigger id="delivery-shift">
+                                            <SelectValue placeholder="Select shift" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="morning">Morning</SelectItem>
+                                            <SelectItem value="evening">Evening</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
 
                                 <div className="rounded-2xl border border-border bg-muted/20 p-4">

@@ -470,8 +470,8 @@ export type DeliveryLogItem = {
 export type DeliveryLog = {
   id: number;
   houseId: number;
-  supplierId: string;
-  shift: 'morning' | 'evening';
+  supplierId?: string;
+  shift: 'morning' | 'evening' | 'shop';
   billGenerated: boolean;
   items: DeliveryLogItem[];
   totalAmount: string;
@@ -1125,7 +1125,7 @@ export const deliveryLogsApi = {
   },
   create: async (data: {
     houseId: number;
-    shift: 'morning' | 'evening';
+    shift: 'morning' | 'evening' | 'shop';
     items: DeliveryLogItem[];
     note?: string;
     billGenerated?: boolean;

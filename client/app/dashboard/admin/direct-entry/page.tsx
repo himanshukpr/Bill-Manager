@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
@@ -64,6 +65,7 @@ export default function DeliveryEntryPage() {
 
   const [houseId, setHouseId] = useState('')
   const [houseSearch, setHouseSearch] = useState('')
+  const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('morning')
   const [note, setNote] = useState('')
   const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
 
@@ -179,6 +181,7 @@ export default function DeliveryEntryPage() {
   function resetForm() {
     setHouseId('')
     setHouseSearch('')
+    setShift('morning')
     setNote('')
     setRows([createRow()])
   }
@@ -198,7 +201,7 @@ export default function DeliveryEntryPage() {
     try {
       const response = await deliveryLogsApi.create({
         houseId: Number(houseId),
-        shift: 'morning',
+        shift: shift,
         items,
         note: note.trim() || undefined,
       })

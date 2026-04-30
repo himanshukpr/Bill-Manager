@@ -223,7 +223,7 @@ const emptyConfigForm: HouseConfigForm = {
   dailyAlerts: '',
 }
 
-type ShiftFilter = 'all' | 'morning' | 'evening'
+type ShiftFilter = 'all' | 'morning' | 'evening' | 'shop'
 type PaymentFilter = 'all' | 'clear' | 'pending' | 'advance'
 
 function getHouseShift(house: House): 'morning' | 'evening' {
@@ -712,11 +712,12 @@ export default function HousesPage() {
           <SelectTrigger className="w-full">
             <SelectValue placeholder="All Houses" />
           </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Houses</SelectItem>
-            <SelectItem value="morning">Morning</SelectItem>
-            <SelectItem value="evening">Evening</SelectItem>
-          </SelectContent>
+<SelectContent>
+              <SelectItem value="all">All Houses</SelectItem>
+              <SelectItem value="morning">Morning</SelectItem>
+              <SelectItem value="evening">Evening</SelectItem>
+              <SelectItem value="shop">Shop</SelectItem>
+            </SelectContent>
         </Select>
 
         <Select value={paymentFilter} onValueChange={(value) => setPaymentFilter(value as PaymentFilter)}>
@@ -1021,6 +1022,7 @@ export default function HousesPage() {
                     <SelectContent>
                       <SelectItem value="morning">Morning</SelectItem>
                       <SelectItem value="evening">Evening</SelectItem>
+                      <SelectItem value="shop">Shop</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

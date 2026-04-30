@@ -13,12 +13,23 @@ export class DeliveryLogsService {
     constructor(private prisma: PrismaService) { }
 
     async create(dto: CreateDeliveryLogDto, user: any) {
-        if (!user?.uuid) {
-            throw new BadRequestException('Invalid user context');
+        const isShopShift = dto.shift === 'shop';
+        
+        if (isShopShift && user?.role === 'supplier') {
+            throw new ForbiddenException('Suppliers cannot create shop entries');
         }
 
         const house = await this.prisma.house.findUnique({ where: { id: dto.houseId } });
         if (!house) throw new NotFoundException(`House #${dto.houseId} not found`);
+
+        let supplierId: string | null = null;
+        
+        if (!isShopShift && user?.uuid) {
+            const supplier = await this.prisma.user.findUnique({ where: { uuid: user.uuid } });
+            if (supplier) {
+                supplierId = user.uuid;
+            }
+        }
 
         const items = (dto.items || []).filter((item) => item.qty > 0 && item.rate > 0);
         if (items.length === 0) {
@@ -39,7 +50,7 @@ export class DeliveryLogsService {
 
         const openingBalance = Number(balance.currentBalance ?? 0);
         const closingBalance = openingBalance + computedTotal;
-
+        
         const [updatedBalance, log] = await this.prisma.$transaction([
             this.prisma.houseBalance.update({
                 where: { houseId: dto.houseId },
@@ -50,7 +61,7 @@ export class DeliveryLogsService {
             this.prisma.deliveryLog.create({
                 data: {
                     houseId: dto.houseId,
-                    supplierId: user.uuid,
+                    supplierId: supplierId,
                     shift: dto.shift as Shift,
                     billGenerated: dto.billGenerated ?? false,
                     items: items as any,

@@ -64,6 +64,7 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
           <SelectContent>
             <SelectItem value="morning">Morning</SelectItem>
             <SelectItem value="evening">Evening</SelectItem>
+            <SelectItem value="shop">Shop</SelectItem>
           </SelectContent>
         </Select>
       </td>
@@ -347,6 +348,7 @@ export default function AdminHouseConfigPage() {
             <SelectItem value="all">All Shifts</SelectItem>
             <SelectItem value="morning">Morning</SelectItem>
             <SelectItem value="evening">Evening</SelectItem>
+            <SelectItem value="shop">Shop</SelectItem>
           </SelectContent>
         </Select>
         <Select value={supplierFilter} onValueChange={setSupplierFilter}>
