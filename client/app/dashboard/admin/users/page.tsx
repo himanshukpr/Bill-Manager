@@ -293,6 +293,14 @@ function UserSection({
                 {new Date(u.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               </p>
               <Button variant="ghost" size="sm"
+                className={`flex-shrink-0 gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 whitespace-nowrap ${u.isVerified
+                  ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                  : 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'}`}
+                onClick={() => onToggleVerify(u)}>
+                {u.isVerified ? <ShieldOff className="h-3.5 w-3.5 shrink-0" /> : <ShieldCheck className="h-3.5 w-3.5 shrink-0" />}
+                <span className="hidden sm:inline">{u.isVerified ? 'Unverify' : 'Verify'}</span>
+              </Button>
+              <Button variant="ghost" size="sm"
                 className="flex-shrink-0 gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/30 whitespace-nowrap"
                 onClick={() => onChangeRole(u)}>
                 <Lock className="h-3.5 w-3.5 shrink-0" />
