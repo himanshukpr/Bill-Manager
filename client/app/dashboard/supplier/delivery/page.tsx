@@ -50,7 +50,8 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table'
-import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
+import { LocationRouteMap } from '@/components/ui/location-route-map'
+import { Map as UiMap, MapMarker, MarkerContent } from '@/components/ui/map'
 import { getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
@@ -196,7 +197,6 @@ export default function DeliveryPage() {
     const [isSwiping, setIsSwiping] = useState(false)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
-    const [miniMapLoading, setMiniMapLoading] = useState(false)
     const [miniMapLocationWarning, setMiniMapLocationWarning] = useState<string | null>(null)
     const pageContainerRef = useRef<HTMLDivElement | null>(null)
     const [availableHeight, setAvailableHeight] = useState<number | null>(null)
@@ -330,7 +330,6 @@ export default function DeliveryPage() {
         if (storedLocation) {
             setMiniMapCenter(storedLocation)
             setMiniMapLocationWarning(null)
-            setMiniMapLoading(false)
             return
         }
 
@@ -339,7 +338,6 @@ export default function DeliveryPage() {
         )
 
         const loadMiniMap = async () => {
-            setMiniMapLoading(true)
             try {
                 const response = await fetch(
                     `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`,
@@ -368,8 +366,6 @@ export default function DeliveryPage() {
                 setMiniMapCenter({ lat, lon })
             } catch {
                 if (active) setMiniMapCenter(DEFAULT_MAP_CENTER)
-            } finally {
-                if (active) setMiniMapLoading(false)
             }
         }
 
@@ -401,15 +397,6 @@ export default function DeliveryPage() {
         [currentHouse],
     )
 
-    const miniMapEmbedUrl = useMemo(() => {
-        const delta = 0.0075
-        const left = miniMapCenter.lon - delta
-        const right = miniMapCenter.lon + delta
-        const top = miniMapCenter.lat + delta
-        const bottom = miniMapCenter.lat - delta
-
-        return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${miniMapCenter.lat}%2C${miniMapCenter.lon}`
-    }, [miniMapCenter])
 
     const searchedAllocatedHouses = useMemo(() => {
         const query = houseSearch.trim().toLowerCase()
@@ -1304,35 +1291,31 @@ export default function DeliveryPage() {
             <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
             {/* HOUSE CARD */}
             <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                <button
-                    type="button"
-                    onClick={() => setIsMapExpanded(true)}
-                    className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"
-                >
-                    <div className="absolute inset-0 pointer-events-none">
-                        <iframe
-                            title="Mini map preview"
-                            src={miniMapEmbedUrl}
-                            className="h-full w-full border-0"
-                            loading="lazy"
-                            referrerPolicy="no-referrer-when-downgrade"
-                        />
-                    </div>
-                    <div className="absolute inset-0 bg-emerald-900/10" />
-                    {miniMapLoading ? (
-                        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
-                            Loading map...
-                        </div>
-                    ) : null}
+                <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2">
+                    <UiMap
+                        key={`house-mini-map-${currentHouse.id}`}
+                        viewport={{ center: [miniMapCenter.lon, miniMapCenter.lat], zoom: 14 }}
+                        className="h-full w-full rounded-lg"
+                    >
+                        <MapMarker longitude={miniMapCenter.lon} latitude={miniMapCenter.lat}>
+                            <MarkerContent />
+                        </MapMarker>
+                    </UiMap>
+                    <div className="absolute inset-0 bg-emerald-900/10 pointer-events-none" />
                     {miniMapLocationWarning ? (
-                        <div className="absolute left-2 right-2 top-2 rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
+                        <div className="absolute left-2 right-2 top-2 z-[4] rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
                             {miniMapLocationWarning}
                         </div>
                     ) : null}
-                    <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
+                    <button
+                        type="button"
+                        onClick={() => setIsMapExpanded(true)}
+                        className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1 hover:bg-background/95 transition-colors"
+                        aria-label="Expand map"
+                    >
                         <Maximize2 className="h-3.5 w-3.5 text-foreground" />
-                    </div>
-                </button>
+                    </button>
+                </div>
 
                 <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
                     <div className="space-y-1.5 sm:col-span-2">

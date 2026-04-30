@@ -11,7 +11,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
-import { LocationRouteMap } from '@/components/dashboard/supplier/location-route-map'
+import { LocationRouteMap } from '@/components/ui/location-route-map'
 import { housesApi, type House } from '@/lib/api'
 
 type LocationForm = {
@@ -161,6 +161,10 @@ export default function SupplierLocationPage() {
             </div>
           </form>
 
+          {searching ? (
+            <p className="mt-3 text-sm text-muted-foreground">Looking up the matching house record...</p>
+          ) : null}
+
           <div className="mt-6 rounded-2xl border border-border/70 bg-muted/30 p-4 sm:p-5">
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="gap-1.5">
@@ -178,9 +182,9 @@ export default function SupplierLocationPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Map preview</p>
-              <h2 className="mt-2 text-xl font-bold">Leaflet Route Preview</h2>
+              <h2 className="mt-2 text-xl font-bold">MapLibre Route Preview</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Powered by OpenStreetMap and OpenRouteService. Pin a house, then click the map to build route or save the location.
+                Powered by the new mapcn-style MapLibre map. Pin a house, then save the location or open directions.
               </p>
             </div>
             <Badge variant={savedLocation ? 'default' : 'outline'} className="gap-1.5 whitespace-nowrap">

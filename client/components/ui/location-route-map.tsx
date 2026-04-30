@@ -1,12 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import maplibregl from 'maplibre-gl'
-import Map, { Marker, NavigationControl, type MapRef } from 'react-map-gl/maplibre'
 import { Loader2, MapPin, Navigation, Save } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Map, MapControls, MapMarker, MarkerContent, type MapRef } from '@/components/ui/map'
 import { housesApi } from '@/lib/api'
 import { clearSessionAuth } from '@/lib/auth'
 
@@ -28,9 +27,7 @@ type ViewState = {
   zoom: number
 }
 
-type LocationErrorLike = {
-  code?: number
-}
+type LocationErrorLike = { code?: number }
 
 const DEFAULT_VIEW: ViewState = {
   latitude: 28.6139,
@@ -41,30 +38,8 @@ const DEFAULT_VIEW: ViewState = {
 const TARGET_ACCURACY_METERS = 20
 const MAX_ACCEPTABLE_ACCURACY_METERS = 45
 
-const MAP_STYLE = {
-  version: 8,
-  sources: {
-    osm: {
-      type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: 'Map data © OpenStreetMap contributors',
-    },
-  },
-  layers: [
-    {
-      id: 'osm-tiles',
-      type: 'raster',
-      source: 'osm',
-      minzoom: 0,
-      maxzoom: 19,
-    },
-  ],
-} as any
-
 function parseCoordinateQuery(query: string): LatLng | null {
   const match = query.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/)
-
   if (!match) return null
 
   const latitude = Number(match[1])
@@ -102,14 +77,12 @@ async function getBestCurrentPosition(): Promise<GeolocationPosition> {
           best = position
         }
 
-        // Resolve early if we got a strong GPS fix.
         if (nextAccuracy <= TARGET_ACCURACY_METERS) {
           navigator.geolocation.clearWatch(watchId)
           finish(() => resolve(position))
           return
         }
 
-        // If we already waited long enough, settle on the best known point.
         const waitedMs = Date.now() - startedAt
         if (waitedMs >= 15000 && best) {
           navigator.geolocation.clearWatch(watchId)
@@ -142,20 +115,30 @@ async function getBestCurrentPosition(): Promise<GeolocationPosition> {
 export function LocationRouteMap({
   searchQuery,
   houseNo,
-  area: _area,
+  area,
   houseId,
   storedLocation,
   onLocationSaved,
   onBack,
 }: LocationRouteMapProps) {
   const router = useRouter()
-  const mapRef = useRef<MapRef | null>(null)
+  const [mapRef, setMapRef] = useState<MapRef | null>(null)
   const [viewState, setViewState] = useState<ViewState>(DEFAULT_VIEW)
   const [targetLocation, setTargetLocation] = useState<LatLng | null>(null)
   const [locating, setLocating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [openingDirections, setOpeningDirections] = useState(false)
   const [status, setStatus] = useState('')
+
+  const viewport = useMemo(
+    () => ({
+      center: [viewState.longitude, viewState.latitude] as [number, number],
+      zoom: viewState.zoom,
+      bearing: 0,
+      pitch: 0,
+    }),
+    [viewState.latitude, viewState.longitude, viewState.zoom],
+  )
 
   const saveCurrentLocation = useCallback(async () => {
     if (!houseId) {
@@ -172,7 +155,6 @@ export function LocationRouteMap({
 
     try {
       const position = await getBestCurrentPosition()
-
       const coords = {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
@@ -187,12 +169,8 @@ export function LocationRouteMap({
       await housesApi.updateLocation(houseId, coords)
 
       setTargetLocation([coords.latitude, coords.longitude])
-      setViewState((prev) => ({
-        ...prev,
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        zoom: 16,
-      }))
+      setViewState({ latitude: coords.latitude, longitude: coords.longitude, zoom: 16 })
+      mapRef?.flyTo({ center: [coords.longitude, coords.latitude], zoom: 16, duration: 800 })
 
       setStatus(`✓ Location saved for House ${houseNo}${accuracy > 0 ? ` (${accuracy}m accuracy)` : ''}`)
       onLocationSaved?.(coords)
@@ -205,7 +183,6 @@ export function LocationRouteMap({
       }
 
       const code = (error as LocationErrorLike)?.code
-
       if (code === 1) {
         setStatus('Location permission denied. Please allow access and try again.')
       } else if (code === 2) {
@@ -218,7 +195,7 @@ export function LocationRouteMap({
     } finally {
       setSaving(false)
     }
-  }, [houseId, houseNo, onLocationSaved])
+  }, [houseId, houseNo, mapRef, onLocationSaved, router])
 
   const openDirections = useCallback(() => {
     if (!targetLocation) {
@@ -245,31 +222,21 @@ export function LocationRouteMap({
 
     if (savedCoordinates) {
       setTargetLocation(savedCoordinates)
-      setViewState((prev) => ({
-        ...prev,
-        latitude: savedCoordinates[0],
-        longitude: savedCoordinates[1],
-        zoom: 16,
-      }))
-      setStatus('Saved house location loaded.')
+      setViewState({ latitude: savedCoordinates[0], longitude: savedCoordinates[1], zoom: 16 })
+      setStatus(area ? `Saved location loaded for ${area}.` : 'Saved house location loaded.')
       return
     }
 
     if (!query) {
       setTargetLocation(null)
-      setStatus('No saved house location found.')
+      setStatus(area ? `No saved house location found for ${area}.` : 'No saved house location found.')
       return
     }
 
     const directCoords = parseCoordinateQuery(query)
     if (directCoords) {
       setTargetLocation(directCoords)
-      setViewState((prev) => ({
-        ...prev,
-        latitude: directCoords[0],
-        longitude: directCoords[1],
-        zoom: 16,
-      }))
+      setViewState({ latitude: directCoords[0], longitude: directCoords[1], zoom: 16 })
       setStatus('House location loaded.')
       return
     }
@@ -308,12 +275,7 @@ export function LocationRouteMap({
 
         const resolvedTarget: LatLng = [latitude, longitude]
         setTargetLocation(resolvedTarget)
-        setViewState((prev) => ({
-          ...prev,
-          latitude,
-          longitude,
-          zoom: 15,
-        }))
+        setViewState({ latitude, longitude, zoom: 15 })
         setStatus('House location loaded.')
       } catch {
         if (!active) return
@@ -331,7 +293,16 @@ export function LocationRouteMap({
     return () => {
       active = false
     }
-  }, [searchQuery, storedLocation])
+  }, [area, searchQuery, storedLocation])
+
+  useEffect(() => {
+    mapRef?.jumpTo({
+      center: [viewState.longitude, viewState.latitude],
+      zoom: viewState.zoom,
+      bearing: 0,
+      pitch: 0,
+    })
+  }, [mapRef, viewState.latitude, viewState.longitude, viewState.zoom])
 
   const isBusy = useMemo(() => saving || locating || openingDirections, [saving, locating, openingDirections])
 
@@ -339,7 +310,7 @@ export function LocationRouteMap({
     <div className="space-y-3">
       <div className="sticky top-0 z-10 rounded-xl border border-border/70 bg-background/95 p-2 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="grid flex-1 min-w-0 grid-cols-2 gap-2">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
             <Button onClick={saveCurrentLocation} disabled={isBusy || !houseId} className="w-full gap-2">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {saving ? 'Saving...' : 'Save Location'}
@@ -350,29 +321,33 @@ export function LocationRouteMap({
             </Button>
           </div>
         </div>
-        {status ? (
-          <p className="mt-2 text-xs text-muted-foreground">{status}</p>
-        ) : null}
+        {status ? <p className="mt-2 text-xs text-muted-foreground">{status}</p> : null}
       </div>
 
       <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card">
         <div className="h-[52vh] min-h-[320px] max-h-[640px] w-full sm:h-[60vh] sm:min-h-[420px] sm:max-h-[700px]">
           <Map
-            ref={mapRef}
-            mapLib={maplibregl}
-            mapStyle={MAP_STYLE}
-            {...viewState}
-            onMove={(event) => setViewState(event.viewState)}
-            style={{ width: '100%', height: '100%' }}
+            ref={(instance) => setMapRef(instance)}
+            viewport={viewport}
+            onViewportChange={(nextViewport) =>
+              setViewState({
+                latitude: nextViewport.center[1],
+                longitude: nextViewport.center[0],
+                zoom: nextViewport.zoom,
+              })
+            }
+            className="h-full w-full rounded-none"
           >
-            <NavigationControl position="top-right" />
+            <MapControls showLocate showCompass position="top-right" />
 
             {targetLocation ? (
-              <Marker longitude={targetLocation[1]} latitude={targetLocation[0]} anchor="bottom">
-                <div className="rounded-full border border-emerald-600/40 bg-emerald-500 p-2 shadow-lg shadow-emerald-500/25">
-                  <MapPin className="h-4 w-4 text-white" />
-                </div>
-              </Marker>
+              <MapMarker longitude={targetLocation[1]} latitude={targetLocation[0]}>
+                <MarkerContent>
+                  <div className="rounded-full border border-emerald-600/40 bg-emerald-500 p-2 shadow-lg shadow-emerald-500/25">
+                    <MapPin className="h-4 w-4 text-white" />
+                  </div>
+                </MarkerContent>
+              </MapMarker>
             ) : null}
           </Map>
 
@@ -387,6 +362,13 @@ export function LocationRouteMap({
         </div>
       </div>
 
+      {onBack ? (
+        <div className="flex justify-end">
+          <Button variant="ghost" onClick={onBack} className="gap-2">
+            Back
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }
