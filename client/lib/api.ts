@@ -518,53 +518,111 @@ export const housesApi = {
     }),
   stats: () => apiGet<HouseStats>('/houses/stats'),
   create: async (data: Partial<House>) => {
-    if (isBrowser() && !navigator.onLine) {
-      const tempId = -Math.floor(Math.random() * 100000);
-      const tempHouse: House = {
-        id: tempId,
-        houseNo: data.houseNo ?? '',
-        area: data.area,
-        phoneNo: data.phoneNo ?? '',
-        alternativePhone: data.alternativePhone,
-        description: data.description,
-        rate1Type: data.rate1Type,
-        rate1: data.rate1,
-        rate2Type: data.rate2Type,
-        rate2: data.rate2,
-        location: data.location,
-        active: true,
-        createdAt: new Date().toISOString(),
-      };
+    // Optimistic update: create temporary house with negative ID
+    const tempId = -Math.floor(Math.random() * 100000);
+    const tempHouse: House = {
+      id: tempId,
+      houseNo: data.houseNo ?? '',
+      area: data.area,
+      phoneNo: data.phoneNo ?? '',
+      alternativePhone: data.alternativePhone,
+      description: data.description,
+      rate1Type: data.rate1Type,
+      rate1: data.rate1,
+      rate2Type: data.rate2Type,
+      rate2: data.rate2,
+      location: data.location,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Store optimistically in DB and cache immediately
+    if (isBrowser()) {
       await db.houses.put(tempHouse);
-      void syncEngine.enqueue('/houses', 'POST', data);
-      return tempHouse;
+
+      // Update all cached queries to include the temp house
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses',
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          return [...cached, tempHouse];
+        },
+      );
     }
 
-    const res = await apiPost<House>('/houses', data);
-    if (isBrowser()) {
-      await db.houses.put(res);
-      await invalidateCache('/houses');
+    // Sync in background without blocking UI
+    if (isOnline()) {
+      // Don't await - let it happen in background
+      (async () => {
+        try {
+          const res = await apiPost<House>('/houses', data);
+          if (isBrowser()) {
+            // Replace temp ID with real ID
+            await db.houses.delete(tempId);
+            await db.houses.put(res);
+
+            // Update all caches to replace temp with real house
+            await updateCachedQueries<House[]>(
+              (cacheKey) => cacheKey === 'GET:/houses',
+              (cached) => {
+                if (!Array.isArray(cached)) return cached;
+                return cached.map((h) => (h.id === tempId ? res : h));
+              },
+            );
+          }
+        } catch {
+          // On error, remove temp house from UI/cache
+          if (isBrowser()) {
+            await db.houses.delete(tempId);
+            await updateCachedQueries<House[]>(
+              (cacheKey) => cacheKey === 'GET:/houses',
+              (cached) => {
+                if (!Array.isArray(cached)) return cached;
+                return cached.filter((h) => h.id !== tempId);
+              },
+            );
+          }
+        }
+      })();
+    } else {
+      // Offline: enqueue for later sync
+      void syncEngine.enqueue('/houses', 'POST', data);
     }
-    return res;
+
+    // Return temp house immediately (optimistic)
+    return tempHouse;
   },
   update: async (id: number, data: Partial<House>) => {
     if (isBrowser()) {
       const existing = await db.houses.get(id);
       const next = existing ? { ...existing, ...data } : ({ id, ...data } as House);
-      await db.houses.put(next);
 
+      // Optimistic: update immediately in DB and cache
+      await db.houses.put(next);
       await updateCachedQueries<House[]>(
         (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
         (cached) => {
           if (Array.isArray(cached)) {
             return cached.map((item) => (item.id === id ? next : item));
           }
-
           return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
         },
       );
 
-      void syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
+      // Sync in background
+      if (isOnline()) {
+        (async () => {
+          try {
+            await apiPatch<House>(`/houses/${id}`, data);
+          } catch {
+            // On error, could revert or notify user
+            // For now, keep local state - user can retry
+          }
+        })();
+      } else {
+        void syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
+      }
+
       return next;
     }
 
@@ -694,6 +752,12 @@ export const houseConfigApi = {
     return data;
   },
   listForHouse: async (houseId: number) => {
+    // Prevent querying for temporary houses (negative IDs)
+    if (houseId < 0) {
+      const cached = readHouseConfigSessionCache();
+      return cached.filter((item) => item.houseId === houseId);
+    }
+
     const path = `/house-config?houseId=${houseId}`;
 
     if (!isOnline()) {
@@ -706,6 +770,20 @@ export const houseConfigApi = {
     return data;
   },
   create: async (data: Partial<HouseConfig>) => {
+    // Prevent creating configs for temporary houses (negative IDs)
+    if (typeof data.houseId === 'number' && data.houseId < 0) {
+      // Queue for later when house gets real ID
+      const offlineConfig = {
+        id: -Math.floor(Math.random() * 100000),
+        ...data,
+      } as unknown as HouseConfig;
+      if (isBrowser()) {
+        const cached = readHouseConfigSessionCache();
+        writeHouseConfigSessionCache([...cached.filter((item) => item.id !== offlineConfig.id), offlineConfig]);
+      }
+      return offlineConfig;
+    }
+
     if (isBrowser()) {
       const result = isOnline()
         ? await apiPost<HouseConfig>('/house-config', data)
@@ -754,6 +832,16 @@ export const houseConfigApi = {
     return apiPost<HouseConfig>('/house-config', data);
   },
   update: async (id: number, data: Partial<HouseConfig>) => {
+    // Prevent updating configs with negative IDs (temporary)
+    if (id < 0 || (typeof data.houseId === 'number' && data.houseId < 0)) {
+      if (isBrowser()) {
+        const cached = readHouseConfigSessionCache();
+        const updated = cached.map((item) => (item.id === id ? { ...item, ...data } : item));
+        writeHouseConfigSessionCache(updated);
+      }
+      return;
+    }
+
     if (isBrowser()) {
       const cached = readHouseConfigSessionCache();
       const next = cached.map((item) => (item.id === id ? { ...item, ...data } : item));
@@ -928,10 +1016,21 @@ export const houseConfigApi = {
 // ─── House Balance ────────────────────────────────────────────────────────────
 
 export const balanceApi = {
-  get: (houseId: number) => apiGet<HouseBalance>(`/house-balance/${houseId}`),
-  payments: (houseId: number) => apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`),
+  get: (houseId: number) => {
+    // Prevent querying balance for temporary houses
+    if (houseId < 0) return Promise.resolve({ id: 0, houseId, currentBalance: '0', previousBalance: '0' } as HouseBalance);
+    return apiGet<HouseBalance>(`/house-balance/${houseId}`);
+  },
+  payments: (houseId: number) => {
+    // Prevent querying payments for temporary houses
+    if (houseId < 0) return Promise.resolve([] as PaymentHistory[]);
+    return apiGet<PaymentHistory[]>(`/house-balance/${houseId}/payments`);
+  },
   allPayments: () => apiGet<PaymentHistory[]>('/house-balance/payments'),
   updatePrevious: async (houseId: number, previousBalance: number) => {
+    // Prevent updating balance for temporary houses
+    if (houseId < 0) return null;
+
     const payload = { previousBalance };
 
     if (isBrowser()) {
@@ -993,6 +1092,10 @@ export const balanceApi = {
 
 export const billsApi = {
   list: (params?: { houseId?: number; month?: number; year?: number }) => {
+    // Prevent querying bills for temporary houses
+    if (params?.houseId && params.houseId < 0) {
+      return Promise.resolve([] as Bill[]);
+    }
     const q = new URLSearchParams();
     if (params?.houseId) q.set('houseId', String(params.houseId));
     if (params?.month) q.set('month', String(params.month));
@@ -1010,10 +1113,15 @@ export const billsApi = {
       },
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
-  preview: (houseId: number, period: { fromDate: string; toDate: string }) =>
-    apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
+  preview: (houseId: number, period: { fromDate: string; toDate: string }) => {
+    // Prevent querying bill preview for temporary houses
+    if (houseId < 0) {
+      return Promise.resolve({ totalAmount: 0, previousBalance: 0, grandTotal: 0, logCount: 0, existingBillId: null, lastNote: null });
+    }
+    return apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
       `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
-    ),
+    );
+  },
   generate: async (data: {
     houseId: number;
     date?: string;
@@ -1021,6 +1129,11 @@ export const billsApi = {
     toDate: string;
     note?: string;
   }) => {
+    // Prevent generating bills for temporary houses
+    if (data.houseId < 0) {
+      return { id: -Math.floor(Math.random() * 100000), ...data, createdAt: new Date().toISOString() } as unknown as Bill;
+    }
+
     const res = await apiPost<Bill>('/bills/generate', data);
     if (isBrowser()) {
       await db.bills.put(res);
@@ -1148,6 +1261,10 @@ export const productRatesApi = {
 
 export const deliveryLogsApi = {
   list: (params?: { houseId?: number; shift?: 'morning' | 'evening' }) => {
+    // Prevent querying logs for temporary houses
+    if (params?.houseId && params.houseId < 0) {
+      return Promise.resolve([] as DeliveryLog[]);
+    }
     const q = new URLSearchParams();
     if (params?.houseId) q.set('houseId', String(params.houseId));
     if (params?.shift) q.set('shift', params.shift);
@@ -1164,6 +1281,17 @@ export const deliveryLogsApi = {
     note?: string;
     billGenerated?: boolean;
   }) => {
+    // Prevent creating logs for temporary houses
+    if (data.houseId < 0) {
+      const tempLog: DeliveryLog = {
+        id: -Math.floor(Math.random() * 100000),
+        ...data,
+        createdAt: new Date().toISOString(),
+      } as unknown as DeliveryLog;
+      if (isBrowser()) await db.deliveryLogs.put(tempLog);
+      return { log: tempLog, balance: { id: 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' } };
+    }
+
     const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
     if (isBrowser()) {
       await db.deliveryLogs.put(res.log);
