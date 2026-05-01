@@ -1445,10 +1445,12 @@ export default function DeliveryPage() {
                 <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
                     {/* HOUSE CARD */}
                     <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                        <button
-                            type="button"
+                        <div
+                            role="button"
+                            tabIndex={0}
                             onClick={() => setIsMapExpanded(true)}
-                            className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"
+                            onKeyDown={(e) => e.key === 'Enter' && setIsMapExpanded(true)}
+                            className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2 cursor-pointer"
                         >
                             <div className="absolute inset-0 pointer-events-none">
                                 <iframe
@@ -1486,7 +1488,7 @@ export default function DeliveryPage() {
                             <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
                                 <Maximize2 className="h-3.5 w-3.5 text-foreground" />
                             </div>
-                        </button>
+                        </div>
 
                         <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
                             <div className="space-y-1.5 sm:col-span-2">
