@@ -693,6 +693,18 @@ export const houseConfigApi = {
     if (isBrowser()) writeHouseConfigSessionCache(data);
     return data;
   },
+  listForHouse: async (houseId: number) => {
+    const path = `/house-config?houseId=${houseId}`;
+
+    if (!isOnline()) {
+      const cached = readHouseConfigSessionCache();
+      return cached.filter((item) => item.houseId === houseId);
+    }
+
+    const data = await requestGet<HouseConfig[]>(path);
+    if (isBrowser()) writeHouseConfigSessionCache(data);
+    return data;
+  },
   create: async (data: Partial<HouseConfig>) => {
     if (isBrowser()) {
       const result = isOnline()
@@ -998,15 +1010,15 @@ export const billsApi = {
       },
     }),
   dashboardStats: () => apiGet<DashboardStats>('/bills/dashboard-stats'),
-    preview: (houseId: number, period: { fromDate: string; toDate: string }) =>
-        apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
-        `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
-      ),
+  preview: (houseId: number, period: { fromDate: string; toDate: string }) =>
+    apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
+      `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
+    ),
   generate: async (data: {
     houseId: number;
     date?: string;
-      fromDate: string;
-      toDate: string;
+    fromDate: string;
+    toDate: string;
     note?: string;
   }) => {
     const res = await apiPost<Bill>('/bills/generate', data);

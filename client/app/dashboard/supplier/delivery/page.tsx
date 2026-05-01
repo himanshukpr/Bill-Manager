@@ -443,9 +443,9 @@ export default function DeliveryPage() {
                 prev.map((house) =>
                     house.id === currentHouse.id
                         ? {
-                              ...house,
-                              location,
-                          }
+                            ...house,
+                            location,
+                        }
                         : house,
                 ),
             )
@@ -685,6 +685,65 @@ export default function DeliveryPage() {
             active = false
         }
     }, [currentHouse?.id, selectedShift, todayKey, houseLogsCache])
+
+    // Clear today's delivered logs for current house only
+    const handleClearToday = useCallback(async () => {
+        if (!currentHouse) {
+            toast.error('No house selected')
+            return
+        }
+
+        if (!selectedShift) {
+            toast.error('Select a shift first')
+            return
+        }
+
+        if (!confirm(`Delete all delivery items added today for House ${currentHouse.houseNo}? This cannot be undone.`)) return
+
+        try {
+            const today = new Date()
+            const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+
+            if (toDelete.length === 0) {
+                toast.info('No delivery items found for today')
+                return
+            }
+
+            await Promise.all(toDelete.map((log) => deliveryLogsApi.delete(log.id)))
+
+            // Update local UI state for current house
+            setCurrentHouseLogs([])
+            setCompletedHouses((prev) => {
+                const next = new Set(prev)
+                next.delete(currentHouse.id)
+                return next
+            })
+
+            setAllocatedHouseProducts((prev) => {
+                const next = { ...prev }
+                delete next[currentHouse.id]
+                return next
+            })
+
+            setHouseLogsCache((prev) => {
+                const next = { ...prev }
+                delete next[currentHouse.id]
+                return next
+            })
+
+            setLoadedHouseLogIds((prev) => {
+                const next = new Set(prev)
+                next.delete(currentHouse.id)
+                return next
+            })
+
+            setDeliveryItems([{ ...emptyDeliveryItem }])
+            await loadTodayDeliveredSummary()
+            toast.success(`Deleted ${toDelete.length} delivery log(s) from today`)
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to clear today deliveries')
+        }
+    }, [currentHouse, currentHouseLogs, selectedShift, loadTodayDeliveredSummary])
 
     useEffect(() => {
         if (!selectedShift || visibleHouses.length === 0) return
@@ -1231,7 +1290,7 @@ export default function DeliveryPage() {
 
     return (
         <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
-            
+
             {/* <div className="flex justify-end">
                 <Button asChild variant="outline" size="sm">
                     <Link href="/dashboard/supplier/rates">Rate List</Link>
@@ -1241,404 +1300,417 @@ export default function DeliveryPage() {
             <div
                 className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${houseMotionClass}`}
             >
-            {houseChangeMessage ? (
-                <div className="pointer-events-none absolute right-2 top-2 z-20 rounded-full bg-primary/90 px-3 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg shadow-primary/20">
-                    {houseChangeMessage}
-                </div>
-            ) : null}
-            {swipePreviewHouse ? (
-                <div className="pointer-events-none absolute inset-0 z-0" style={swipePreviewStyle}>
-                    <div className="flex h-full min-h-0 flex-col">
-                        <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                            <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2">
-                                <div className="absolute inset-0 bg-emerald-900/10" />
-                                <div className="absolute inset-x-0 bottom-2 flex items-center justify-between px-2">
-                                    <span className="rounded-md bg-background/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                                        {swipePreviewDirection === 'next' ? 'Next House' : 'Previous House'}
-                                    </span>
-                                    <Maximize2 className="h-3.5 w-3.5 text-foreground/80" />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
-                                <div className="space-y-1.5 sm:col-span-2">
-                                    <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
-                                        <div>
-                                            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
-                                            <h2 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{swipePreviewHouse.houseNo}</h2>
-                                            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                                Route #{swipePreviewRouteNumber}
-                                            </p>
-                                        </div>
-                                        <div>
-                                            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
-                                            {completedHouses.has(swipePreviewHouse.id) ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
-                                        <div className="flex min-w-0 items-center gap-2">
-                                            <MapPin className="h-4 w-4 shrink-0" />
-                                            <span className="truncate">{swipePreviewHouse.area || 'Area not set'}</span>
-                                        </div>
-                                        <div className="flex min-w-0 items-center gap-2 text-right">
-                                            <Phone className="h-4 w-4 shrink-0" />
-                                            <span className="truncate">{swipePreviewHouse.phoneNo || 'Phone not set'}</span>
-                                        </div>
+                {houseChangeMessage ? (
+                    <div className="pointer-events-none absolute right-2 top-2 z-20 rounded-full bg-primary/90 px-3 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg shadow-primary/20">
+                        {houseChangeMessage}
+                    </div>
+                ) : null}
+                {swipePreviewHouse ? (
+                    <div className="pointer-events-none absolute inset-0 z-0" style={swipePreviewStyle}>
+                        <div className="flex h-full min-h-0 flex-col">
+                            <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
+                                <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2">
+                                    <div className="absolute inset-0 bg-emerald-900/10" />
+                                    <div className="absolute inset-x-0 bottom-2 flex items-center justify-between px-2">
+                                        <span className="rounded-md bg-background/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                            {swipePreviewDirection === 'next' ? 'Next House' : 'Previous House'}
+                                        </span>
+                                        <Maximize2 className="h-3.5 w-3.5 text-foreground/80" />
                                     </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
-                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                        <span className="sm:hidden">Buf ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
-                                        <span className="hidden sm:inline">Buffalo ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
-                                    </Badge>
-                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                        <span className="sm:hidden">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
-                                        <span className="hidden sm:inline">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
-                                    </Badge>
+                                <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
+                                    <div className="space-y-1.5 sm:col-span-2">
+                                        <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                                            <div>
+                                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                                <h2 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{swipePreviewHouse.houseNo}</h2>
+                                                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                                    Route #{swipePreviewRouteNumber}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
+                                                {completedHouses.has(swipePreviewHouse.id) ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                <MapPin className="h-4 w-4 shrink-0" />
+                                                <span className="truncate">{swipePreviewHouse.area || 'Area not set'}</span>
+                                            </div>
+                                            <div className="flex min-w-0 items-center gap-2 text-right">
+                                                <Phone className="h-4 w-4 shrink-0" />
+                                                <span className="truncate">{swipePreviewHouse.phoneNo || 'Phone not set'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
+                                        <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                            <span className="sm:hidden">Buf ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
+                                            <span className="hidden sm:inline">Buffalo ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
+                                        </Badge>
+                                        <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                            <span className="sm:hidden">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
+                                            <span className="hidden sm:inline">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
+                                        </Badge>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div className="bg-card rounded-t-none overflow-y-auto">
-                            <div className="border-t border-border/40 p-3 space-y-3">
-                                <div className="overflow-x-auto rounded-xl border border-border/70">
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead className="w-22.5 sm:w-30">Product</TableHead>
-                                                <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
-                                                <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
-                                                <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {!isSwipePreviewLogsLoaded ? (
+                            <div className="bg-card rounded-t-none overflow-y-auto">
+                                <div className="border-t border-border/40 p-3 space-y-3">
+                                    <div className="overflow-x-auto rounded-xl border border-border/70">
+                                        <Table>
+                                            <TableHeader>
                                                 <TableRow>
-                                                    <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
-                                                        Loading products...
-                                                    </TableCell>
+                                                    <TableHead className="w-22.5 sm:w-30">Product</TableHead>
+                                                    <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
+                                                    <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
+                                                    <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
                                                 </TableRow>
-                                            ) : swipePreviewItems.filter((item) => Number(item.qty) > 0).length === 0 ? (
-                                                <TableRow>
-                                                    <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
-                                                        No products delivered yet for today
-                                                    </TableCell>
-                                                </TableRow>
-                                            ) : (
-                                                swipePreviewItems
-                                                    .filter((item) => Number(item.qty) > 0)
-                                                    .map((item, idx) => {
-                                                        const qty = Number(item.qty)
-                                                        const rate = getEffectiveRate(swipePreviewHouse, item.milkType).rate
-                                                        const amount = qty * rate
+                                            </TableHeader>
+                                            <TableBody>
+                                                {!isSwipePreviewLogsLoaded ? (
+                                                    <TableRow>
+                                                        <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
+                                                            Loading products...
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ) : swipePreviewItems.filter((item) => Number(item.qty) > 0).length === 0 ? (
+                                                    <TableRow>
+                                                        <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
+                                                            No products delivered yet for today
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ) : (
+                                                    swipePreviewItems
+                                                        .filter((item) => Number(item.qty) > 0)
+                                                        .map((item, idx) => {
+                                                            const qty = Number(item.qty)
+                                                            const rate = getEffectiveRate(swipePreviewHouse, item.milkType).rate
+                                                            const amount = qty * rate
 
-                                                        return (
-                                                            <TableRow key={`${item.milkType}-${idx}`}>
-                                                                <TableCell className="font-medium capitalize">{item.milkType}</TableCell>
-                                                                <TableCell>{qty}</TableCell>
-                                                                <TableCell>₹{rate}/L</TableCell>
-                                                                <TableCell className="hidden sm:table-cell">₹{amount.toLocaleString('en-IN')}</TableCell>
-                                                            </TableRow>
-                                                        )
-                                                    })
-                                            )}
-                                        </TableBody>
-                                    </Table>
+                                                            return (
+                                                                <TableRow key={`${item.milkType}-${idx}`}>
+                                                                    <TableCell className="font-medium capitalize">{item.milkType}</TableCell>
+                                                                    <TableCell>{qty}</TableCell>
+                                                                    <TableCell>₹{rate}/L</TableCell>
+                                                                    <TableCell className="hidden sm:table-cell">₹{amount.toLocaleString('en-IN')}</TableCell>
+                                                                </TableRow>
+                                                            )
+                                                        })
+                                                )}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <Button size="sm" className="text-xs" disabled>
+                                            <Plus className="mr-1 h-3 w-3" /> Add Item
+                                        </Button>
+                                        <div className="text-sm font-bold">Total: ₹{swipePreviewTotal.toLocaleString('en-IN')}</div>
+                                    </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <Button size="sm" className="text-xs" disabled>
-                                        <Plus className="mr-1 h-3 w-3" /> Add Item
+                                <div className="shrink-0 sticky bottom-0 z-10 bg-card">
+                                    <Button disabled className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+                                        {completedHouses.has(swipePreviewHouse.id) ? 'Update Delivery' : 'Mark Delivered'}
                                     </Button>
-                                    <div className="text-sm font-bold">Total: ₹{swipePreviewTotal.toLocaleString('en-IN')}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+                <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
+                    {/* HOUSE CARD */}
+                    <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
+                        <button
+                            type="button"
+                            onClick={() => setIsMapExpanded(true)}
+                            className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"
+                        >
+                            <div className="absolute inset-0 pointer-events-none">
+                                <iframe
+                                    title="Mini map preview"
+                                    src={miniMapEmbedUrl}
+                                    className="h-full w-full border-0"
+                                    loading="lazy"
+                                    referrerPolicy="no-referrer-when-downgrade"
+                                />
+                            </div>
+                            <div className="absolute inset-0 bg-emerald-900/10" />
+                            {miniMapLoading ? (
+                                <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
+                                    Loading map...
+                                </div>
+                            ) : null}
+                            {miniMapLocationWarning ? (
+                                <div className="absolute left-2 right-2 top-2 rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
+                                    {miniMapLocationWarning}
+                                </div>
+                            ) : null}
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="absolute right-2 top-2 h-7 w-7 rounded-md bg-background/90 hover:bg-background/95 shadow-sm"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleClearToday()
+                                }}
+                                title="Clear today's deliveries"
+                            >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                            <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
+                                <Maximize2 className="h-3.5 w-3.5 text-foreground" />
+                            </div>
+                        </button>
+
+                        <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
+                            <div className="space-y-1.5 sm:col-span-2">
+                                <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                                    <div>
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                        <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{currentHouse.houseNo}</h1>
+                                        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                            Route #{currentRouteNumber}
+                                        </p>
+                                    </div>
+                                    <div className="relative flex flex-col items-start pr-10">
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
+                                            onClick={() => setPanelView((view) => (view === 'delivery' ? 'allocated-houses' : 'delivery'))}
+                                            aria-label="Switch view"
+                                            title="Switch view"
+                                        >
+                                            <Rows3 className="h-4 w-4" />
+                                        </Button>
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
+                                        {isCompleted ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
+                                    <div className="flex min-w-0 items-center gap-2">
+                                        <MapPin className="h-4 w-4 shrink-0" />
+                                        <span className="truncate">{currentHouse.area || 'Area not set'}</span>
+                                    </div>
+                                    <div className="flex min-w-0 items-center gap-2 text-right">
+                                        <Phone className="h-4 w-4 shrink-0" />
+                                        <span className="truncate">{currentHouse.phoneNo || 'Phone not set'}</span>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="shrink-0 sticky bottom-0 z-10 bg-card">
-                                <Button disabled className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
-                                    {completedHouses.has(swipePreviewHouse.id) ? 'Update Delivery' : 'Mark Delivered'}
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            ) : null}
-            <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
-            {/* HOUSE CARD */}
-            <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                <button
-                    type="button"
-                    onClick={() => setIsMapExpanded(true)}
-                    className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"
-                >
-                    <div className="absolute inset-0 pointer-events-none">
-                        <iframe
-                            title="Mini map preview"
-                            src={miniMapEmbedUrl}
-                            className="h-full w-full border-0"
-                            loading="lazy"
-                            referrerPolicy="no-referrer-when-downgrade"
-                        />
-                    </div>
-                    <div className="absolute inset-0 bg-emerald-900/10" />
-                    {miniMapLoading ? (
-                        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
-                            Loading map...
-                        </div>
-                    ) : null}
-                    {miniMapLocationWarning ? (
-                        <div className="absolute left-2 right-2 top-2 rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
-                            {miniMapLocationWarning}
-                        </div>
-                    ) : null}
-                    <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
-                        <Maximize2 className="h-3.5 w-3.5 text-foreground" />
-                    </div>
-                </button>
-
-                <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
-                    <div className="space-y-1.5 sm:col-span-2">
-                        <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
-                            <div>
-                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
-                                <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{currentHouse.houseNo}</h1>
-                                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                    Route #{currentRouteNumber}
-                                </p>
-                            </div>
-                            <div className="relative flex flex-col items-start pr-10">
-                                <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
-                                    onClick={() => setPanelView((view) => (view === 'delivery' ? 'allocated-houses' : 'delivery'))}
-                                    aria-label="Switch view"
-                                    title="Switch view"
-                                >
-                                    <Rows3 className="h-4 w-4" />
-                                </Button>
-                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
-                                {isCompleted ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
-                            </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
-                            <div className="flex min-w-0 items-center gap-2">
-                                <MapPin className="h-4 w-4 shrink-0" />
-                                <span className="truncate">{currentHouse.area || 'Area not set'}</span>
-                            </div>
-                            <div className="flex min-w-0 items-center gap-2 text-right">
-                                <Phone className="h-4 w-4 shrink-0" />
-                                <span className="truncate">{currentHouse.phoneNo || 'Phone not set'}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
-                        {(() => {
-                            const buffalo = getEffectiveRate(currentHouse, 'buffalo')
-                            const cow = getEffectiveRate(currentHouse, 'cow')
-
-                            return (
-                                <>
-                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                        <span className="sm:hidden">Buf ₹{buffalo.rate}/L</span>
-                                        <span className="hidden sm:inline">Buffalo ₹{buffalo.rate}/L</span>
-                                    </Badge>
-                                    <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                        <span className="sm:hidden">Cow ₹{cow.rate}/L</span>
-                                        <span className="hidden sm:inline">Cow ₹{cow.rate}/L</span>
-                                    </Badge>
-                                </>
-                            )
-                        })()}
-                    </div>
-                </div>
-            </div>
-
-            {/* FIRST DELIVERY FORM */}
-            <div className="bg-card rounded-t-none overflow-y-auto">
-                <div className="border-t border-border/40 p-3 space-y-3">
-                    <div className="overflow-x-auto rounded-xl border border-border/70">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead className="w-22.5 sm:w-30">Product</TableHead>
-                                    <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
-                                    <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
-                                    <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {deliveryItems.map((item, idx) => {
-                                    const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
-                                    const rate = effectiveRate.rate
-                                    const qty = Number(item.qty)
-                                    const amount = qty > 0 ? qty * rate : 0
-                                    const isSwipedOpen = swipedDeliveryItem.index === idx
-                                    const rowOffset = isSwipedOpen ? swipedDeliveryItem.offset : 0
+                            <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
+                                {(() => {
+                                    const buffalo = getEffectiveRate(currentHouse, 'buffalo')
+                                    const cow = getEffectiveRate(currentHouse, 'cow')
 
                                     return (
-                                        <TableRow key={idx} className="border-0">
-                                            <TableCell colSpan={4} className="p-0">
-                                                <div
-                                                    className="relative overflow-hidden rounded-xl border border-border/70 bg-card"
-                                                    style={{ touchAction: 'pan-y' }}
-                                                    onTouchStart={(event) => handleDeliveryItemTouchStart(idx, event)}
-                                                    onTouchMove={(event) => handleDeliveryItemTouchMove(idx, event)}
-                                                    onTouchEnd={() => handleDeliveryItemTouchEnd(idx)}
-                                                    onTouchCancel={() => {
-                                                        deliveryItemSwipeStartRef.current = null
-                                                        setSwipedDeliveryItem({ index: null, offset: 0 })
-                                                    }}
-                                                >
-                                                    <div
-                                                        className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
-                                                        style={{
-                                                            opacity: rowOffset <= -16 ? 1 : 0,
-                                                            transform: `translate3d(${rowOffset <= -16 ? 0 : 8}px, 0, 0)`,
-                                                            transition: deliveryItemSwipeStartRef.current?.index === idx
-                                                                ? 'none'
-                                                                : 'opacity 180ms ease, transform 180ms ease',
-                                                            pointerEvents: rowOffset <= -16 ? 'auto' : 'none',
-                                                        }}
-                                                    >
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            className="h-full w-full rounded-none rounded-l-xl bg-transparent p-0 text-destructive shadow-none hover:bg-destructive/10"
-                                                            onClick={() => removeDeliveryItem(idx)}
-                                                            aria-label="Delete item"
-                                                        >
-                                                            <Trash2 className="h-3.25 w-3.25" />
-                                                        </Button>
-                                                    </div>
-
-                                                    <div
-                                                        className="relative z-10 grid grid-cols-[minmax(0,1.3fr)_minmax(5rem,0.8fr)_minmax(4.5rem,0.6fr)] gap-2 p-2 transition-transform duration-200 sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(4.75rem,0.7fr)_minmax(5.75rem,0.9fr)] sm:gap-3 sm:p-3"
-                                                        style={{
-                                                            transform: `translate3d(${rowOffset}px, 0, 0)`,
-                                                            backgroundColor: rowOffset < 0 ? 'rgba(239, 68, 68, 0.08)' : 'transparent',
-                                                            transition: deliveryItemSwipeStartRef.current?.index === idx
-                                                                ? 'none'
-                                                                : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms cubic-bezier(0.22, 1, 0.36, 1)',
-                                                        }}
-                                                    >
-                                                        <div>
-                                                            <Select
-                                                                value={item.milkType}
-                                                                onValueChange={(val) =>
-                                                                    updateDeliveryItem(idx, 'milkType', val)
-                                                                }
-                                                            >
-                                                                <SelectTrigger className="h-9 w-full">
-                                                                    <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {productRateOptions.length > 0 ? (
-                                                                        productRateOptions.map((option) => (
-                                                                            <SelectItem key={option.value} value={option.value}>
-                                                                                {option.label}
-                                                                            </SelectItem>
-                                                                        ))
-                                                                    ) : (
-                                                                        <SelectItem value="__no_products__" disabled>
-                                                                            No active products
-                                                                        </SelectItem>
-                                                                    )}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </div>
-
-                                                        <div className="sm:min-w-30">
-                                                            <Input
-                                                                type="number"
-                                                                placeholder="0"
-                                                                value={item.qty}
-                                                                onChange={(e) =>
-                                                                    updateDeliveryItem(idx, 'qty', e.target.value)
-                                                                }
-                                                                className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                            />
-                                                        </div>
-
-                                                        <div className="flex items-center text-sm font-medium">
-                                                            ₹{rate}/L
-                                                        </div>
-
-                                                        <div className="hidden items-center text-sm font-semibold sm:flex">
-                                                            ₹{amount.toLocaleString('en-IN')}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
+                                        <>
+                                            <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                                <span className="sm:hidden">Buf ₹{buffalo.rate}/L</span>
+                                                <span className="hidden sm:inline">Buffalo ₹{buffalo.rate}/L</span>
+                                            </Badge>
+                                            <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                                <span className="sm:hidden">Cow ₹{cow.rate}/L</span>
+                                                <span className="hidden sm:inline">Cow ₹{cow.rate}/L</span>
+                                            </Badge>
+                                        </>
                                     )
-                                })}
-                            </TableBody>
-                        </Table>
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <Button onClick={addItem} size="sm" className="text-xs">
-                            <Plus className="mr-1 h-3 w-3" /> Add Item
-                        </Button>
-                        <div className="text-sm font-bold">
-                            Total: ₹{currentDeliveryTotal.toLocaleString('en-IN')}
+                                })()}
+                            </div>
                         </div>
                     </div>
 
-                    <p className="text-xs text-muted-foreground">
-                        {marking
-                            ? 'Saving changes...'
-                            : saveStatus === 'failed'
-                                ? 'Save failed. Please try again.'
-                                : hasUnsavedChanges
-                                    ? 'Unsaved changes. Click the button below to save.'
-                                    : saveStatus === 'saved'
-                                        ? `Changes saved${lastSavedAt ? ` at ${lastSavedAt}` : ''}.`
-                                        : isCompleted
-                                            ? 'No new changes to save.'
-                                        : ''}
-                    </p>
+                    {/* FIRST DELIVERY FORM */}
+                    <div className="bg-card rounded-t-none overflow-y-auto">
+                        <div className="border-t border-border/40 p-3 space-y-3">
+                            <div className="overflow-x-auto rounded-xl border border-border/70">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="w-22.5 sm:w-30">Product</TableHead>
+                                            <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
+                                            <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
+                                            <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {deliveryItems.map((item, idx) => {
+                                            const effectiveRate = getEffectiveRate(currentHouse, item.milkType)
+                                            const rate = effectiveRate.rate
+                                            const qty = Number(item.qty)
+                                            const amount = qty > 0 ? qty * rate : 0
+                                            const isSwipedOpen = swipedDeliveryItem.index === idx
+                                            const rowOffset = isSwipedOpen ? swipedDeliveryItem.offset : 0
+
+                                            return (
+                                                <TableRow key={idx} className="border-0">
+                                                    <TableCell colSpan={4} className="p-0">
+                                                        <div
+                                                            className="relative overflow-hidden rounded-xl border border-border/70 bg-card"
+                                                            style={{ touchAction: 'pan-y' }}
+                                                            onTouchStart={(event) => handleDeliveryItemTouchStart(idx, event)}
+                                                            onTouchMove={(event) => handleDeliveryItemTouchMove(idx, event)}
+                                                            onTouchEnd={() => handleDeliveryItemTouchEnd(idx)}
+                                                            onTouchCancel={() => {
+                                                                deliveryItemSwipeStartRef.current = null
+                                                                setSwipedDeliveryItem({ index: null, offset: 0 })
+                                                            }}
+                                                        >
+                                                            <div
+                                                                className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
+                                                                style={{
+                                                                    opacity: rowOffset <= -16 ? 1 : 0,
+                                                                    transform: `translate3d(${rowOffset <= -16 ? 0 : 8}px, 0, 0)`,
+                                                                    transition: deliveryItemSwipeStartRef.current?.index === idx
+                                                                        ? 'none'
+                                                                        : 'opacity 180ms ease, transform 180ms ease',
+                                                                    pointerEvents: rowOffset <= -16 ? 'auto' : 'none',
+                                                                }}
+                                                            >
+                                                                <Button
+                                                                    type="button"
+                                                                    size="sm"
+                                                                    className="h-full w-full rounded-none rounded-l-xl bg-transparent p-0 text-destructive shadow-none hover:bg-destructive/10"
+                                                                    onClick={() => removeDeliveryItem(idx)}
+                                                                    aria-label="Delete item"
+                                                                >
+                                                                    <Trash2 className="h-3.25 w-3.25" />
+                                                                </Button>
+                                                            </div>
+
+                                                            <div
+                                                                className="relative z-10 grid grid-cols-[minmax(0,1.3fr)_minmax(5rem,0.8fr)_minmax(4.5rem,0.6fr)] gap-2 p-2 transition-transform duration-200 sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(4.75rem,0.7fr)_minmax(5.75rem,0.9fr)] sm:gap-3 sm:p-3"
+                                                                style={{
+                                                                    transform: `translate3d(${rowOffset}px, 0, 0)`,
+                                                                    backgroundColor: rowOffset < 0 ? 'rgba(239, 68, 68, 0.08)' : 'transparent',
+                                                                    transition: deliveryItemSwipeStartRef.current?.index === idx
+                                                                        ? 'none'
+                                                                        : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+                                                                }}
+                                                            >
+                                                                <div>
+                                                                    <Select
+                                                                        value={item.milkType}
+                                                                        onValueChange={(val) =>
+                                                                            updateDeliveryItem(idx, 'milkType', val)
+                                                                        }
+                                                                    >
+                                                                        <SelectTrigger className="h-9 w-full">
+                                                                            <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {productRateOptions.length > 0 ? (
+                                                                                productRateOptions.map((option) => (
+                                                                                    <SelectItem key={option.value} value={option.value}>
+                                                                                        {option.label}
+                                                                                    </SelectItem>
+                                                                                ))
+                                                                            ) : (
+                                                                                <SelectItem value="__no_products__" disabled>
+                                                                                    No active products
+                                                                                </SelectItem>
+                                                                            )}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                </div>
+
+                                                                <div className="sm:min-w-30">
+                                                                    <Input
+                                                                        type="number"
+                                                                        placeholder="0"
+                                                                        value={item.qty}
+                                                                        onChange={(e) =>
+                                                                            updateDeliveryItem(idx, 'qty', e.target.value)
+                                                                        }
+                                                                        className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                    />
+                                                                </div>
+
+                                                                <div className="flex items-center text-sm font-medium">
+                                                                    ₹{rate}/L
+                                                                </div>
+
+                                                                <div className="hidden items-center text-sm font-semibold sm:flex">
+                                                                    ₹{amount.toLocaleString('en-IN')}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </TableCell>
+                                                </TableRow>
+                                            )
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <Button onClick={addItem} size="sm" className="text-xs">
+                                    <Plus className="mr-1 h-3 w-3" /> Add Item
+                                </Button>
+                                <div className="text-sm font-bold">
+                                    Total: ₹{currentDeliveryTotal.toLocaleString('en-IN')}
+                                </div>
+                            </div>
+
+                            <p className="text-xs text-muted-foreground">
+                                {marking
+                                    ? 'Saving changes...'
+                                    : saveStatus === 'failed'
+                                        ? 'Save failed. Please try again.'
+                                        : hasUnsavedChanges
+                                            ? 'Unsaved changes. Click the button below to save.'
+                                            : saveStatus === 'saved'
+                                                ? `Changes saved${lastSavedAt ? ` at ${lastSavedAt}` : ''}.`
+                                                : isCompleted
+                                                    ? 'No new changes to save.'
+                                                    : ''}
+                            </p>
+                        </div>
+
+                        {/* ACTION */}
+                        <div className="shrink-0 sticky bottom-0 z-10 bg-card">
+                            <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+                                {marking ? 'Saving...' : isCompleted ? 'Update Delivery' : 'Mark Delivered'}
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div
+                        className="flex shrink-0 items-center justify-between px-0.5 py-0.5"
+                        onTouchStart={handleHouseTouchStart}
+                        onTouchMove={handleHouseTouchMove}
+                        onTouchEnd={handleHouseTouchEnd}
+                        onTouchCancel={() => {
+                            navSwipeStartRef.current = null
+                            setSwipeOffset(0)
+                            setIsSwiping(false)
+                        }}
+                    >
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handlePrevious} disabled={currentIndex === 0}>
+                            <ChevronLeft />
+                        </Button>
+
+                        <div className="text-center">
+                            <p className="text-xs font-semibold sm:text-sm">
+                                Route {currentRouteNumber} / {visibleHouses.length}
+                            </p>
+                        </div>
+
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === visibleHouses.length - 1}>
+                            <ChevronRight />
+                        </Button>
+                    </div>
                 </div>
-
-            {/* ACTION */}
-            <div className="shrink-0 sticky bottom-0 z-10 bg-card">
-                <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
-                {marking ? 'Saving...' : isCompleted ? 'Update Delivery' : 'Mark Delivered'}
-                </Button>
-            </div>
-            </div>
-
-            <div
-                className="flex shrink-0 items-center justify-between px-0.5 py-0.5"
-                onTouchStart={handleHouseTouchStart}
-                onTouchMove={handleHouseTouchMove}
-                onTouchEnd={handleHouseTouchEnd}
-                onTouchCancel={() => {
-                    navSwipeStartRef.current = null
-                    setSwipeOffset(0)
-                    setIsSwiping(false)
-                }}
-            >
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handlePrevious} disabled={currentIndex === 0}>
-                    <ChevronLeft />
-                </Button>
-
-                <div className="text-center">
-                    <p className="text-xs font-semibold sm:text-sm">
-                            Route {currentRouteNumber} / {visibleHouses.length}
-                    </p>
-                </div>
-
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === visibleHouses.length - 1}>
-                    <ChevronRight />
-                </Button>
-            </div>
-            </div>
 
             </div>
 
