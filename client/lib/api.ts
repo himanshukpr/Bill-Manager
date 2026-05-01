@@ -518,6 +518,28 @@ export const housesApi = {
     }),
   stats: () => apiGet<HouseStats>('/houses/stats'),
   create: async (data: Partial<House>) => {
+    if (isBrowser() && !navigator.onLine) {
+      const tempId = -Math.floor(Math.random() * 100000);
+      const tempHouse: House = {
+        id: tempId,
+        houseNo: data.houseNo ?? '',
+        area: data.area,
+        phoneNo: data.phoneNo ?? '',
+        alternativePhone: data.alternativePhone,
+        description: data.description,
+        rate1Type: data.rate1Type,
+        rate1: data.rate1,
+        rate2Type: data.rate2Type,
+        rate2: data.rate2,
+        location: data.location,
+        active: true,
+        createdAt: new Date().toISOString(),
+      };
+      await db.houses.put(tempHouse);
+      void syncEngine.enqueue('/houses', 'POST', data);
+      return tempHouse;
+    }
+
     const res = await apiPost<House>('/houses', data);
     if (isBrowser()) {
       await db.houses.put(res);

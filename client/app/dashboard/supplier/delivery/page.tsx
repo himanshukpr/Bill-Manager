@@ -151,10 +151,25 @@ function parseHouseLocation(location?: string): { lat: number; lon: number } | n
     return { lat, lon }
 }
 
+function getStoredShift(dateKey: string): 'morning' | 'evening' | null {
+    if (typeof window === 'undefined') return null
+    const stored = localStorage.getItem(`delivery_shift_${dateKey}`)
+    if (stored === 'morning' || stored === 'evening') return stored
+    return null
+}
+
+function getStoredIndex(dateKey: string, shift: 'morning' | 'evening'): number {
+    if (typeof window === 'undefined') return 0
+    const stored = localStorage.getItem(`delivery_index_${dateKey}_${shift}`)
+    const parsed = parseInt(stored ?? '0', 10)
+    return isNaN(parsed) ? 0 : parsed
+}
+
 export default function DeliveryPage() {
     const router = useRouter()
 
     const [auth, setAuth] = useState<any>(null)
+    const [todayKey, setTodayKey] = useState(() => getLocalDateKey())
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
     const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
 
@@ -166,7 +181,6 @@ export default function DeliveryPage() {
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
     const [allocatedHouseProducts, setAllocatedHouseProducts] = useState<Record<number, string>>({})
-    const [todayKey, setTodayKey] = useState(() => getLocalDateKey())
 
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
@@ -261,6 +275,31 @@ export default function DeliveryPage() {
         setAuth(session)
     }, [])
 
+    // RESTORE PROGRESS WHEN SHIFT IS SELECTED
+    const hasInitiallyRestored = useRef(false)
+    useEffect(() => {
+        if (selectedShift && typeof window !== 'undefined' && !hasInitiallyRestored.current) {
+            hasInitiallyRestored.current = true
+            const savedIndex = getStoredIndex(todayKey, selectedShift)
+            setCurrentIndex(savedIndex)
+            setShiftSelectorOpen(false)
+        }
+    }, [selectedShift, todayKey])
+
+    // SAVE SHIFT TO LOCALSTORAGE
+    useEffect(() => {
+        if (selectedShift && typeof window !== 'undefined') {
+            localStorage.setItem(`delivery_shift_${todayKey}`, selectedShift)
+        }
+    }, [selectedShift, todayKey])
+
+    // SAVE CURRENT INDEX TO LOCALSTORAGE
+    useEffect(() => {
+        if (selectedShift && typeof window !== 'undefined') {
+            localStorage.setItem(`delivery_index_${todayKey}_${selectedShift}`, String(currentIndex))
+        }
+    }, [currentIndex, selectedShift, todayKey])
+
     useEffect(() => {
         const updateHeight = () => {
             const topOffset = pageContainerRef.current?.getBoundingClientRect().top ?? 0
@@ -281,7 +320,7 @@ export default function DeliveryPage() {
     }, [])
 
     // LOAD HOUSES
-    const loadHouses = useCallback(async () => {
+    const loadHouses = useCallback(async (resetIndex = true) => {
         if (!auth || !selectedShift) return
 
         try {
@@ -299,23 +338,36 @@ export default function DeliveryPage() {
                 return prev.map((item) => (item.milkType ? item : { ...item, milkType: defaultProduct }))
             })
             setHouses(data)
-            setCurrentIndex(0)
+            if (resetIndex || selectedShift) {
+                const savedIndex = getStoredIndex(todayKey, selectedShift)
+                setCurrentIndex(savedIndex)
+            }
         } catch (err: any) {
             toast.error(err.message)
         } finally {
             setLoading(false)
         }
-    }, [auth, selectedShift])
+    }, [auth, selectedShift, todayKey])
+
+    const initialLoadDone = useRef(false)
+    useEffect(() => {
+        if (!initialLoadDone.current && selectedShift) {
+            initialLoadDone.current = true
+            loadHouses(true)
+        }
+    }, [loadHouses, selectedShift])
 
     useEffect(() => {
-        loadHouses()
-    }, [loadHouses])
+        if (initialLoadDone.current && selectedShift) {
+            loadHouses(true)
+        }
+    }, [selectedShift, loadHouses])
 
     const currentHouse = visibleHouses[currentIndex]
 
     useEffect(() => {
-        if (currentIndex >= visibleHouses.length && visibleHouses.length > 0) {
-            setCurrentIndex(0)
+        if (visibleHouses.length > 0 && currentIndex >= visibleHouses.length) {
+            setCurrentIndex(Math.min(currentIndex, visibleHouses.length - 1))
         }
     }, [currentIndex, visibleHouses.length])
 
@@ -1020,11 +1072,23 @@ export default function DeliveryPage() {
                     </DialogHeader>
 
                     <div className="grid gap-3 sm:grid-cols-2">
-                        <Button className="w-full" onClick={() => setSelectedShift('morning')}>
+                        <Button className="w-full" onClick={() => {
+                            const dateKey = getLocalDateKey()
+                            const savedIndex = getStoredIndex(dateKey, 'morning')
+                            setCurrentIndex(savedIndex)
+                            localStorage.setItem(`delivery_shift_${dateKey}`, 'morning')
+                            setSelectedShift('morning')
+                        }}>
                             Morning
                         </Button>
 
-                        <Button className="w-full" onClick={() => setSelectedShift('evening')}>
+                        <Button className="w-full" onClick={() => {
+                            const dateKey = getLocalDateKey()
+                            const savedIndex = getStoredIndex(dateKey, 'evening')
+                            setCurrentIndex(savedIndex)
+                            localStorage.setItem(`delivery_shift_${dateKey}`, 'evening')
+                            setSelectedShift('evening')
+                        }}>
                             Evening
                         </Button>
                     </div>
