@@ -573,29 +573,29 @@ export default function HousesPage() {
             const full = await housesApi.get(h.id)
             setViewHouse(full)
         } catch {
-            setViewHouse(h)
-                // best-effort hydration of nested data when full GET fails
-                (async () => {
-                    try {
-                        const [balance, bills, configsForHouse] = await Promise.all([
-                            balanceApi.get(h.id).catch(() => null),
-                            billsApi.list({ houseId: h.id }).catch(() => []),
-                            houseConfigApi.listForHouse(h.id).catch(() => []),
-                        ])
+            setViewHouse(h);
+            // best-effort hydration of nested data when full GET fails
+            (async () => {
+                try {
+                    const [balance, bills, configsForHouse] = await Promise.all([
+                        balanceApi.get(h.id).catch(() => null),
+                        billsApi.list({ houseId: h.id }).catch(() => []),
+                        houseConfigApi.listForHouse(h.id).catch(() => []),
+                    ])
 
-                        setViewHouse(prev => {
-                            if (!prev) return prev
-                            return {
-                                ...prev,
-                                balance: (balance as any) ?? prev.balance,
-                                bills: (bills as any) ?? prev.bills,
-                                configs: configsForHouse.length ? configsForHouse : prev.configs,
-                            }
-                        })
-                    } catch {
-                        // ignore
-                    }
-                })()
+                    setViewHouse(prev => {
+                        if (!prev) return prev
+                        return {
+                            ...prev,
+                            balance: (balance as any) ?? prev.balance,
+                            bills: (bills as any) ?? prev.bills,
+                            configs: configsForHouse.length ? configsForHouse : prev.configs,
+                        }
+                    })
+                } catch {
+                    // ignore
+                }
+            })()
         }
     }
 
