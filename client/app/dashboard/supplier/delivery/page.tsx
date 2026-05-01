@@ -22,6 +22,16 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import {
     houseConfigApi,
@@ -207,6 +217,7 @@ export default function DeliveryPage() {
     const [houseChangeMessage, setHouseChangeMessage] = useState('')
     const [houseChangeDirection, setHouseChangeDirection] = useState<'next' | 'prev' | null>(null)
     const [swipeOffset, setSwipeOffset] = useState(0)
+    const [clearTodayDialogOpen, setClearTodayDialogOpen] = useState(false)
     const [isSwiping, setIsSwiping] = useState(false)
     const [isMapExpanded, setIsMapExpanded] = useState(false)
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
@@ -687,7 +698,7 @@ export default function DeliveryPage() {
     }, [currentHouse?.id, selectedShift, todayKey, houseLogsCache])
 
     // Clear today's delivered logs for current house only
-    const handleClearToday = useCallback(async () => {
+    const handleClearToday = useCallback(() => {
         if (!currentHouse) {
             toast.error('No house selected')
             return
@@ -698,7 +709,11 @@ export default function DeliveryPage() {
             return
         }
 
-        if (!confirm(`Delete all delivery items added today for House ${currentHouse.houseNo}? This cannot be undone.`)) return
+        setClearTodayDialogOpen(true)
+    }, [currentHouse, selectedShift])
+
+    const confirmClearToday = useCallback(async () => {
+        if (!currentHouse || !selectedShift) return
 
         try {
             const today = new Date()
@@ -706,6 +721,7 @@ export default function DeliveryPage() {
 
             if (toDelete.length === 0) {
                 toast.info('No delivery items found for today')
+                setClearTodayDialogOpen(false)
                 return
             }
 
@@ -742,6 +758,8 @@ export default function DeliveryPage() {
             toast.success(`Deleted ${toDelete.length} delivery log(s) from today`)
         } catch (err: any) {
             toast.error(err.message || 'Failed to clear today deliveries')
+        } finally {
+            setClearTodayDialogOpen(false)
         }
     }, [currentHouse, currentHouseLogs, selectedShift, loadTodayDeliveredSummary])
 
@@ -1738,6 +1756,23 @@ export default function DeliveryPage() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={clearTodayDialogOpen} onOpenChange={setClearTodayDialogOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Today's Deliveries?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will delete all delivery items added today for House {currentHouse?.houseNo}. This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={confirmClearToday} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }
