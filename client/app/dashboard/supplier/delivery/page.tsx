@@ -180,6 +180,7 @@ export default function DeliveryPage() {
 
     const [auth, setAuth] = useState<any>(null)
     const [todayKey, setTodayKey] = useState(() => getLocalDateKey())
+    const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
     const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
 
@@ -763,6 +764,32 @@ export default function DeliveryPage() {
         }
     }, [currentHouse, currentHouseLogs, selectedShift, loadTodayDeliveredSummary])
 
+    // Navigate to previous day
+    const handlePreviousDay = useCallback(() => {
+        const newDate = new Date(selectedDate)
+        newDate.setDate(newDate.getDate() - 1)
+        setSelectedDate(newDate)
+    }, [selectedDate])
+
+    // Navigate to next day
+    const handleNextDay = useCallback(() => {
+        const newDate = new Date(selectedDate)
+        newDate.setDate(newDate.getDate() + 1)
+        setSelectedDate(newDate)
+    }, [selectedDate])
+
+    // Open house in delivery view
+    const handleOpenHouseInDelivery = useCallback(
+        (houseId: number) => {
+            const houseIndex = visibleHouses.findIndex((h) => h.id === houseId)
+            if (houseIndex >= 0) {
+                setCurrentIndex(houseIndex)
+                setPanelView('delivery')
+            }
+        },
+        [visibleHouses],
+    )
+
     useEffect(() => {
         if (!selectedShift || visibleHouses.length === 0) return
 
@@ -1190,13 +1217,37 @@ export default function DeliveryPage() {
                         </p>
                     </div>
 
-                    <Button
-                        variant="outline"
-                        className="gap-2"
-                        onClick={() => setPanelView('delivery')}
-                    >
-                        <Rows3 className="h-4 w-4" /> Switch to Delivery View
-                    </Button>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={handlePreviousDay}
+                                title="Previous day"
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <span className="min-w-32 text-center text-sm font-medium">
+                                {selectedDate.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })}
+                            </span>
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={handleNextDay}
+                                title="Next day"
+                            >
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </div>
+
+                        <Button
+                            variant="outline"
+                            className="gap-2"
+                            onClick={() => setPanelView('delivery')}
+                        >
+                            <Rows3 className="h-4 w-4" /> Switch to Delivery View
+                        </Button>
+                    </div>
                 </div>
 
                 <Input
@@ -1232,7 +1283,11 @@ export default function DeliveryPage() {
                                         .filter(Boolean)
 
                                     return (
-                                        <TableRow key={house.id}>
+                                        <TableRow
+                                            key={house.id}
+                                            onClick={() => handleOpenHouseInDelivery(house.id)}
+                                            className="cursor-pointer hover:bg-muted/50"
+                                        >
                                             <TableCell>
                                                 <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-semibold">
                                                     #{routeNumber}
