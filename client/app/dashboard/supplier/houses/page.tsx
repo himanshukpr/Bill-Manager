@@ -25,7 +25,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { houseConfigApi, housesApi, type House, type HouseConfig } from '@/lib/api'
+import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { parseDailyAlerts } from '@/lib/alerts'
 import { toast } from 'sonner'
@@ -51,6 +51,7 @@ export default function SupplierHousesPage() {
     const [houses, setHouses] = useState<House[]>([])
     const [allHouses, setAllHouses] = useState<House[]>([])
     const [allConfigs, setAllConfigs] = useState<HouseConfig[]>([])
+    const [suppliers, setSuppliers] = useState<User[]>([])
     const [loading, setLoading] = useState(true)
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening'>('morning')
     const [morningPlan, setMorningPlan] = useState<HouseConfig[]>([])
@@ -93,13 +94,17 @@ export default function SupplierHousesPage() {
         async function load() {
             try {
                 setLoading(true)
-                const data = await housesApi.list()
-                const configs = await houseConfigApi.list()
+                const [data, configs, supplierData] = await Promise.all([
+                    housesApi.list(),
+                    houseConfigApi.list(),
+                    usersApi.list('supplier'),
+                ])
                 if (!active) return
 
                 // Store all data globally
                 setAllHouses(data)
                 setAllConfigs(configs)
+                setSuppliers(supplierData)
 
                 // Filter based on selected shift
                 filterHousesByShift(data, configs, session, selectedShift)
@@ -120,8 +125,10 @@ export default function SupplierHousesPage() {
     function filterHousesByShift(data: House[], configs: HouseConfig[], session: SessionAuth, shift: 'morning' | 'evening') {
         const configsByHouse = new Map<number, HouseConfig[]>()
         for (const config of configs) {
+            const supplier = suppliers.find((s) => s.uuid === config.supplierId)
+            const enriched: HouseConfig = supplier ? { ...config, supplier: { uuid: supplier.uuid, username: supplier.username } } : config
             const next = configsByHouse.get(config.houseId) ?? []
-            next.push(config)
+            next.push(enriched)
             configsByHouse.set(config.houseId, next)
         }
 
@@ -145,6 +152,10 @@ export default function SupplierHousesPage() {
 
             const morningConfigs = configs
                 .filter((c) => c.shift === 'morning' && c.supplierId === session.uuid)
+                .map((c) => {
+                    const supplier = suppliers.find((s) => s.uuid === c.supplierId)
+                    return supplier ? { ...c, supplier: { uuid: supplier.uuid, username: supplier.username } } : c
+                })
                 .sort((a, b) => a.position - b.position)
             setMorningPlan(morningConfigs)
         } else {
@@ -165,6 +176,10 @@ export default function SupplierHousesPage() {
 
             const eveningConfigs = configs
                 .filter((c) => c.shift === 'evening')
+                .map((c) => {
+                    const supplier = suppliers.find((s) => s.uuid === c.supplierId)
+                    return supplier ? { ...c, supplier: { uuid: supplier.uuid, username: supplier.username } } : c
+                })
                 .sort((a, b) => a.position - b.position)
             setEveningPlan(eveningConfigs)
         }
@@ -172,9 +187,17 @@ export default function SupplierHousesPage() {
         // Keep both planner sections hydrated regardless of selected shift
         const allMorningForSupplier = configs
             .filter((c) => c.shift === 'morning' && c.supplierId === session.uuid)
+            .map((c) => {
+                const supplier = suppliers.find((s) => s.uuid === c.supplierId)
+                return supplier ? { ...c, supplier: { uuid: supplier.uuid, username: supplier.username } } : c
+            })
             .sort((a, b) => a.position - b.position)
         const allEvening = configs
             .filter((c) => c.shift === 'evening')
+            .map((c) => {
+                const supplier = suppliers.find((s) => s.uuid === c.supplierId)
+                return supplier ? { ...c, supplier: { uuid: supplier.uuid, username: supplier.username } } : c
+            })
             .sort((a, b) => a.position - b.position)
         setMorningPlan(allMorningForSupplier)
         setEveningPlan(allEvening)

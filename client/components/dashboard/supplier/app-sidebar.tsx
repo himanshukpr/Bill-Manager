@@ -18,6 +18,7 @@ interface SupplierSidebarProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
+  { title: "All Houses", url: "/dashboard/supplier/houses-all", icon: List },
   { title: "Direct Entry", url: "/dashboard/supplier/direct-entry", icon: Truck },
   { title: "Delivery Plan", url: "/dashboard/supplier/ap", icon: ClipboardList },
 ]
