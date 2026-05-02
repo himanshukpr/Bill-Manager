@@ -13,6 +13,7 @@ import { HousesService } from './houses.service';
 import { CreateHouseDto, UpdateHouseDto, UpdateHouseLocationDto } from './dto/house.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
+
 @UseGuards(JwtAuthGuard)
 @Controller('houses')
 export class HousesController {
