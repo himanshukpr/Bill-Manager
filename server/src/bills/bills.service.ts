@@ -157,7 +157,7 @@ export class BillsService {
       where,
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
       include: {
-        house: { select: { id: true, houseNo: true, area: true, phoneNo: true } },
+        house: { select: { houseNo: true, area: true, phoneNo: true } },
       },
     });
   }

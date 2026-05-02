@@ -22,7 +22,8 @@ model User {
 }
 
 model House {
-  houseNo          String        @id @map("house_no")
+  id              Int          @id @default(autoincrement())
+  houseNo          String        @unique @map("house_no")
   area             String?
   phoneNo          String        @map("phone_no")
   alternativePhone String?       @map("alternative_phone")
@@ -45,14 +46,14 @@ model House {
 
 model HouseConfig {
   id          Int      @id @default(autoincrement())
-  houseId     String   @unique @map("house_id")
+  houseId     Int     @unique @map("house_id")
   shift       Shift
   supplierId  String?  @map("supplier_id") @db.Uuid
   position    Int      @default(0)
   dailyAlerts String?  @map("daily_alerts")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-  house       House    @relation(fields: [houseId], references: [houseNo], onDelete: Cascade)
+  house       House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier    User?    @relation(fields: [supplierId], references: [uuid])
 
   @@map("house_configs")
@@ -60,11 +61,11 @@ model HouseConfig {
 
 model HouseBalance {
   id              Int              @id @default(autoincrement())
-  houseId         String           @unique @map("house_id")
+  houseId         Int              @unique @map("house_id")
   previousBalance Decimal          @default(0) @map("previous_balance") @db.Decimal(10, 2)
   currentBalance  Decimal          @default(0) @map("current_balance") @db.Decimal(10, 2)
   updatedAt       DateTime         @updatedAt @map("updated_at")
-  house           House            @relation(fields: [houseId], references: [houseNo], onDelete: Cascade)
+  house           House            @relation(fields: [houseId], references: [id], onDelete: Cascade)
   payments        PaymentHistory[]
 
   @@map("house_balances")
@@ -83,7 +84,7 @@ model PaymentHistory {
 
 model Bill {
   id              Int        @id @default(autoincrement())
-  houseId         String     @map("house_id")
+  houseId         Int       @map("house_id")
   month           Int
   year            Int
   totalAmount     Decimal    @map("total_amount") @db.Decimal(10, 2)
@@ -92,7 +93,7 @@ model Bill {
   generatedDate   DateTime   @default(now()) @map("generated_date")
   note            String?
   notes           BillNote[]
-  house           House      @relation(fields: [houseId], references: [houseNo], onDelete: Cascade)
+  house           House      @relation(fields: [houseId], references: [id], onDelete: Cascade)
 
   @@unique([houseId, month, year])
   @@map("bills")
@@ -122,7 +123,7 @@ model ProductRate {
 
 model DeliveryLog {
   id             Int      @id @default(autoincrement())
-  houseId        String   @map("house_id")
+  houseId        Int      @map("house_id")
   supplierId     String?  @map("supplier_id") @db.Uuid
   shift          Shift
   items          Json
@@ -132,7 +133,7 @@ model DeliveryLog {
   note           String?
   deliveredAt    DateTime @default(now()) @map("delivered_at")
   billGenerated  Boolean  @default(false) @map("bill_generated")
-  house          House    @relation(fields: [houseId], references: [houseNo], onDelete: Cascade)
+  house          House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier       User?    @relation(fields: [supplierId], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([houseId, deliveredAt])
