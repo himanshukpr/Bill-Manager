@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import { PeriodSelector } from "@/components/member/period-selector"
 import { StatCard } from "@/components/dashboard/stat-card"
-import { clearSessionAuth, getSessionAuth, type SessionAuth } from "@/lib/auth"
+import { clearSessionAuth } from "@/lib/auth"
+import { useAuthGuard } from "@/hooks/use-auth-guard"
 
 const memberStats = [
   { label: "Bills Added Today", value: "6", hint: "Across active period" },
@@ -16,24 +16,11 @@ const memberStats = [
 
 export default function MemberDashboardPage() {
   const router = useRouter()
-  const [auth, setAuth] = useState<SessionAuth | null>(null)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    const session = getSessionAuth()
-
-    if (!session?.token || session.role !== "member") {
-      router.replace("/")
-      return
-    }
-
-    setAuth(session)
-    setReady(true)
-  }, [router])
+  const { auth, ready } = useAuthGuard('member')
 
   function logout() {
     clearSessionAuth()
-    router.replace("/")
+    window.location.replace("/")
   }
 
   if (!ready || !auth) {

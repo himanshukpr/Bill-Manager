@@ -1,36 +1,24 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useMemo } from 'react'
 
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
-import { clearSessionAuth, getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { clearSessionAuth, type SessionAuth } from '@/lib/auth'
 import { SupplierSidebar } from '@/components/dashboard/supplier/app-sidebar'
 import { SiteHeader } from '@/components/dashboard/admin/site-header'
+import { useAuthGuard } from '@/hooks/use-auth-guard'
 
 type SupplierLayoutProps = { children: React.ReactNode }
 
 export default function SupplierLayout({ children }: SupplierLayoutProps) {
-  const router = useRouter()
-  const [auth, setAuth] = useState<SessionAuth | null>(null)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    const session = getSessionAuth()
-    if (!session?.token || session.role !== 'supplier') {
-      router.replace('/')
-      return
-    }
-    setAuth(session)
-    setReady(true)
-  }, [router])
+  const { auth, ready } = useAuthGuard('supplier')
 
   const todayText = useMemo(() =>
     new Intl.DateTimeFormat('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()), [])
   const todayShortText = useMemo(() =>
     new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date()), [])
 
-  function logout() { clearSessionAuth(); router.replace('/') }
+  function logout() { clearSessionAuth(); window.location.replace('/') }
 
   if (!ready || !auth) return <div className="min-h-screen bg-background" />
 

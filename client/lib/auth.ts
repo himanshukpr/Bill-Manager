@@ -27,14 +27,13 @@ function deleteCookie(name: string): void {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`
 }
 
-// ─── Storage helpers (sessionStorage + localStorage mirror) ──────────────────
+// ─── Storage helpers (localStorage only) ─────────────────────────────────────
 
 const STORAGE_KEY = "bill-manager-auth"
 
 export function saveSessionAuth(auth: SessionAuth): void {
   if (typeof window === "undefined") return
   const serialized = JSON.stringify(auth)
-  try { window.sessionStorage.setItem(STORAGE_KEY, serialized) } catch { /* noop */ }
   try { window.localStorage.setItem(STORAGE_KEY, serialized) } catch { /* noop */ }
   // Write cookies so Next.js Edge Middleware can read them
   setCookie("bill-manager-token", auth.token)
@@ -45,9 +44,15 @@ export function saveSessionAuth(auth: SessionAuth): void {
 export function getSessionAuth(): SessionAuth | null {
   if (typeof window === "undefined") return null
   let raw: string | null = null
-  try { raw = window.sessionStorage.getItem(STORAGE_KEY) } catch { /* noop */ }
+  try { raw = window.localStorage.getItem(STORAGE_KEY) } catch { /* noop */ }
   if (!raw) {
-    try { raw = window.localStorage.getItem(STORAGE_KEY) } catch { /* noop */ }
+    try {
+      raw = window.sessionStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        try { window.localStorage.setItem(STORAGE_KEY, raw) } catch { /* noop */ }
+        try { window.sessionStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
+      }
+    } catch { /* noop */ }
   }
   if (!raw) return null
   try { return JSON.parse(raw) as SessionAuth } catch { return null }
@@ -55,7 +60,6 @@ export function getSessionAuth(): SessionAuth | null {
 
 export function clearSessionAuth(): void {
   if (typeof window === "undefined") return
-  try { window.sessionStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
   try { window.localStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
   // Clear cookies so middleware stops protecting immediately
   deleteCookie("bill-manager-token")
