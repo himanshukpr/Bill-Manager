@@ -6,6 +6,7 @@ import {
   readHouseConfigSessionCache,
   writeHouseConfigSessionCache,
   clearHouseConfigSessionCache,
+  removeHouseConfigSessionCacheByHouseId,
 } from './house-config-cache';
 import { DEFAULT_CACHE_FRESH_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
@@ -713,17 +714,15 @@ export const housesApi = {
   },
   delete: async (id: number) => {
     if (isBrowser()) {
-      await db.houses.delete(id);
-      await updateCachedQueries<House[]>(
-        (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
-        (cached) => {
-          if (Array.isArray(cached)) {
-            return cached.filter((item) => item.id !== id);
-          }
+      await db.transaction('rw', db.houses, db.houseConfigs, db.deliveryLogs, db.bills, async () => {
+        await db.houseConfigs.where('houseId').equals(id).delete();
+        await db.deliveryLogs.where('houseId').equals(id).delete();
+        await db.bills.where('houseId').equals(id).delete();
+        await db.houses.delete(id);
+      });
 
-          return null;
-        },
-      );
+      removeHouseConfigSessionCacheByHouseId(id);
+      await invalidateCache(`/houses/${id}`);
       void syncEngine.enqueue(`/houses/${id}`, 'DELETE');
       return null;
     }
@@ -1280,6 +1279,7 @@ export const deliveryLogsApi = {
     items: DeliveryLogItem[];
     note?: string;
     billGenerated?: boolean;
+    deliveredAt?: string;
   }) => {
     // Prevent creating logs for temporary houses
     if (data.houseId < 0) {

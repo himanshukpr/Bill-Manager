@@ -101,13 +101,13 @@ export default function SupplierHousesPage() {
                 ])
                 if (!active) return
 
-                // Store all data globally
-                setAllHouses(data)
+                // Store only active houses for supplier view (hide deactivated)
+                setAllHouses(data.filter((h) => h.active))
                 setAllConfigs(configs)
                 setSuppliers(supplierData)
 
                 // Filter based on selected shift
-                filterHousesByShift(data, configs, session, selectedShift)
+                filterHousesByShift(data.filter((h) => h.active), configs, session, selectedShift)
             } catch (error: any) {
                 toast.error(error.message)
             } finally {
@@ -267,9 +267,10 @@ export default function SupplierHousesPage() {
             if (auth && selectedShift) {
                 const data = await housesApi.list()
                 const configs = await houseConfigApi.list()
-                setAllHouses(data)
+                // Keep only active houses for supplier
+                setAllHouses(data.filter((h) => h.active))
                 setAllConfigs(configs)
-                filterHousesByShift(data, configs, auth, selectedShift)
+                filterHousesByShift(data.filter((h) => h.active), configs, auth, selectedShift)
             }
         } catch (e: any) {
             toast.error(e.message || 'Failed to save morning order')
@@ -287,12 +288,13 @@ export default function SupplierHousesPage() {
         try {
             await houseConfigApi.reorder(eveningPlan.map((c) => c.id))
             toast.success('Evening route order saved')
-            if (auth && selectedShift) {
+                if (auth && selectedShift) {
                 const data = await housesApi.list()
                 const configs = await houseConfigApi.list()
-                setAllHouses(data)
+                // Keep only active houses for supplier
+                setAllHouses(data.filter((h) => h.active))
                 setAllConfigs(configs)
-                filterHousesByShift(data, configs, auth, selectedShift)
+                filterHousesByShift(data.filter((h) => h.active), configs, auth, selectedShift)
             }
         } catch (e: any) {
             toast.error(e.message || 'Failed to save evening order')

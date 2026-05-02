@@ -60,4 +60,9 @@ export class HousesController {
   reactivate(@Param('id', ParseIntPipe) id: number) {
     return this.housesService.reactivate(id);
   }
+
+  @Delete(':id')
+  delete(@Param('id', ParseIntPipe) id: number) {
+    return this.housesService.delete(id);
+  }
 }

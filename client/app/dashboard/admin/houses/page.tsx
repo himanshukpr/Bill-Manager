@@ -1,13 +1,15 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Plus, Search, X, Phone, MapPin, Building2, Bell, CalendarDays,
-  Pencil, Trash2, Eye, Settings2, Save, Rows3
+  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, deliveryLogsApi, houseConfigApi, housesApi, usersApi, type DeliveryLog, type House, type HouseConfig, type User } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory } from '@/lib/api'
+import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -33,7 +35,6 @@ import {
   parseDailyAlerts,
   createAlertId,
   ALL_DAYS_ALERT_SCHEDULE,
-  type AlertDays,
   type HouseAlert,
 } from '@/lib/alerts'
 
@@ -42,20 +43,41 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
-type SummaryCell = {
-  qty: number
-  amount: number
-}
-
 type HouseDeliverySummaryRow = {
   dateKey: string
   dayLabel: string
   productsLabel: string
   hasDelivery: boolean
+  logId?: number
+  log?: DeliveryLog
 }
 
-function createSummaryCell(): SummaryCell {
-  return { qty: 0, amount: 0 }
+type DeliveryEditForm = {
+  items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
+  note?: string
+}
+
+function normalizeMilkType(value: unknown): 'cow' | 'buffalo' {
+  const text = String(value ?? '').trim().toLowerCase()
+  return text === 'cow' ? 'cow' : 'buffalo'
+}
+
+function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
+  if (!Array.isArray(items)) return []
+
+  return items.map((item) => {
+    const row = item as { milkType?: unknown; qty?: unknown; rate?: unknown; amount?: unknown }
+    const milkType = normalizeMilkType(row.milkType)
+    const qty = Number(row.qty ?? 0)
+    const rate = Number(row.rate ?? 0)
+    const amount = Number(row.amount ?? (qty * rate))
+    return { milkType, qty, rate, amount }
+  })
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return 'Something went wrong'
 }
 
 function getLocalDateKey(date: Date = new Date()): string {
@@ -100,15 +122,22 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
       }),
       productsLabel: '',
       hasDelivery: false,
+      logId: undefined,
+      log: undefined,
     }
 
     existing.hasDelivery = true
+    // Store the first log for this date (for editing)
+    if (!existing.logId) {
+      existing.logId = log.id
+      existing.log = log
+    }
 
     const productParts = (log.items ?? []).map((item) => {
       const qty = Number(item.qty ?? 0)
       if (!qty) return null
 
-      const milkType = item.milkType === 'cow' ? 'cow' : 'buffalo'
+      const milkType = normalizeMilkType(item.milkType)
       return `${milkType} ${qty.toLocaleString('en-IN')}L`
     }).filter((part): part is string => Boolean(part))
 
@@ -137,11 +166,31 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
         }),
         productsLabel: '-',
         hasDelivery: false,
+        logId: undefined,
+        log: undefined,
       },
     )
   }
 
   return rows
+}
+
+function isValidMonth(year: number, month: number): boolean {
+  return month >= 0 && month <= 11 && year > 0
+}
+
+function getPreviousMonth(year: number, month: number): { year: number; month: number } {
+  if (month === 0) {
+    return { year: year - 1, month: 11 }
+  }
+  return { year, month: month - 1 }
+}
+
+function getNextMonth(year: number, month: number): { year: number; month: number } {
+  if (month === 11) {
+    return { year: year + 1, month: 0 }
+  }
+  return { year, month: month + 1 }
 }
 
 function parseAlerts(jsonStr: string | null | undefined): HouseAlert[] {
@@ -225,6 +274,9 @@ const emptyConfigForm: HouseConfigForm = {
 
 type ShiftFilter = 'all' | 'morning' | 'evening' | 'shop'
 type PaymentFilter = 'all' | 'clear' | 'pending' | 'advance'
+type HouseStatusFilter = 'activated' | 'deactivated' | 'all'
+type HouseToggleAction = 'deactivate' | 'reactivate' | 'delete'
+type ToggleDialogMode = 'deactivate-confirm' | 'inactive-choice' | null
 
 function getHouseShift(house: House): 'morning' | 'evening' {
   return house.configs?.[0]?.shift ?? 'evening'
@@ -237,6 +289,11 @@ function getHousePaymentStatus(house: House): Exclude<PaymentFilter, 'all'> {
   return 'clear'
 }
 
+function matchesHouseStatusFilter(house: House, filter: HouseStatusFilter): boolean {
+  if (filter === 'all') return true
+  return filter === 'activated' ? house.active : !house.active
+}
+
 function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefined {
   if (!Array.isArray(configs) || configs.length === 0) return undefined
 
@@ -244,18 +301,21 @@ function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefi
 }
 
 export default function HousesPage() {
-  const [houses, setHouses] = useState<House[]>([])
-  const [suppliers, setSuppliers] = useState<User[]>([])
-  const [loading, setLoading] = useState(true)
+  const cachedHouses = useLiveQuery(() => db.houses.toArray())
+  const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
+  const houses = useMemo(() => cachedHouses ?? [], [cachedHouses])
+  const suppliers = useMemo(() => cachedSuppliers ?? [], [cachedSuppliers])
+  const [hydrated, setHydrated] = useState(false)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>('all')
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all')
+  const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('activated')
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [toggleId, setToggleId] = useState<number | null>(null)
-  const [toggleAction, setToggleAction] = useState<'deactivate' | 'reactivate' | null>(null)
+  const [toggleDialogMode, setToggleDialogMode] = useState<ToggleDialogMode>(null)
   const [viewHouse, setViewHouse] = useState<House | null>(null)
   const [saving, setSaving] = useState(false)
   const [formConfigId, setFormConfigId] = useState<number | null>(null)
@@ -267,16 +327,26 @@ export default function HousesPage() {
   const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
   const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryBills, setSummaryBills] = useState<Bill[]>([])
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
   })
+  const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
+  const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
+  const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
+  const [editDeliverySaving, setEditDeliverySaving] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const loading = !hydrated && (!cachedHouses || !cachedSuppliers)
 
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
     return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const editDeliveryTotal = useMemo(() => {
+    return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
+  }, [editDeliveryForm.items])
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -334,23 +404,24 @@ export default function HousesPage() {
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
   }, [summaryHouse, summaryPeriod, summaryRows])
 
-  const load = useCallback(async () => {
+  const refreshCachedData = useCallback(async (silent = false) => {
     try {
-      setLoading(true)
-      const [data, supplierData] = await Promise.all([
+      await Promise.all([
         housesApi.list(),
         usersApi.list('supplier'),
       ])
-      setHouses(data)
-      setSuppliers(supplierData)
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (error: unknown) {
+      if (!silent) {
+        toast.error(getErrorMessage(error))
+      }
     } finally {
-      setLoading(false)
+      setHydrated(true)
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    void refreshCachedData()
+  }, [refreshCachedData])
 
   const filtered = useMemo(() => {
     const query = debouncedSearch.trim().toLowerCase()
@@ -362,6 +433,8 @@ export default function HousesPage() {
       const paymentStatus = getHousePaymentStatus(house)
       if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
 
+      if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
+
       if (!query) return true
 
       return (
@@ -370,7 +443,7 @@ export default function HousesPage() {
         house.phoneNo.includes(query)
       )
     })
-  }, [houses, debouncedSearch, shiftFilter, paymentFilter])
+  }, [houses, debouncedSearch, shiftFilter, paymentFilter, houseStatusFilter])
 
   const searchSuggestions = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -384,6 +457,8 @@ export default function HousesPage() {
         const paymentStatus = getHousePaymentStatus(house)
         if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
 
+        if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
+
         return (
           house.houseNo.toLowerCase().includes(query) ||
           (house.area || '').toLowerCase().includes(query) ||
@@ -391,7 +466,7 @@ export default function HousesPage() {
         )
       })
       .slice(0, 6)
-  }, [houses, search, shiftFilter, paymentFilter])
+  }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
 
   const handleSearchSelect = useCallback((value: string) => {
     setSearch(value)
@@ -508,46 +583,185 @@ export default function HousesPage() {
 
       toast.success(editingId ? 'House updated' : 'House added')
       setDialogOpen(false)
-      load()
-    } catch (e: any) {
-      toast.error(e.message)
+      void refreshCachedData(true)
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleToggleActive() {
-    if (!toggleId || !toggleAction) return
+  async function handleToggleActive(action: HouseToggleAction) {
+    if (!toggleId) return
     try {
-      if (toggleAction === 'deactivate') {
+      if (action === 'deactivate') {
         await housesApi.deactivate(toggleId)
         toast.success('House deactivated')
-      } else {
+      } else if (action === 'reactivate') {
         await housesApi.reactivate(toggleId)
         toast.success('House reactivated')
+      } else {
+        await housesApi.delete(toggleId)
+        toast.success('House deleted permanently')
       }
       setToggleId(null)
-      setToggleAction(null)
-      load()
-    } catch (e: any) {
-      toast.error(e.message)
+      setToggleDialogMode(null)
+      if (viewHouse?.id === toggleId && action === 'delete') {
+        setViewHouse(null)
+      }
+      void refreshCachedData(true)
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
     }
   }
 
   async function openSummary(house: House) {
     setSummaryHouse(house)
     setSummaryLogs([])
+    setSummaryBills([])
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const logs = await deliveryLogsApi.list({ houseId: house.id })
+      const [logs, bills] = await Promise.all([
+        deliveryLogsApi.list({ houseId: house.id }),
+        billsApi.list({ houseId: house.id }),
+      ])
       setSummaryLogs(logs)
+      setSummaryBills(bills)
       setSummaryPeriod(getLogPeriod(logs))
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
     } finally {
       setSummaryLoading(false)
+    }
+  }
+
+  async function handleChangeSummaryPeriod(newPeriod: { year: number; month: number }) {
+    if (!summaryHouse || !isValidMonth(newPeriod.year, newPeriod.month)) return
+    setSummaryPeriod(newPeriod)
+  }
+
+  function getBillForDateKey(dateKey: string): Bill | undefined {
+    // dateKey format: "YYYY-MM-DD"
+    const [yearStr, monthStr] = dateKey.split('-')
+    const month = parseInt(monthStr) - 1 // Convert to 0-indexed month
+    const year = parseInt(yearStr)
+    return summaryBills.find((bill) => bill.month === month && bill.year === year)
+  }
+
+  function isDeliveryBlockedByBill(dateKey: string): boolean {
+    const bill = getBillForDateKey(dateKey)
+    if (!bill) return false
+
+    // If bill has a generatedDate, block edits for deliveries on or before that date
+    if (bill.generatedDate) {
+      const genDate = new Date(bill.generatedDate)
+      const [y, m, d] = dateKey.split('-').map(Number)
+      const deliveryDate = new Date(y, m - 1, d)
+      // If deliveryDate is less than or equal to generated date, it's included in bill
+      return deliveryDate.getTime() <= genDate.getTime()
+    }
+
+    // Fallback: if bill exists for the month but no generatedDate, block edits for safety
+    return true
+  }
+
+  function openEditDeliveryDialog(row: HouseDeliverySummaryRow) {
+    // Check if this specific date is blocked by a generated bill
+    if (isDeliveryBlockedByBill(row.dateKey)) {
+      toast.error('Cannot edit deliveries that were included in a generated bill')
+      return
+    }
+
+    if (row.log) {
+      // Edit existing delivery
+      setEditingDeliveryLog(row.log)
+      setEditDeliveryForm({
+        items: normalizeDeliveryItems(row.log.items),
+        note: row.log.note,
+      })
+    } else {
+      // No delivery for this date yet - create new one
+      const [year, month, day] = row.dateKey.split('-').map(Number)
+      const deliveryDate = new Date(year, month - 1, day)
+      const primaryConfig = getHouseConfigWithAlerts(summaryHouse?.configs)
+      const shift = primaryConfig?.shift || 'morning'
+      const newLog: DeliveryLog = {
+        id: 0, // Temporary ID for new deliveries
+        houseId: summaryHouse?.id ?? 0,
+        deliveredAt: deliveryDate.toISOString(),
+        shift: shift as 'morning' | 'evening' | 'shop',
+        items: [],
+        billGenerated: false,
+        totalAmount: '0',
+        openingBalance: '0',
+        closingBalance: '0',
+        note: '',
+        supplier: { uuid: primaryConfig?.supplierId || '', username: primaryConfig?.supplier?.username || '' },
+      }
+      setEditingDeliveryLog(newLog)
+      setEditDeliveryForm({ items: [], note: '' })
+    }
+    setEditDeliveryDialogOpen(true)
+  }
+
+  async function handleSaveDeliveryEdit() {
+    if (!editingDeliveryLog || !summaryHouse) return
+
+    setEditDeliverySaving(true)
+    try {
+      const isNewDelivery = editingDeliveryLog.id === 0
+      const oldAmount = isNewDelivery
+        ? 0
+        : (editingDeliveryLog.items ?? []).reduce((sum, item) => sum + (item.amount ?? 0), 0)
+      const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (item.amount ?? 0), 0)
+      const amountDifference = newAmount - oldAmount
+
+      // Save delivery changes (create or update)
+      if (isNewDelivery) {
+        // Create new delivery
+        const result = await deliveryLogsApi.create({
+          houseId: summaryHouse.id,
+          shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
+          items: editDeliveryForm.items,
+          note: editDeliveryForm.note,
+        })
+        toast.success('Delivery created successfully')
+      } else {
+        // Update existing delivery
+        await deliveryLogsApi.update(editingDeliveryLog.id, {
+          items: editDeliveryForm.items,
+          note: editDeliveryForm.note,
+        })
+        toast.success('Delivery updated successfully')
+      }
+
+      // Update balance if amount changed
+      if (amountDifference !== 0) {
+        try {
+          const currentBalance = await balanceApi.get(summaryHouse.id)
+          const currentPreviousBalance = parseFloat(currentBalance.previousBalance) || 0
+          const newPreviousBalance = currentPreviousBalance + amountDifference
+          await balanceApi.updatePrevious(summaryHouse.id, newPreviousBalance)
+          toast.success('Balance updated')
+        } catch (error: unknown) {
+          console.error('Failed to update balance:', error)
+          toast.warning('Balance update failed - delivery saved but balance unchanged')
+        }
+      }
+
+      // Reload logs to get updated data
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      setSummaryLogs(logs)
+
+      setEditDeliveryDialogOpen(false)
+      setEditingDeliveryLog(null)
+      setEditDeliveryForm({ items: [], note: '' })
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setEditDeliverySaving(false)
     }
   }
 
@@ -609,13 +823,13 @@ export default function HousesPage() {
       setConfigDialogOpen(false)
       setConfigEditingId(null)
       setConfigForm(emptyConfigForm)
-      await load()
+      void refreshCachedData(true)
       if (viewHouse?.id === selectedHouseId) {
         const refreshed = await housesApi.get(selectedHouseId)
         setViewHouse(refreshed)
       }
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
     } finally {
       setConfigSaving(false)
     }
@@ -707,17 +921,17 @@ export default function HousesPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
         <Select value={shiftFilter} onValueChange={(value) => setShiftFilter(value as ShiftFilter)}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder="All Houses" />
           </SelectTrigger>
-<SelectContent>
-              <SelectItem value="all">All Houses</SelectItem>
-              <SelectItem value="morning">Morning</SelectItem>
-              <SelectItem value="evening">Evening</SelectItem>
-              <SelectItem value="shop">Shop</SelectItem>
-            </SelectContent>
+          <SelectContent>
+            <SelectItem value="all">All Houses</SelectItem>
+            <SelectItem value="morning">Morning</SelectItem>
+            <SelectItem value="evening">Evening</SelectItem>
+            <SelectItem value="shop">Shop</SelectItem>
+          </SelectContent>
         </Select>
 
         <Select value={paymentFilter} onValueChange={(value) => setPaymentFilter(value as PaymentFilter)}>
@@ -729,6 +943,17 @@ export default function HousesPage() {
             <SelectItem value="clear">Clear</SelectItem>
             <SelectItem value="pending">Pending</SelectItem>
             <SelectItem value="advance">Advance</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={houseStatusFilter} onValueChange={(value) => setHouseStatusFilter(value as HouseStatusFilter)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Houses</SelectItem>
+            <SelectItem value="activated">Activated</SelectItem>
+            <SelectItem value="deactivated">Deactivated</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -768,7 +993,7 @@ export default function HousesPage() {
                   <div className="divide-y divide-border">
                     {searchSuggestions.map((house) => (
                       <button
-                        key={house.id}
+                        key={house.houseNo}
                         type="button"
                         onClick={() => handleSearchSelect(house.houseNo)}
                         className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/60"
@@ -810,7 +1035,7 @@ export default function HousesPage() {
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Building2 className="h-12 w-12 mb-3 opacity-30" />
             <p className="font-medium">{search ? 'No houses match your search' : 'No houses yet'}</p>
-            {!search && <p className="text-sm mt-1">Click "Add House" to get started</p>}
+            {!search && <p className="text-sm mt-1">Click &quot;Add House&quot; to get started</p>}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -829,11 +1054,18 @@ export default function HousesPage() {
               <tbody>
                 {filtered.map((h, idx) => (
                   <tr
-                    key={h.id}
-                    className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
+                    key={h.houseNo}
+                    className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
                   >
                     <td className="px-2 py-2 sm:px-3">
-                      <span className="font-semibold text-foreground">{h.houseNo}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`font-semibold ${h.active ? 'text-foreground' : 'text-red-700 dark:text-red-300'}`}>{h.houseNo}</span>
+                        {!h.active && (
+                          <Badge variant="outline" className="border-red-200 bg-red-50 text-[11px] text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                            Deactivated
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     <td className="px-2 py-2 text-muted-foreground sm:px-3">
                       <div className="flex items-center gap-1">
@@ -880,11 +1112,11 @@ export default function HousesPage() {
                           <Pencil className="h-4 w-4" />
                         </Button>
                         {h.active ? (
-                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleAction('deactivate') }} title="Deactivate" className="text-destructive hover:text-destructive">
+                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('deactivate-confirm') }} title="Deactivate" className="text-destructive hover:text-destructive">
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         ) : (
-                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleAction('reactivate') }} title="Reactivate" className="text-green-600 hover:text-green-700">
+                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('inactive-choice') }} title="Activate or delete permanently" className="text-green-600 hover:text-green-700">
                             <Save className="h-4 w-4" />
                           </Button>
                         )}
@@ -1071,21 +1303,32 @@ export default function HousesPage() {
       </Dialog>
 
       {/* Deactivate/Reactivate Alert */}
-      <AlertDialog open={!!toggleId} onOpenChange={open => { if (!open) { setToggleId(null); setToggleAction(null) } }}>
+      <AlertDialog open={!!toggleId} onOpenChange={open => { if (!open) { setToggleId(null); setToggleDialogMode(null) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{toggleAction === 'deactivate' ? 'Deactivate House?' : 'Reactivate House?'}</AlertDialogTitle>
+            <AlertDialogTitle>{toggleDialogMode === 'inactive-choice' ? 'What do you want to do?' : 'Deactivate House?'}</AlertDialogTitle>
             <AlertDialogDescription>
-              {toggleAction === 'deactivate'
-                ? 'This will deactivate the house. It will not be available for normal operations until reactivated.'
-                : 'This will reactivate the house and make it available again.'}
+              {toggleDialogMode === 'inactive-choice'
+                ? 'You can reactivate this house or permanently delete it and all related data.'
+                : 'This will deactivate the house. It will not be available for normal operations until reactivated.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleToggleActive} className={toggleAction === 'deactivate' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : 'bg-green-600 text-white hover:bg-green-700'}>
-              {toggleAction === 'deactivate' ? 'Deactivate' : 'Reactivate'}
-            </AlertDialogAction>
+            {toggleDialogMode === 'inactive-choice' ? (
+              <>
+                <AlertDialogAction onClick={() => { void handleToggleActive('reactivate') }} className="bg-green-600 text-white hover:bg-green-700">
+                  Activate House
+                </AlertDialogAction>
+                <AlertDialogAction onClick={() => { void handleToggleActive('delete') }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  Delete Permanently
+                </AlertDialogAction>
+              </>
+            ) : (
+              <AlertDialogAction onClick={() => { void handleToggleActive('deactivate') }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                Deactivate
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1186,7 +1429,7 @@ export default function HousesPage() {
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Recent Bills</p>
                     <div className="rounded-xl border border-border overflow-hidden">
-                      {viewHouse.bills.slice(0, 6).map((b: any, i: number) => (
+                      {viewHouse.bills.slice(0, 6).map((b: Bill, i: number) => (
                         <div key={b.id} className={`flex items-center justify-between px-4 py-3 ${i !== 0 ? 'border-t border-border' : ''} hover:bg-muted/30`}>
                           <span className="text-sm font-medium">{MONTH_NAMES[b.month]} {b.year}</span>
                           <span className="font-semibold text-sm">₹{Number(b.totalAmount).toLocaleString('en-IN')}</span>
@@ -1201,7 +1444,7 @@ export default function HousesPage() {
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Recent Payments</p>
                     <div className="rounded-xl border border-border overflow-hidden">
-                      {viewHouse.balance.payments.slice(0, 5).map((p: any, i: number) => (
+                      {viewHouse.balance.payments.slice(0, 5).map((p: PaymentHistory, i: number) => (
                         <div key={p.id} className={`flex items-center justify-between px-4 py-3 ${i !== 0 ? 'border-t border-border' : ''}`}>
                           <div>
                             <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">₹{Number(p.amount).toLocaleString('en-IN')}</span>
@@ -1243,10 +1486,29 @@ export default function HousesPage() {
                   <Rows3 className="h-5 w-5 text-primary" />
                   House {summaryHouse.houseNo} Delivery Summary
                 </DialogTitle>
-                <DialogDescription>
-                  Daily delivery summary for {MONTH_NAMES[summaryPeriod.month + 1]} {summaryPeriod.year}.
-                </DialogDescription>
               </DialogHeader>
+              
+              <div className="flex items-center justify-center gap-2 border-b border-border pb-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleChangeSummaryPeriod(getPreviousMonth(summaryPeriod.year, summaryPeriod.month))}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="min-w-48 text-center text-sm font-medium">
+                  {MONTH_NAMES[summaryPeriod.month + 1]} {summaryPeriod.year}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleChangeSummaryPeriod(getNextMonth(summaryPeriod.year, summaryPeriod.month))}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
 
               <div className="space-y-4 py-2">
                 <div className="rounded-xl border border-border bg-muted/30 p-4">
@@ -1268,6 +1530,7 @@ export default function HousesPage() {
                         <TableRow>
                           <TableHead className="min-w-35">Date</TableHead>
                           <TableHead>Products</TableHead>
+                          <TableHead className="w-16 text-right">Action</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1277,6 +1540,18 @@ export default function HousesPage() {
                               <TableCell className="font-medium text-foreground">{row.dayLabel}</TableCell>
                               <TableCell className="whitespace-normal text-foreground">
                                 {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openEditDeliveryDialog(row)}
+                                  title={isDeliveryBlockedByBill(row.dateKey) ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                    disabled={isDeliveryBlockedByBill(row.dateKey)}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
                               </TableCell>
                             </TableRow>
                           )
@@ -1365,6 +1640,207 @@ export default function HousesPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={editDeliveryDialogOpen} onOpenChange={setEditDeliveryDialogOpen}>
+        <DialogContent className="max-w-md sm:max-w-xl lg:max-w-2xl max-h-[90vh] overflow-y-auto">
+          {editingDeliveryLog && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Edit2 className="h-5 w-5 text-primary" />
+                  Edit Delivery
+                </DialogTitle>
+                <DialogDescription>
+                  Edit the delivered products and quantities for this delivery.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                {/* Delivery Info */}
+                <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Date</p>
+                    <p className="mt-1 text-sm font-semibold">{new Date(editingDeliveryLog.deliveredAt).toLocaleDateString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Shift</p>
+                    <p className="mt-1 text-sm font-semibold capitalize">{editingDeliveryLog.shift}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Supplier</p>
+                    <p className="mt-1 text-sm font-semibold">{editingDeliveryLog.supplier?.username || '-'}</p>
+                  </div>
+                </div>
+
+                {/* Items Editor */}
+                  <div className="space-y-3">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Delivery Items</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">{editDeliveryForm.items.length} item(s)</p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const defaultRate = (() => {
+                          const r1Type = summaryHouse?.rate1Type?.toLowerCase()
+                          const r2Type = summaryHouse?.rate2Type?.toLowerCase()
+                          if (r1Type === 'cow') return Number(summaryHouse?.rate1 ?? 0)
+                          if (r2Type === 'cow') return Number(summaryHouse?.rate2 ?? 0)
+                          return Number(summaryHouse?.rate1 ?? summaryHouse?.rate2 ?? 0)
+                        })()
+
+                        const added = {
+                          milkType: 'cow',
+                          qty: 0,
+                          rate: defaultRate,
+                          amount: 0,
+                        }
+                        setEditDeliveryForm({ ...editDeliveryForm, items: [...editDeliveryForm.items, added] })
+                      }}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add item
+                    </Button>
+                  </div>
+
+                  <div className="rounded border border-border bg-card">
+                    {editDeliveryForm.items.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">No items</div>
+                    ) : (
+                      <div className="w-full">
+                        <div className="grid grid-cols-12 gap-2 items-center px-3 py-2 text-xs text-muted-foreground border-b border-border">
+                          <div className="col-span-5">Product</div>
+                          <div className="col-span-2 text-right">Rate (₹/L)</div>
+                          <div className="col-span-2 text-right">Qty (L)</div>
+                          <div className="col-span-2 text-right">Amount</div>
+                          <div className="col-span-1" />
+                        </div>
+
+                        {(editDeliveryForm.items || []).map((item, index) => (
+                          <div key={index} className="grid grid-cols-12 gap-2 items-center px-3 py-2 text-sm border-b border-border">
+                            <div className="col-span-5 flex items-center gap-2">
+                              <Select
+                                value={item.milkType}
+                                onValueChange={(val) => {
+                                  const milkType = val as 'cow' | 'buffalo'
+                                  const defaultRate = (() => {
+                                    const r1Type = summaryHouse?.rate1Type?.toLowerCase()
+                                    const r2Type = summaryHouse?.rate2Type?.toLowerCase()
+                                    if (r1Type === milkType) return Number(summaryHouse?.rate1 ?? 0)
+                                    if (r2Type === milkType) return Number(summaryHouse?.rate2 ?? 0)
+                                    return Number(summaryHouse?.rate1 ?? summaryHouse?.rate2 ?? 0)
+                                  })()
+                                  const updated = [...editDeliveryForm.items]
+                                  const newQty = updated[index].qty ?? 0
+                                  const newRate = defaultRate
+                                  updated[index] = { ...updated[index], milkType, rate: newRate, amount: newQty * newRate }
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-32">
+                                  <SelectValue placeholder={item.milkType === 'cow' ? 'Cow' : 'Buffalo'} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="cow">Cow</SelectItem>
+                                  <SelectItem value="buffalo">Buffalo</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              {/* compact: no extra product label to save space */}
+                            </div>
+
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={item.rate}
+                                onChange={(e) => {
+                                  const newRate = Number(e.target.value)
+                                  const updated = [...editDeliveryForm.items]
+                                  const newQty = updated[index].qty ?? 0
+                                  updated[index] = { ...updated[index], rate: newRate, amount: newQty * newRate }
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                                className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
+                                placeholder="Rate"
+                              />
+                            </div>
+
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={item.qty}
+                                onChange={(e) => {
+                                  const newQty = Number(e.target.value)
+                                  const newAmount = newQty * item.rate
+                                  const updated = [...editDeliveryForm.items]
+                                  updated[index] = { ...item, qty: newQty, amount: newAmount }
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                                className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
+                                placeholder="Qty"
+                              />
+                            </div>
+
+                            <div className="col-span-2 text-right">
+                              <p className="font-medium">₹{Number(item.amount).toLocaleString('en-IN')}</p>
+                            </div>
+
+                            <div className="col-span-1 text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  const updated = editDeliveryForm.items.filter((_, i) => i !== index)
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                                title="Remove item"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Note */}
+                <div className="space-y-2">
+                  <Label htmlFor="delivery-note">Notes</Label>
+                  <Textarea
+                    id="delivery-note"
+                    value={editDeliveryForm.note || ''}
+                    onChange={(e) => setEditDeliveryForm({ ...editDeliveryForm, note: e.target.value })}
+                    placeholder="Optional delivery notes..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex flex-col">
+                  <p className="text-xs text-muted-foreground">Total</p>
+                  <p className="text-lg font-semibold">₹{Number(editDeliveryTotal).toLocaleString('en-IN')}</p>
+                  {editDeliveryTotal <= 0 && (
+                    <p className="text-xs text-destructive mt-1">Total must be greater than zero to save.</p>
+                  )}
+                </div>
+
+                <DialogFooter className="p-0">
+                  <Button variant="outline" onClick={() => setEditDeliveryDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleSaveDeliveryEdit} disabled={editDeliverySaving || editDeliveryTotal <= 0}>
+                    {editDeliverySaving ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
     </div>
   )
 }
@@ -1393,13 +1869,16 @@ function DailyAlertsDialog({
   const [open, setOpen] = useState(false)
   const [alerts, setAlerts] = useState<HouseAlert[]>([])
 
-  useEffect(() => {
-    if (open) {
+  const serializedAlerts = useMemo(() => parseAlerts(value), [value])
+
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
       setAlerts(parseAlerts(value))
     }
-  }, [open, value])
+    setOpen(nextOpen)
+  }, [value])
 
-  const activeCount = parseAlerts(value).length
+  const activeCount = serializedAlerts.length
   const activePreview = formatAlertPreview(value)
 
   const addAlert = () => {
@@ -1446,7 +1925,7 @@ function DailyAlertsDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <button
           type="button"

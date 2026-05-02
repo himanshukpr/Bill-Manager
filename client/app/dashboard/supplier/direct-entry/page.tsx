@@ -83,7 +83,8 @@ export default function SupplierDirectEntryPage() {
                 ])
 
                 if (!active) return
-                setHouses(houseData)
+                // Hide deactivated houses from supplier direct-entry
+                setHouses(houseData.filter((h) => h.active))
                 setRates(rateData)
                 setLogs(logData)
             } catch (error: any) {

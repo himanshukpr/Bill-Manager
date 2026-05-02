@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
     ChevronLeft,
     ChevronRight,
+    Edit2,
     Maximize2,
     MapPin,
     Phone,
@@ -146,6 +147,21 @@ function getLocalDateKey(date: Date = new Date()): string {
     return `${year}-${month}-${day}`
 }
 
+function parseDateKeyToLocalDate(dateKey: string): Date | null {
+    const [year, month, day] = dateKey.split('-').map(Number)
+    if (!year || !month || !day) return null
+
+    const date = new Date(year, month - 1, day)
+    return Number.isFinite(date.getTime()) ? date : null
+}
+
+function buildDeliveredAtForDate(selectedDate: Date): string {
+    const now = new Date()
+    const deliveredAt = new Date(selectedDate)
+    deliveredAt.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0)
+    return deliveredAt.toISOString()
+}
+
 function parseHouseLocation(location?: string): { lat: number; lon: number } | null {
     if (!location) return null
 
@@ -179,8 +195,6 @@ export default function DeliveryPage() {
     const router = useRouter()
 
     const [auth, setAuth] = useState<any>(null)
-    const [todayKey, setTodayKey] = useState(() => getLocalDateKey())
-    const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
     const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
 
@@ -192,6 +206,54 @@ export default function DeliveryPage() {
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
     const [allocatedHouseProducts, setAllocatedHouseProducts] = useState<Record<number, string>>({})
+    const [selectedDate, setSelectedDate] = useState<Date>(() => {
+        try {
+            if (typeof window !== 'undefined') {
+                const saved = localStorage.getItem('delivery_selected_date')
+                if (saved) {
+                    const parsed = parseDateKeyToLocalDate(saved)
+                    if (parsed) return parsed
+                }
+            }
+        } catch {
+            // ignore
+        }
+
+        return new Date()
+    })
+
+    const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
+    const [datePickerValue, setDatePickerValue] = useState<string>(() => {
+        try {
+            if (typeof window !== 'undefined') {
+                const saved = localStorage.getItem('delivery_selected_date')
+                if (saved) return saved
+            }
+        } catch {
+            // ignore
+        }
+        return getLocalDateKey()
+    })
+
+    // Persist selected date so it remains until supplier changes it
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        try {
+            const key = getLocalDateKey(selectedDate)
+            localStorage.setItem('delivery_selected_date', key)
+        } catch {
+            // ignore
+        }
+    }, [selectedDate])
+
+    // Keep the date input value in sync with the authoritative selectedDate
+    useEffect(() => {
+        try {
+            setDatePickerValue(getLocalDateKey(selectedDate))
+        } catch {
+            // ignore
+        }
+    }, [selectedDate])
 
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
@@ -231,6 +293,9 @@ export default function DeliveryPage() {
         () => ({ height: availableHeight ? `${availableHeight}px` : 'calc(100dvh - 0.5rem)' }),
         [availableHeight],
     )
+
+    const selectedDateKey = useMemo(() => getLocalDateKey(selectedDate), [selectedDate])
+    const todayDateKey = getLocalDateKey()
 
     const activeProductRates = useMemo(
         () => productRates.filter((rate) => rate.isActive && Number(rate.rate) > 0),
@@ -292,25 +357,25 @@ export default function DeliveryPage() {
     useEffect(() => {
         if (selectedShift && typeof window !== 'undefined' && !hasInitiallyRestored.current) {
             hasInitiallyRestored.current = true
-            const savedIndex = getStoredIndex(todayKey, selectedShift)
+            const savedIndex = getStoredIndex(selectedDateKey, selectedShift)
             setCurrentIndex(savedIndex)
             setShiftSelectorOpen(false)
         }
-    }, [selectedShift, todayKey])
+    }, [selectedShift, selectedDateKey])
 
     // SAVE SHIFT TO LOCALSTORAGE
     useEffect(() => {
         if (selectedShift && typeof window !== 'undefined') {
-            localStorage.setItem(`delivery_shift_${todayKey}`, selectedShift)
+            localStorage.setItem(`delivery_shift_${selectedDateKey}`, selectedShift)
         }
-    }, [selectedShift, todayKey])
+    }, [selectedShift, selectedDateKey])
 
     // SAVE CURRENT INDEX TO LOCALSTORAGE
     useEffect(() => {
         if (selectedShift && typeof window !== 'undefined') {
-            localStorage.setItem(`delivery_index_${todayKey}_${selectedShift}`, String(currentIndex))
+            localStorage.setItem(`delivery_index_${selectedDateKey}_${selectedShift}`, String(currentIndex))
         }
-    }, [currentIndex, selectedShift, todayKey])
+    }, [currentIndex, selectedShift, selectedDateKey])
 
     useEffect(() => {
         const updateHeight = () => {
@@ -349,9 +414,10 @@ export default function DeliveryPage() {
                 const defaultProduct = rates.find((rate) => rate.isActive && Number(rate.rate) > 0)?.name.trim() ?? ''
                 return prev.map((item) => (item.milkType ? item : { ...item, milkType: defaultProduct }))
             })
-            setHouses(data)
+            // Hide deactivated houses from supplier views
+            setHouses(data.filter((h) => h.active))
             if (resetIndex || selectedShift) {
-                const savedIndex = getStoredIndex(todayKey, selectedShift)
+                const savedIndex = getStoredIndex(selectedDateKey, selectedShift)
                 setCurrentIndex(savedIndex)
             }
         } catch (err: any) {
@@ -359,7 +425,7 @@ export default function DeliveryPage() {
         } finally {
             setLoading(false)
         }
-    }, [auth, selectedShift, todayKey])
+    }, [auth, selectedShift, selectedDateKey])
 
     const initialLoadDone = useRef(false)
     useEffect(() => {
@@ -487,9 +553,9 @@ export default function DeliveryPage() {
                 if (!query) return true
 
                 const configAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
-                const todayKey = DAYS_BY_INDEX[new Date().getDay()]
+                const selectedDayKey = DAYS_BY_INDEX[selectedDate.getDay()]
                 const alertText = configAlerts
-                    .filter((alert) => alert.schedule?.[todayKey])
+                    .filter((alert) => alert.schedule?.[selectedDayKey])
                     .map((alert) => alert.text.trim())
                     .filter(Boolean)
                     .join(', ')
@@ -506,17 +572,16 @@ export default function DeliveryPage() {
             })
     }, [visibleHouses, houseSearch, allocatedHouseProducts])
 
-    const loadTodayDeliveredSummary = useCallback(async () => {
+    const loadSelectedDateDeliveredSummary = useCallback(async () => {
         if (!auth || !selectedShift) return
 
         const logs = await deliveryLogsApi.list({ shift: selectedShift })
-        const today = new Date()
-        const deliveredToday = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+        const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         const nextProducts: Record<number, Map<string, number>> = {}
         const nextCompleted = new Set<number>()
 
-        for (const log of deliveredToday) {
+        for (const log of deliveredForSelectedDate) {
             nextCompleted.add(log.houseId)
 
             if (!nextProducts[log.houseId]) {
@@ -543,7 +608,7 @@ export default function DeliveryPage() {
 
         setAllocatedHouseProducts(resolvedProducts)
         setCompletedHouses(nextCompleted)
-    }, [auth, selectedShift])
+    }, [auth, selectedShift, selectedDate])
 
     useEffect(() => {
         if (!auth || !selectedShift) return
@@ -552,7 +617,7 @@ export default function DeliveryPage() {
 
         const loadDeliveredProducts = async () => {
             try {
-                await loadTodayDeliveredSummary()
+                await loadSelectedDateDeliveredSummary()
 
                 if (!active) return
             } catch (error: any) {
@@ -565,24 +630,16 @@ export default function DeliveryPage() {
         return () => {
             active = false
         }
-    }, [auth, selectedShift, loadTodayDeliveredSummary])
+    }, [auth, selectedShift, loadSelectedDateDeliveredSummary])
 
     useEffect(() => {
-        const timer = setInterval(() => {
-            const nextKey = getLocalDateKey()
-            if (nextKey === todayKey) return
-
-            setTodayKey(nextKey)
-            setCompletedHouses(new Set())
-            setAllocatedHouseProducts({})
-            setCurrentHouseLogs([])
-            setHouseLogsCache({})
-            setLoadedHouseLogIds(new Set())
-            void loadTodayDeliveredSummary()
-        }, 60_000)
-
-        return () => clearInterval(timer)
-    }, [todayKey, loadTodayDeliveredSummary])
+        setCompletedHouses(new Set())
+        setAllocatedHouseProducts({})
+        setCurrentHouseLogs([])
+        setHouseLogsCache({})
+        setLoadedHouseLogIds(new Set())
+        void loadSelectedDateDeliveredSummary()
+    }, [selectedDateKey, selectedShift, loadSelectedDateDeliveredSummary])
 
     const buildDeliveryItemsFromLogs = useCallback((logs: DeliveryLog[]): DeliveryItemForm[] => {
         if (logs.length === 0) return [{ ...emptyDeliveryItem }]
@@ -617,17 +674,16 @@ export default function DeliveryPage() {
                 shift: selectedShift,
             })
 
-            const today = new Date()
-            const todayLogs = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+            const selectedDateLogs = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
             setHouseLogsCache((prev) => ({
                 ...prev,
-                [houseId]: todayLogs,
+                [houseId]: selectedDateLogs,
             }))
             setLoadedHouseLogIds((prev) => new Set([...prev, houseId]))
             setCompletedHouses((prev) => {
                 const next = new Set(prev)
-                if (todayLogs.length > 0) next.add(houseId)
+                if (selectedDateLogs.length > 0) next.add(houseId)
                 else next.delete(houseId)
                 return next
             })
@@ -636,7 +692,7 @@ export default function DeliveryPage() {
         } finally {
             loadingHouseLogIdsRef.current.delete(houseId)
         }
-    }, [selectedShift, loadedHouseLogIds])
+    }, [selectedShift, loadedHouseLogIds, selectedDate])
 
     useEffect(() => {
         if (!currentHouse || !selectedShift) {
@@ -661,21 +717,20 @@ export default function DeliveryPage() {
                     shift: selectedShift,
                 })
 
-                const today = new Date()
-                const todayLogs = logs.filter((log) => {
+                const selectedDateLogs = logs.filter((log) => {
                     const deliveredAt = new Date(log.deliveredAt)
-                    return isSameLocalDate(deliveredAt, today)
+                    return isSameLocalDate(deliveredAt, selectedDate)
                 })
 
                 if (!active) return
 
-                setCurrentHouseLogs(todayLogs)
+                setCurrentHouseLogs(selectedDateLogs)
                 setHouseLogsCache((prev) => ({
                     ...prev,
-                    [currentHouse.id]: todayLogs,
+                    [currentHouse.id]: selectedDateLogs,
                 }))
                 setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
-                if (todayLogs.length > 0) {
+                if (selectedDateLogs.length > 0) {
                     setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
                 } else {
                     setCompletedHouses((prev) => {
@@ -696,7 +751,7 @@ export default function DeliveryPage() {
         return () => {
             active = false
         }
-    }, [currentHouse?.id, selectedShift, todayKey, houseLogsCache])
+    }, [currentHouse?.id, selectedShift, selectedDateKey, houseLogsCache])
 
     // Clear today's delivered logs for current house only
     const handleClearToday = useCallback(() => {
@@ -717,11 +772,10 @@ export default function DeliveryPage() {
         if (!currentHouse || !selectedShift) return
 
         try {
-            const today = new Date()
-            const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
+            const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
             if (toDelete.length === 0) {
-                toast.info('No delivery items found for today')
+                toast.info('No delivery items found for selected date')
                 setClearTodayDialogOpen(false)
                 return
             }
@@ -755,14 +809,14 @@ export default function DeliveryPage() {
             })
 
             setDeliveryItems([{ ...emptyDeliveryItem }])
-            await loadTodayDeliveredSummary()
-            toast.success(`Deleted ${toDelete.length} delivery log(s) from today`)
+            await loadSelectedDateDeliveredSummary()
+            toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
         } catch (err: any) {
-            toast.error(err.message || 'Failed to clear today deliveries')
+            toast.error(err.message || 'Failed to clear selected-date deliveries')
         } finally {
             setClearTodayDialogOpen(false)
         }
-    }, [currentHouse, currentHouseLogs, selectedShift, loadTodayDeliveredSummary])
+    }, [currentHouse, currentHouseLogs, selectedShift, selectedDate, loadSelectedDateDeliveredSummary])
 
     // Navigate to previous day
     const handlePreviousDay = useCallback(() => {
@@ -771,12 +825,37 @@ export default function DeliveryPage() {
         setSelectedDate(newDate)
     }, [selectedDate])
 
-    // Navigate to next day
+    // Navigate to next day (up to today)
     const handleNextDay = useCallback(() => {
         const newDate = new Date(selectedDate)
         newDate.setDate(newDate.getDate() + 1)
+
+        const today = new Date()
+        const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+        if (newDate > startOfToday) return
+
         setSelectedDate(newDate)
     }, [selectedDate])
+
+    const handleDateInputChange = useCallback((value: string) => {
+        const parsed = parseDateKeyToLocalDate(value)
+        if (!parsed) return
+
+        const today = new Date()
+        const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+        if (parsed > startOfToday) return
+
+        setSelectedDate(parsed)
+    }, [])
+
+    const handleDatePickerConfirm = useCallback(() => {
+        handleDateInputChange(datePickerValue)
+        // Persist the chosen date so it remains until manually changed
+        try {
+            localStorage.setItem('delivery_selected_date', datePickerValue)
+        } catch {}
+        setIsDatePickerOpen(false)
+    }, [datePickerValue, handleDateInputChange])
 
     // Open house in delivery view
     const handleOpenHouseInDelivery = useCallback(
@@ -1115,6 +1194,7 @@ export default function DeliveryPage() {
                     houseId: currentHouse.id,
                     shift: selectedShift,
                     items: payloadItems,
+                    deliveredAt: buildDeliveredAtForDate(selectedDate),
                 })
 
                 setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
@@ -1122,18 +1202,16 @@ export default function DeliveryPage() {
                     houseId: currentHouse.id,
                     shift: selectedShift,
                 })
-                const today = new Date()
-                setCurrentHouseLogs(
-                    refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today))
-                )
+                const selectedDateLogs = refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
+                setCurrentHouseLogs(selectedDateLogs)
                 setHouseLogsCache((prev) => ({
                     ...prev,
-                    [currentHouse.id]: refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), today)),
+                    [currentHouse.id]: selectedDateLogs,
                 }))
                 setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
             }
 
-            await loadTodayDeliveredSummary()
+            await loadSelectedDateDeliveredSummary()
 
             const now = new Date()
             const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -1177,20 +1255,18 @@ export default function DeliveryPage() {
 
                     <div className="grid gap-3 sm:grid-cols-2">
                         <Button className="w-full" onClick={() => {
-                            const dateKey = getLocalDateKey()
-                            const savedIndex = getStoredIndex(dateKey, 'morning')
+                            const savedIndex = getStoredIndex(selectedDateKey, 'morning')
                             setCurrentIndex(savedIndex)
-                            localStorage.setItem(`delivery_shift_${dateKey}`, 'morning')
+                            localStorage.setItem(`delivery_shift_${selectedDateKey}`, 'morning')
                             setSelectedShift('morning')
                         }}>
                             Morning
                         </Button>
 
                         <Button className="w-full" onClick={() => {
-                            const dateKey = getLocalDateKey()
-                            const savedIndex = getStoredIndex(dateKey, 'evening')
+                            const savedIndex = getStoredIndex(selectedDateKey, 'evening')
                             setCurrentIndex(savedIndex)
-                            localStorage.setItem(`delivery_shift_${dateKey}`, 'evening')
+                            localStorage.setItem(`delivery_shift_${selectedDateKey}`, 'evening')
                             setSelectedShift('evening')
                         }}>
                             Evening
@@ -1217,29 +1293,7 @@ export default function DeliveryPage() {
                         </p>
                     </div>
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <div className="flex items-center gap-2">
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={handlePreviousDay}
-                                title="Previous day"
-                            >
-                                <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <span className="min-w-32 text-center text-sm font-medium">
-                                {selectedDate.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })}
-                            </span>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={handleNextDay}
-                                title="Next day"
-                            >
-                                <ChevronRight className="h-4 w-4" />
-                            </Button>
-                        </div>
-
+                    <div className="flex items-center gap-2">
                         <Button
                             variant="outline"
                             className="gap-2"
@@ -1276,9 +1330,9 @@ export default function DeliveryPage() {
                             ) : (
                                 searchedAllocatedHouses.map(({ house, routeNumber }) => {
                                     const allAlerts = parseHouseAlerts(house.configs?.[0]?.dailyAlerts)
-                                    const todayKey = DAYS_BY_INDEX[new Date().getDay()]
+                                    const selectedDayKey = DAYS_BY_INDEX[selectedDate.getDay()]
                                     const todayAlerts = allAlerts
-                                        .filter((alert) => alert.schedule?.[todayKey])
+                                        .filter((alert) => alert.schedule?.[selectedDayKey])
                                         .map((alert) => alert.text.trim())
                                         .filter(Boolean)
 
@@ -1363,12 +1417,58 @@ export default function DeliveryPage() {
 
     return (
         <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
-
-            {/* <div className="flex justify-end">
-                <Button asChild variant="outline" size="sm">
-                    <Link href="/dashboard/supplier/rates">Rate List</Link>
+            <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                    {selectedDate.toLocaleDateString('en-IN', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                    })}
+                </p>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => {
+                        setDatePickerValue(selectedDateKey)
+                        setIsDatePickerOpen(true)
+                    }}
+                    title="Change delivery date"
+                >
+                    <Edit2 className="h-3.5 w-3.5" />
                 </Button>
-            </div> */}
+            </div>
+
+            <Dialog open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+                <DialogContent className="w-80">
+                    <DialogHeader>
+                        <DialogTitle>Change Delivery Date</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <Input
+                            type="date"
+                            value={datePickerValue}
+                            max={todayDateKey}
+                            onChange={(event) => setDatePickerValue(event.target.value)}
+                        />
+                        <div className="flex gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setIsDatePickerOpen(false)}
+                                className="flex-1"
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={handleDatePickerConfirm}
+                                className="flex-1"
+                            >
+                                Set Date
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <div
                 className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${houseMotionClass}`}
@@ -1455,7 +1555,7 @@ export default function DeliveryPage() {
                                                 ) : swipePreviewItems.filter((item) => Number(item.qty) > 0).length === 0 ? (
                                                     <TableRow>
                                                         <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
-                                                            No products delivered yet for today
+                                                            No products delivered yet for selected date
                                                         </TableCell>
                                                     </TableRow>
                                                 ) : (
@@ -1536,7 +1636,7 @@ export default function DeliveryPage() {
                                     e.stopPropagation()
                                     handleClearToday()
                                 }}
-                                title="Clear today's deliveries"
+                                title="Clear selected-date deliveries"
                             >
                                 <Trash2 className="h-3.5 w-3.5 text-destructive" />
                             </Button>
@@ -1817,9 +1917,9 @@ export default function DeliveryPage() {
             <AlertDialog open={clearTodayDialogOpen} onOpenChange={setClearTodayDialogOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Today's Deliveries?</AlertDialogTitle>
+                        <AlertDialogTitle>Delete Selected Date Deliveries?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            This will delete all delivery items added today for House {currentHouse?.houseNo}. This action cannot be undone.
+                            This will delete all delivery items for {selectedDate.toLocaleDateString('en-IN')} for House {currentHouse?.houseNo}. This action cannot be undone.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

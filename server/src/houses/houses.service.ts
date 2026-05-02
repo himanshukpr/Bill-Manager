@@ -100,6 +100,11 @@ export class HousesService {
     return this.prisma.house.update({ where: { id }, data: { active: true } });
   }
 
+  async delete(id: number) {
+    await this.findOne(id);
+    return this.prisma.house.delete({ where: { id } });
+  }
+
   async getStats() {
     const [totalHouses, balances] = await Promise.all([
       this.prisma.house.count(),

@@ -58,7 +58,9 @@ export default function SupplierLocationPage() {
     setSearching(true)
     try {
       const houses = await housesApi.list()
-      const foundHouse = houses.find(
+      // Exclude deactivated houses for supplier searches
+      const activeHouses = houses.filter((h) => h.active)
+      const foundHouse = activeHouses.find(
         (h) => h.houseNo.toLowerCase() === next.houseNo.toLowerCase() &&
                h.area?.toLowerCase() === next.area.toLowerCase()
       )

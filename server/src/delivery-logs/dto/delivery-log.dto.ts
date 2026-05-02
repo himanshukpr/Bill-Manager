@@ -1,6 +1,7 @@
 import {
     IsArray,
     IsBoolean,
+    IsDateString,
     IsIn,
     IsNumber,
     IsOptional,
@@ -51,6 +52,10 @@ export class CreateDeliveryLogDto {
     @IsOptional()
     @IsBoolean()
     billGenerated?: boolean;
+
+    @IsOptional()
+    @IsDateString()
+    deliveredAt?: string;
 }
 
 export class UpdateDeliveryLogDto {

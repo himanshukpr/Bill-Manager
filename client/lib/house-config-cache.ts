@@ -1,45 +1,72 @@
 import type { HouseConfig } from './api'
+import { db } from './db'
 
-const HOUSE_CONFIG_CACHE_KEY = 'bill-manager-house-configs'
 const HOUSE_CONFIG_CACHE_EVENT = 'bill-manager-house-configs-updated'
+
+let inMemoryConfigs: HouseConfig[] = []
 
 function hasWindow() {
   return typeof window !== 'undefined'
 }
 
-export function readHouseConfigSessionCache(): HouseConfig[] {
-  if (!hasWindow()) return []
-
+// Load persisted Dexie cache into memory (best-effort, async)
+;(async () => {
   try {
-    const raw = window.sessionStorage.getItem(HOUSE_CONFIG_CACHE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as HouseConfig[]) : []
+    const rows = await db.houseConfigs.toArray()
+    if (Array.isArray(rows) && rows.length > 0) {
+      inMemoryConfigs = rows
+      if (hasWindow()) window.dispatchEvent(new Event(HOUSE_CONFIG_CACHE_EVENT))
+    }
   } catch {
-    return []
+    // ignore
   }
+})()
+
+export function readHouseConfigSessionCache(): HouseConfig[] {
+  return inMemoryConfigs.slice()
 }
 
 export function writeHouseConfigSessionCache(configs: HouseConfig[]): void {
-  if (!hasWindow()) return
+  inMemoryConfigs = Array.isArray(configs) ? configs.slice() : []
+  if (hasWindow()) window.dispatchEvent(new Event(HOUSE_CONFIG_CACHE_EVENT))
 
-  try {
-    window.sessionStorage.setItem(HOUSE_CONFIG_CACHE_KEY, JSON.stringify(configs))
-    window.dispatchEvent(new Event(HOUSE_CONFIG_CACHE_EVENT))
-  } catch {
-    // Best-effort cache only.
-  }
+  // Persist asynchronously to Dexie (site cache)
+  void (async () => {
+    try {
+      await db.transaction('rw', db.houseConfigs, async () => {
+        await db.houseConfigs.clear()
+        if (inMemoryConfigs.length > 0) await db.houseConfigs.bulkPut(inMemoryConfigs)
+      })
+    } catch {
+      // best-effort
+    }
+  })()
 }
 
 export function clearHouseConfigSessionCache(): void {
-  if (!hasWindow()) return
+  inMemoryConfigs = []
+  if (hasWindow()) window.dispatchEvent(new Event(HOUSE_CONFIG_CACHE_EVENT))
 
-  try {
-    window.sessionStorage.removeItem(HOUSE_CONFIG_CACHE_KEY)
-    window.dispatchEvent(new Event(HOUSE_CONFIG_CACHE_EVENT))
-  } catch {
-    // Best-effort cache only.
-  }
+  void (async () => {
+    try {
+      await db.houseConfigs.clear()
+    } catch {
+      // ignore
+    }
+  })()
+}
+
+export function removeHouseConfigSessionCacheByHouseId(houseId: number): void {
+  inMemoryConfigs = inMemoryConfigs.filter((config) => config.houseId !== houseId)
+  if (hasWindow()) window.dispatchEvent(new Event(HOUSE_CONFIG_CACHE_EVENT))
+
+  void (async () => {
+    try {
+      await db.houseConfigs.where('houseId').equals(houseId).delete()
+    } catch {
+      // ignore
+    }
+  })()
 }
 
 export function subscribeHouseConfigSessionCache(listener: () => void): () => void {

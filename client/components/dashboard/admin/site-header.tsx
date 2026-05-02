@@ -15,9 +15,10 @@ interface SiteHeaderProps {
     todayShortText?: string
     onLogout?: () => void
     actions?: React.ReactNode
+    showDate?: boolean
 }
 
-export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onLogout, actions }: SiteHeaderProps) {
+export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onLogout, actions, showDate = true }: SiteHeaderProps) {
     const { theme, resolvedTheme, setTheme } = useTheme()
     const [mounted, setMounted] = useState(false)
 
@@ -42,7 +43,7 @@ export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onL
                 />
                 <div className="flex min-w-0 flex-1 flex-col">
                     <h1 className="truncate text-xl font-semibold sm:text-base">{title}</h1>
-                    {todayText && (
+                    {showDate !== false && todayText && (
                         <>
                             <p className="truncate text-base leading-tight text-muted-foreground sm:hidden">
                                 {todayShortText ?? todayText}

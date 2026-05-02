@@ -69,6 +69,7 @@ export class DeliveryLogsService {
                     openingBalance,
                     closingBalance,
                     note: dto.note,
+                    ...(dto.deliveredAt ? { deliveredAt: new Date(dto.deliveredAt) } : {}),
                 },
                 include: {
                     house: { select: { id: true, houseNo: true, area: true } },

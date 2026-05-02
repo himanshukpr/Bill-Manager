@@ -38,11 +38,11 @@ export default function SupplierLayout({ children }: SupplierLayoutProps) {
     <SidebarProvider style={{ '--sidebar-width': 'calc(var(--spacing) * 65)', '--header-height': 'calc(var(--spacing) * 13)' } as React.CSSProperties}>
       <SupplierSidebar variant="inset" userName={auth.username} onLogout={logout} />
       <SidebarInset>
-        <SiteHeader 
-          title="Supplier Panel" 
-          todayText={todayText} 
-          todayShortText={todayShortText} 
-          onLogout={logout} 
+        <SiteHeader
+          title="Supplier Panel"
+          // hide global today date for supplier area so page-level selected date is single source
+          showDate={false}
+          onLogout={logout}
         />
         <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
           {children}
