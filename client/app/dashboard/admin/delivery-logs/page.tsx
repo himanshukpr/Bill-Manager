@@ -96,7 +96,7 @@ export default function DeliveryLogsPage() {
   const groupedLogs = useMemo(() => {
     const groups: Record<string, DeliveryLog[]> = {}
     for (const log of logs) {
-      const date = new Date(log.deliveredAt)
+      const date = new Date(log.createdAt || log.deliveredAt)
       const key = getLocalDateKey(date)
       if (!groups[key]) {
         groups[key] = []

@@ -480,6 +480,7 @@ export type DeliveryLog = {
   closingBalance: string;
   note?: string;
   deliveredAt: string;
+  createdAt: string;
   house?: { id: number; houseNo: string; area?: string };
   supplier?: { uuid: string; username: string };
 };

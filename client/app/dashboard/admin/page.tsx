@@ -42,10 +42,10 @@ export default function AdminDashboardPage() {
         ])
         setHouseStats(hs)
         setBillStats(bs)
-        // Filter for today's logs
+        // Filter for today's logs based on createdAt
         const today = new Date()
         const filteredLogs = (logs as any[]).filter((log) => {
-          const logDate = new Date(log.deliveredAt)
+          const logDate = new Date(log.createdAt)
           return isSameLocalDate(logDate, today)
         })
         setTodayLogs(filteredLogs.slice(0, 5))

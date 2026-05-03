@@ -710,6 +710,7 @@ export default function HousesPage() {
         id: 0, // Temporary ID for new deliveries
         houseId: summaryHouse?.id ?? 0,
         deliveredAt: deliveryDate.toISOString(),
+        createdAt: new Date().toISOString(),
         shift: shift as 'morning' | 'evening' | 'shop',
         items: [],
         billGenerated: false,
