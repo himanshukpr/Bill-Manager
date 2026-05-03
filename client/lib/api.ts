@@ -480,6 +480,7 @@ export type DeliveryLog = {
   closingBalance: string;
   note?: string;
   deliveredAt: string;
+  createdAt: string;
   house?: { id: number; houseNo: string; area?: string };
   supplier?: { uuid: string; username: string };
 };
@@ -1296,6 +1297,7 @@ export const deliveryLogsApi = {
     if (isBrowser()) {
       await db.deliveryLogs.put(res.log);
       await invalidateCache('/delivery-logs');
+      await invalidateCache('/house-balance');
     }
     return res;
   },
@@ -1312,6 +1314,7 @@ export const deliveryLogsApi = {
       if (isBrowser()) {
         await db.deliveryLogs.put(res);
         await invalidateCache('/delivery-logs');
+        await invalidateCache('/house-balance');
       }
       return res;
     }
@@ -1320,6 +1323,7 @@ export const deliveryLogsApi = {
       const existing = await db.deliveryLogs.get(id);
       if (existing) await db.deliveryLogs.put({ ...existing, ...data });
       await invalidateCache('/delivery-logs');
+      await invalidateCache('/house-balance');
       await syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
     }
 
@@ -1331,6 +1335,7 @@ export const deliveryLogsApi = {
       if (isBrowser()) {
         await db.deliveryLogs.delete(id);
         await invalidateCache('/delivery-logs');
+        await invalidateCache('/house-balance');
       }
       return res;
     }
@@ -1338,6 +1343,7 @@ export const deliveryLogsApi = {
     if (isBrowser()) {
       await db.deliveryLogs.delete(id);
       await invalidateCache('/delivery-logs');
+      await invalidateCache('/house-balance');
       await syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
     }
 
