@@ -7,7 +7,6 @@ import { toast } from 'sonner'
 
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -18,7 +17,14 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { deliveryLogsApi, type DeliveryLog, type DeliveryLogItem, housesApi, type House } from '@/lib/api'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { deliveryLogsApi, type DeliveryLog, type DeliveryLogItem, housesApi, productRatesApi, type House, type ProductRate } from '@/lib/api'
 
 function isSameLocalDate(left: Date, right: Date): boolean {
   return (
@@ -40,6 +46,7 @@ type EditingLog = {
 export default function DeliveryLogsPage() {
   const [logs, setLogs] = useState<DeliveryLog[]>([])
   const [houses, setHouses] = useState<Map<number, House>>(new Map())
+  const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -49,9 +56,10 @@ export default function DeliveryLogsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [logsData, housesData] = await Promise.all([
+        const [logsData, housesData, ratesData] = await Promise.all([
           deliveryLogsApi.list(),
           housesApi.list(),
+          productRatesApi.list(),
         ])
         setLogs(logsData)
         const houseMap = new Map<number, House>()
@@ -59,11 +67,31 @@ export default function DeliveryLogsPage() {
           houseMap.set(house.id, house)
         }
         setHouses(houseMap)
+        setProductRates(ratesData)
       } catch { /* silently fail */ }
       finally { setLoading(false) }
     }
     load()
   }, [])
+
+  const ratesMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const rate of productRates) {
+      const name = (rate.name || '').trim()
+      if (name) {
+        map[name] = String(rate.rate)
+      }
+    }
+    return map
+  }, [productRates])
+
+  const activeRates = useMemo(
+    () => productRates
+      .filter((rate) => rate.isActive && Number(rate.rate) > 0)
+      .map((rate) => ({ ...rate, name: (rate.name || '').trim() }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [productRates],
+  )
 
   const groupedLogs = useMemo(() => {
     const groups: Record<string, DeliveryLog[]> = {}
@@ -83,7 +111,7 @@ export default function DeliveryLogsPage() {
   async function handleSaveEdit() {
     if (!editingLog) return
 
-    const items: DeliveryLogItem[] = editingLog.items
+    const items: DeliveryLogItem[] = (editingLog.items || [])
       .map((item) => {
         const qty = Number(item.qty)
         const rate = Number(item.rate)
@@ -131,9 +159,11 @@ export default function DeliveryLogsPage() {
     }
   }
 
+  const [refreshKey, setRefreshKey] = useState(0)
+
   function startEdit(log: DeliveryLog) {
     const items = (log.items || []).map((item) => ({
-      milkType: item.milkType,
+      milkType: (item.milkType || '').trim(),
       qty: String(item.qty),
       rate: String(item.rate),
     }))
@@ -141,26 +171,36 @@ export default function DeliveryLogsPage() {
       items.push({ milkType: '', qty: '', rate: '' })
     }
     setEditingLog({ log, items })
+    setRefreshKey(k => k + 1)
   }
 
-  function updateEditItem(index: number, field: 'milkType' | 'qty' | 'rate', value: string) {
+  function updateEditItem(index: number, field: 'milkType' | 'qty' | 'rate', value: string, rateValue?: string) {
     if (!editingLog) return
-    const newItems = [...editingLog.items]
-    newItems[index] = { ...newItems[index], [field]: value }
+    const currentItems = editingLog.items || []
+    const newItems = [...currentItems]
+    const newValue = field === 'milkType' ? value.trim() : value
+    newItems[index] = { ...newItems[index], [field]: newValue }
+    if (rateValue) {
+      newItems[index].rate = rateValue
+    }
     setEditingLog({ ...editingLog, items: newItems })
+    setRefreshKey(k => k + 1)
   }
 
   function addEditItem() {
     if (!editingLog) return
+    const currentItems = editingLog.items || []
     setEditingLog({
       ...editingLog,
-      items: [...editingLog.items, { milkType: '', qty: '', rate: '' }],
+      items: [...currentItems, { milkType: '', qty: '', rate: '' }],
     })
   }
 
   function removeEditItem(index: number) {
-    if (!editingLog || editingLog.items.length <= 1) return
-    const newItems = editingLog.items.filter((_, i) => i !== index)
+    if (!editingLog) return
+    const currentItems = editingLog.items || []
+    if (currentItems.length <= 1) return
+    const newItems = currentItems.filter((_, i) => i !== index)
     setEditingLog({ ...editingLog, items: newItems })
   }
 
@@ -278,7 +318,7 @@ export default function DeliveryLogsPage() {
 
       {/* Edit Dialog */}
       <AlertDialog open={!!editingLog} onOpenChange={(open) => !open && setEditingLog(null)}>
-        <AlertDialogContent className="max-h-[90vh] w-full max-w-2xl overflow-y-auto">
+        <AlertDialogContent className="max-h-[90vh] w-[90vw] max-w-2xl overflow-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Edit Delivery Log</AlertDialogTitle>
             <AlertDialogDescription>
@@ -303,57 +343,68 @@ export default function DeliveryLogsPage() {
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2 max-h-60 overflow-y-auto">
                 {editingLog.items.map((item, index) => (
-                  <div key={index} className="flex items-center gap-3 rounded-lg border border-border p-3">
-                    <div className="flex-1 space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Product</Label>
-                      <Input
-                        value={item.milkType}
-                        onChange={(e) => updateEditItem(index, 'milkType', e.target.value)}
-                        placeholder="e.g. Cow Milk"
-                      />
-                    </div>
-                    <div className="w-24 space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Qty (L)</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.qty}
-                        onChange={(e) => updateEditItem(index, 'qty', e.target.value)}
-                      />
-                    </div>
-                    <div className="w-24 space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Rate</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.rate}
-                        onChange={(e) => updateEditItem(index, 'rate', e.target.value)}
-                      />
-                    </div>
-                    <div className="w-24 space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Amount</Label>
-                      <div className="flex h-10 items-center text-sm font-semibold">
-                        ₹{((Number(item.qty) || 0) * (Number(item.rate) || 0)).toLocaleString('en-IN')}
-                      </div>
-                    </div>
+                  <div key={index} className="flex flex-wrap gap-2 items-center p-2 rounded border border-border">
+                    <span className="text-xs w-12 text-muted-foreground">{index + 1}</span>
+                    <Select
+                      key={`select-${refreshKey}-${index}`}
+                      defaultValue={item.milkType}
+                      onValueChange={(value) => {
+                        updateEditItem(index, 'milkType', value, ratesMap[value] || '')
+                      }}
+                    >
+                      <SelectTrigger className="h-7 w-28">
+                        <SelectValue placeholder="Product" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeRates.map((rate) => (
+                          <SelectItem key={rate.id} value={rate.name}>
+                            {rate.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Qty"
+                      value={item.qty}
+                      onChange={(e) => updateEditItem(index, 'qty', e.target.value)}
+                      className="h-7 w-16"
+                    />
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Rate"
+                      value={item.rate}
+                      onChange={(e) => updateEditItem(index, 'rate', e.target.value)}
+                      className="h-7 w-16"
+                    />
+                    <span className="text-xs w-20 font-semibold">
+                      ₹{((Number(item.qty) || 0) * (Number(item.rate) || 0)).toLocaleString('en-IN')}
+                    </span>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-10 w-10"
+                      className="h-7 w-7"
                       onClick={() => removeEditItem(index)}
                       disabled={editingLog.items.length <= 1}
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3 w-3" />
                     </Button>
                   </div>
                 ))}
 
-                <Button variant="outline" onClick={addEditItem} className="w-full">
-                  Add Item
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={addEditItem}
+                  className="mt-2 w-full"
+                >
+                  + Add Item
                 </Button>
               </div>
             </div>
