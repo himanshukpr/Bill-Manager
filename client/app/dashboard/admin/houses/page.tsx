@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import {
@@ -57,9 +57,8 @@ type DeliveryEditForm = {
   note?: string
 }
 
-function normalizeMilkType(value: unknown): 'cow' | 'buffalo' {
-  const text = String(value ?? '').trim().toLowerCase()
-  return text === 'cow' ? 'cow' : 'buffalo'
+function normalizeMilkType(value: unknown): string {
+  return String(value ?? '').trim()
 }
 
 function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
@@ -73,6 +72,20 @@ function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
     const amount = Number(row.amount ?? (qty * rate))
     return { milkType, qty, rate, amount }
   })
+}
+
+function getRateByProductName(rates: ProductRate[], productName: string): number {
+  const normalized = (productName || '').toLowerCase().trim()
+  for (const rate of rates) {
+    if ((rate.name || '').toLowerCase().trim() === normalized) {
+      return Number(rate.rate)
+    }
+  }
+  return 0
+}
+
+function getActiveProducts(rates: ProductRate[]): ProductRate[] {
+  return rates.filter(r => r.isActive && Number(r.rate) > 0).sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 }
 
 function getErrorMessage(error: unknown): string {
@@ -326,6 +339,7 @@ export default function HousesPage() {
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
   const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
+  const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryBills, setSummaryBills] = useState<Bill[]>([])
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
@@ -334,6 +348,7 @@ export default function HousesPage() {
   })
   const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
   const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
+  const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -623,12 +638,14 @@ export default function HousesPage() {
     setSummaryLoading(true)
 
     try {
-      const [logs, bills] = await Promise.all([
+      const [logs, bills, rates] = await Promise.all([
         deliveryLogsApi.list({ houseId: house.id }),
         billsApi.list({ houseId: house.id }),
+        productRatesApi.list(),
       ])
       setSummaryLogs(logs)
       setSummaryBills(bills)
+      setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
       setSummaryPeriod(getLogPeriod(logs))
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))
@@ -687,6 +704,8 @@ export default function HousesPage() {
       const deliveryDate = new Date(year, month - 1, day)
       const primaryConfig = getHouseConfigWithAlerts(summaryHouse?.configs)
       const shift = primaryConfig?.shift || 'morning'
+      const activeProducts = getActiveProducts(productRates)
+      const firstProduct = activeProducts[0] || { name: '', rate: 0 }
       const newLog: DeliveryLog = {
         id: 0, // Temporary ID for new deliveries
         houseId: summaryHouse?.id ?? 0,
@@ -701,7 +720,10 @@ export default function HousesPage() {
         supplier: { uuid: primaryConfig?.supplierId || '', username: primaryConfig?.supplier?.username || '' },
       }
       setEditingDeliveryLog(newLog)
-      setEditDeliveryForm({ items: [], note: '' })
+      setEditDeliveryForm({
+        items: [{ milkType: firstProduct.name, qty: 0, rate: Number(firstProduct.rate), amount: 0 }],
+        note: ''
+      })
     }
     setEditDeliveryDialogOpen(true)
   }
@@ -758,6 +780,22 @@ export default function HousesPage() {
       setEditDeliveryDialogOpen(false)
       setEditingDeliveryLog(null)
       setEditDeliveryForm({ items: [], note: '' })
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setEditDeliverySaving(false)
+    }
+  }
+
+  async function handleDeleteDeliveryLog() {
+    if (!deletingDeliveryLog || !summaryHouse) return
+    setEditDeliverySaving(true)
+    try {
+      await deliveryLogsApi.delete(deletingDeliveryLog.id)
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      setSummaryLogs(logs)
+      setDeletingDeliveryLog(null)
+      toast.success('Delivery log deleted successfully')
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -1240,7 +1278,7 @@ export default function HousesPage() {
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Delivery Allocation</p>
-                 
+
                 </div>
                 <Badge variant="outline" className="uppercase tracking-wide">Config</Badge>
               </div>
@@ -1487,7 +1525,7 @@ export default function HousesPage() {
                   House {summaryHouse.houseNo} Delivery Summary
                 </DialogTitle>
               </DialogHeader>
-              
+
               <div className="flex items-center justify-center gap-2 border-b border-border pb-3">
                 <Button
                   variant="ghost"
@@ -1542,16 +1580,29 @@ export default function HousesPage() {
                                 {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
                               </TableCell>
                               <TableCell className="text-right">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => openEditDeliveryDialog(row)}
-                                  title={isDeliveryBlockedByBill(row.dateKey) ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openEditDeliveryDialog(row)}
+                                    title={isDeliveryBlockedByBill(row.dateKey) ? 'Cannot edit after bill generation' : 'Edit delivery'}
                                     disabled={isDeliveryBlockedByBill(row.dateKey)}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  <Edit2 className="h-4 w-4" />
-                                </Button>
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    <Edit2 className="h-4 w-4" />
+                                  </Button>
+                                  {!isDeliveryBlockedByBill(row.dateKey) && row.log && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setDeletingDeliveryLog(row.log!)}
+                                      title="Delete delivery"
+                                      className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
                               </TableCell>
                             </TableRow>
                           )
@@ -1643,7 +1694,7 @@ export default function HousesPage() {
       <Dialog open={editDeliveryDialogOpen} onOpenChange={setEditDeliveryDialogOpen}>
         <DialogContent className="max-w-md sm:max-w-xl lg:max-w-2xl max-h-[90vh] overflow-y-auto">
           {editingDeliveryLog && (
-            <>
+            <div>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Edit2 className="h-5 w-5 text-primary" />
@@ -1672,7 +1723,7 @@ export default function HousesPage() {
                 </div>
 
                 {/* Items Editor */}
-                  <div className="space-y-3">
+                <div className="space-y-3">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Delivery Items</p>
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-muted-foreground">{editDeliveryForm.items.length} item(s)</p>
@@ -1680,18 +1731,12 @@ export default function HousesPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        const defaultRate = (() => {
-                          const r1Type = summaryHouse?.rate1Type?.toLowerCase()
-                          const r2Type = summaryHouse?.rate2Type?.toLowerCase()
-                          if (r1Type === 'cow') return Number(summaryHouse?.rate1 ?? 0)
-                          if (r2Type === 'cow') return Number(summaryHouse?.rate2 ?? 0)
-                          return Number(summaryHouse?.rate1 ?? summaryHouse?.rate2 ?? 0)
-                        })()
-
+                        const activeProducts = getActiveProducts(productRates)
+                        const firstProduct = activeProducts[0] || { name: '', rate: 0 }
                         const added = {
-                          milkType: 'cow',
+                          milkType: firstProduct.name,
                           qty: 0,
-                          rate: defaultRate,
+                          rate: Number(firstProduct.rate),
                           amount: 0,
                         }
                         setEditDeliveryForm({ ...editDeliveryForm, items: [...editDeliveryForm.items, added] })
@@ -1715,36 +1760,32 @@ export default function HousesPage() {
                           <div className="col-span-1" />
                         </div>
 
-                        {(editDeliveryForm.items || []).map((item, index) => (
+{(editDeliveryForm.items || []).map((item, index) => (
                           <div key={index} className="grid grid-cols-12 gap-2 items-center px-3 py-2 text-sm border-b border-border">
                             <div className="col-span-5 flex items-center gap-2">
                               <Select
-                                value={item.milkType}
+                                value={item.milkType || ''}
                                 onValueChange={(val) => {
-                                  const milkType = val as 'cow' | 'buffalo'
-                                  const defaultRate = (() => {
-                                    const r1Type = summaryHouse?.rate1Type?.toLowerCase()
-                                    const r2Type = summaryHouse?.rate2Type?.toLowerCase()
-                                    if (r1Type === milkType) return Number(summaryHouse?.rate1 ?? 0)
-                                    if (r2Type === milkType) return Number(summaryHouse?.rate2 ?? 0)
-                                    return Number(summaryHouse?.rate1 ?? summaryHouse?.rate2 ?? 0)
-                                  })()
+                                  const newRate = getRateByProductName(productRates, val)
                                   const updated = [...editDeliveryForm.items]
                                   const newQty = updated[index].qty ?? 0
-                                  const newRate = defaultRate
-                                  updated[index] = { ...updated[index], milkType, rate: newRate, amount: newQty * newRate }
+                                  updated[index] = { ...updated[index], milkType: val, rate: newRate, amount: newQty * newRate }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
                               >
                                 <SelectTrigger className="h-8 w-32">
-                                  <SelectValue placeholder={item.milkType === 'cow' ? 'Cow' : 'Buffalo'} />
+                                  <SelectValue>
+                                    {item.milkType || 'Select'}
+                                  </SelectValue>
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="cow">Cow</SelectItem>
-                                  <SelectItem value="buffalo">Buffalo</SelectItem>
+                                  {getActiveProducts(productRates).map((rate) => (
+                                    <SelectItem key={rate.id} value={rate.name}>
+                                      {rate.name} (₹{rate.rate})
+                                    </SelectItem>
+                                  ))}
                                 </SelectContent>
                               </Select>
-                              {/* compact: no extra product label to save space */}
                             </div>
 
                             <div className="col-span-2">
@@ -1836,8 +1877,27 @@ export default function HousesPage() {
                   </Button>
                 </DialogFooter>
               </div>
-            </>
+            </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deletingDeliveryLog} onOpenChange={(open) => !open && setDeletingDeliveryLog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Delivery Log</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this delivery for {deletingDeliveryLog && new Date(deletingDeliveryLog.deliveredAt).toLocaleDateString('en-IN')}?
+              This will deduct ₹{deletingDeliveryLog ? Number(deletingDeliveryLog.totalAmount).toLocaleString('en-IN') : 0} from the house balance.
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingDeliveryLog(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteDeliveryLog} disabled={editDeliverySaving}>
+              {editDeliverySaving ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
