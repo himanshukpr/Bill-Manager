@@ -264,6 +264,7 @@ export default function DeliveryLogsPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
+                        <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Delivery Date</th>
                         <th className="px-5 py-3 text-left font-semibold text-muted-foreground">House</th>
                         <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Supplier</th>
                         <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Shift</th>
@@ -276,6 +277,9 @@ export default function DeliveryLogsPage() {
                       {dateLogs.map((log, i) => (
                         <tr key={log.id}
                           className={`border-b border-border/60 hover:bg-muted/20 transition-colors ${i === dateLogs.length - 1 ? 'border-b-0' : ''}`}>
+                          <td className="px-5 py-3 text-muted-foreground">
+                            {log.deliveredAt ? new Date(log.deliveredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                          </td>
                           <td className="px-5 py-3 font-semibold">{log.house?.houseNo}</td>
                           <td className="px-5 py-3 text-muted-foreground">{log.supplier?.username || '—'}</td>
                           <td className="px-5 py-3 text-muted-foreground capitalize">{log.shift}</td>

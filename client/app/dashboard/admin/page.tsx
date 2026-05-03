@@ -172,6 +172,7 @@ export default function AdminDashboardPage() {
                 <tr className="border-b border-border bg-muted/30">
                   <th className="px-5 py-3 text-left font-semibold text-muted-foreground">House</th>
                   <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Shift</th>
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Delivery Date</th>
                   <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Items</th>
                   <th className="hidden sm:table-cell px-5 py-3 text-left font-semibold text-muted-foreground">Total</th>
                 </tr>
@@ -182,6 +183,9 @@ export default function AdminDashboardPage() {
                     className={`border-b border-border/60 hover:bg-muted/20 transition-colors ${i === todayLogs.length - 1 ? 'border-b-0' : ''}`}>
                     <td className="px-5 py-3 font-semibold">{log.house?.houseNo}</td>
                     <td className="px-5 py-3 text-muted-foreground capitalize">{log.shift}</td>
+                    <td className="px-5 py-3 text-muted-foreground">
+                      {log.deliveredAt ? new Date(log.deliveredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}
+                    </td>
                     <td className="px-5 py-3 text-muted-foreground">
                       {log.items?.map((item: any) => item.milkType).join(', ')}
                     </td>
