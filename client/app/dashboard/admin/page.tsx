@@ -2,16 +2,31 @@
 
 import { useEffect, useState } from 'react'
 import {
-  FileText, Home, DollarSign, Users,
-  TrendingUp, AlertCircle, ArrowUpRight, ArrowDownRight, BarChart3,
+  FileText, Home, DollarSign,
+  BarChart3, Truck,
 } from 'lucide-react'
-import { billsApi, housesApi } from '@/lib/api'
+import { billsApi, housesApi, deliveryLogsApi } from '@/lib/api'
 import Link from 'next/link'
+
+function getLocalDateKey(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isSameLocalDate(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  )
+}
 
 export default function AdminDashboardPage() {
   const [houseStats, setHouseStats] = useState({ totalHouses: 0, totalPreviousBalance: '0' })
   const [billStats, setBillStats] = useState({ totalBills: 0, billsThisMonth: 0, totalPendingBalance: '0' })
-  const [recentBills, setRecentBills] = useState<any[]>([])
+  const [todayLogs, setTodayLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -20,14 +35,20 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [hs, bs, bills] = await Promise.all([
+        const [hs, bs, logs] = await Promise.all([
           housesApi.stats(),
           billsApi.dashboardStats(),
-          billsApi.list({ year: new Date().getFullYear() })
+          deliveryLogsApi.list()
         ])
         setHouseStats(hs)
         setBillStats(bs)
-        setRecentBills(bills.slice(0, 5))
+        // Filter for today's logs
+        const today = new Date()
+        const filteredLogs = (logs as any[]).filter((log) => {
+          const logDate = new Date(log.deliveredAt)
+          return isSameLocalDate(logDate, today)
+        })
+        setTodayLogs(filteredLogs.slice(0, 5))
       } catch { /* silently fail on dashboard */ }
       finally { setLoading(false) }
     }
@@ -123,18 +144,26 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Recent Bills */}
+      {/* Today's Delivery Logs */}
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
-        <div className="border-b border-border px-5 py-4">
-          <h2 className="text-base font-bold">Recent Bills</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Latest generated bills this year</p>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-bold">Today's Delivery Logs</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Deliveries recorded today</p>
+          </div>
+          <Link
+            href="/dashboard/admin/delivery-logs"
+            className="inline-flex h-8 items-center justify-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:opacity-90"
+          >
+            View All
+          </Link>
         </div>
         {loading ? (
           <div className="px-5 py-4 text-sm text-muted-foreground">Loading...</div>
-        ) : recentBills.length === 0 ? (
+        ) : todayLogs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <FileText className="h-10 w-10 mb-2 opacity-30" />
-            <p className="text-sm">No bills generated yet</p>
+            <Truck className="h-10 w-10 mb-2 opacity-30" />
+            <p className="text-sm">No deliveries recorded today</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -142,20 +171,22 @@ export default function AdminDashboardPage() {
               <thead>
                 <tr className="border-b border-border bg-muted/30">
                   <th className="px-5 py-3 text-left font-semibold text-muted-foreground">House</th>
-                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Period</th>
-                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Total</th>
-                  <th className="hidden sm:table-cell px-5 py-3 text-left font-semibold text-muted-foreground">Generated</th>
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Shift</th>
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Items</th>
+                  <th className="hidden sm:table-cell px-5 py-3 text-left font-semibold text-muted-foreground">Total</th>
                 </tr>
               </thead>
               <tbody>
-                {recentBills.map((b, i) => (
-                  <tr key={b.id}
-                    className={`border-b border-border/60 hover:bg-muted/20 transition-colors ${i === recentBills.length - 1 ? 'border-b-0' : ''}`}>
-                    <td className="px-5 py-3 font-semibold">{b.house?.houseNo}</td>
-                    <td className="px-5 py-3 text-muted-foreground">{MONTH_NAMES[b.month]} {b.year}</td>
-                    <td className="px-5 py-3 font-bold text-primary">₹{Number(b.totalAmount).toLocaleString('en-IN')}</td>
-                    <td className="hidden sm:table-cell px-5 py-3 text-muted-foreground text-xs">
-                      {new Date(b.generatedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                {todayLogs.map((log, i) => (
+                  <tr key={log.id}
+                    className={`border-b border-border/60 hover:bg-muted/20 transition-colors ${i === todayLogs.length - 1 ? 'border-b-0' : ''}`}>
+                    <td className="px-5 py-3 font-semibold">{log.house?.houseNo}</td>
+                    <td className="px-5 py-3 text-muted-foreground capitalize">{log.shift}</td>
+                    <td className="px-5 py-3 text-muted-foreground">
+                      {log.items?.map((item: any) => item.milkType).join(', ')}
+                    </td>
+                    <td className="hidden sm:table-cell px-5 py-3 font-bold text-primary">
+                      ₹{Number(log.totalAmount).toLocaleString('en-IN')}
                     </td>
                   </tr>
                 ))}
