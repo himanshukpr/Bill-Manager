@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, BadgeAlert, Clock3, RefreshCcw, GripVertical, Check, Calendar } from 'lucide-react'
@@ -21,6 +21,7 @@ import {
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { AnimatePresence, motion } from 'framer-motion'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,13 @@ import { toast } from 'sonner'
 const SHIFT_LABEL: Record<string, string> = {
     morning: 'Morning',
     evening: 'Evening',
+}
+
+function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
+    const updated = [...list]
+    const [item] = updated.splice(fromIndex, 1)
+    updated.splice(toIndex, 0, item)
+    return updated
 }
 
 function formatAlertPreview(rawValue: string | null | undefined): string {
@@ -59,6 +67,9 @@ export default function SupplierHousesPage() {
     const [eveningBaselineOrder, setEveningBaselineOrder] = useState<number[]>([])
     const [savingMorning, setSavingMorning] = useState(false)
     const [savingEvening, setSavingEvening] = useState(false)
+    const [modalOpen, setModalOpen] = useState(false)
+    const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null)
+    const [selectedShiftForModal, setSelectedShiftForModal] = useState<'morning' | 'evening'>('morning')
 
     const sensors = useSensors(
         useSensor(MouseSensor, {
@@ -255,6 +266,22 @@ export default function SupplierHousesPage() {
         setEveningPlan(updater)
     }
 
+    function handleMoveToPosition(section: 'morning' | 'evening', fromIndex: number, toIndex: number) {
+        const currentPlan = section === 'morning' ? morningPlan : eveningPlan
+        if (fromIndex < 0 || toIndex < 0 || fromIndex >= currentPlan.length || toIndex >= currentPlan.length) return
+        if (fromIndex === toIndex) return
+        
+        const newPlan = moveItem(currentPlan, fromIndex, toIndex)
+        
+        if (section === 'morning') {
+            setMorningPlan(newPlan)
+        } else {
+            setEveningPlan(newPlan)
+        }
+        
+        toast.success(`Moved to position ${toIndex + 1}`)
+    }
+
     async function saveMorningPlan() {
         if (morningPlan.length === 0) {
             toast.error('No morning routes to save')
@@ -422,6 +449,11 @@ export default function SupplierHousesPage() {
                                                             onMoveDown={() => movePlanItem('morning', idx, 'down')}
                                                             canMoveUp={idx > 0}
                                                             canMoveDown={idx < morningPlan.length - 1}
+                                                            onMoveToPosition={() => {
+                                                                setSelectedItemIndex(idx)
+                                                                setSelectedShiftForModal('morning')
+                                                                setModalOpen(true)
+                                                            }}
                                                         />
                                                     )
                                                 })}
@@ -462,6 +494,11 @@ export default function SupplierHousesPage() {
                                                             onMoveDown={() => movePlanItem('evening', idx, 'down')}
                                                             canMoveUp={idx > 0}
                                                             canMoveDown={idx < eveningPlan.length - 1}
+                                                            onMoveToPosition={() => {
+                                                                setSelectedItemIndex(idx)
+                                                                setSelectedShiftForModal('evening')
+                                                                setModalOpen(true)
+                                                            }}
                                                         />
                                                     )
                                                 })}
@@ -474,6 +511,77 @@ export default function SupplierHousesPage() {
                     </div>
                 </div>
             </div>
+
+            {modalOpen && selectedItemIndex !== null && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center">
+                    <div className="fixed inset-0 z-[101] bg-black/80" onClick={() => { setModalOpen(false); setSelectedItemIndex(null) }} />
+                    <div className="relative z-[102] w-full max-w-md rounded-4xl bg-popover p-6 text-popover-foreground ring-1 ring-foreground/5">
+                        <div className="space-y-1">
+                            <h2 className="text-lg font-semibold">Move to Position</h2>
+                            <p className="text-sm text-muted-foreground">
+                                Move {selectedShiftForModal === 'morning' ? morningPlan[selectedItemIndex]?.houseId : eveningPlan[selectedItemIndex]?.houseId} to position
+                            </p>
+                        </div>
+                        <div className="space-y-4 mt-4">
+                            <div className="rounded-lg bg-muted/50 p-3">
+                                <p className="text-xs text-muted-foreground">Current Position</p>
+                                <p className="text-lg font-semibold">#{selectedItemIndex + 1} of {selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length}</p>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm">New Position (1-{selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length})</label>
+                                <input
+                                    id="new-position"
+                                    type="number"
+                                    min={1}
+                                    max={selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            const value = parseInt((e.target as HTMLInputElement).value, 10)
+                                            const total = selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length
+                                            if (!isNaN(value) && value >= 1 && value <= total && value !== selectedItemIndex + 1) {
+                                                handleMoveToPosition(selectedShiftForModal, selectedItemIndex, value - 1)
+                                            }
+                                            setModalOpen(false)
+                                            setSelectedItemIndex(null)
+                                        }
+                                        if (e.key === 'Escape') {
+                                            setModalOpen(false)
+                                            setSelectedItemIndex(null)
+                                        }
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        <div className="flex gap-2 mt-6">
+                            <button
+                                type="button"
+                                className="flex-1 rounded-md border border-input bg-background px-4 py-2 text-sm hover:bg-accent"
+                                onClick={() => { setModalOpen(false); setSelectedItemIndex(null) }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="flex-1 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
+                                onClick={(e) => {
+                                    const input = document.getElementById('new-position') as HTMLInputElement
+                                    const value = parseInt(input.value, 10)
+                                    const total = selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length
+                                    if (!isNaN(value) && value >= 1 && value <= total && value !== selectedItemIndex + 1) {
+                                        handleMoveToPosition(selectedShiftForModal, selectedItemIndex, value - 1)
+                                    }
+                                    setModalOpen(false)
+                                    setSelectedItemIndex(null)
+                                }}
+                            >
+                                Move
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
@@ -497,6 +605,7 @@ function PlannerSortableItem({
     onMoveDown,
     canMoveUp,
     canMoveDown,
+    onMoveToPosition,
 }: {
     id: number
     idx: number
@@ -506,6 +615,7 @@ function PlannerSortableItem({
     onMoveDown: () => void
     canMoveUp: boolean
     canMoveDown: boolean
+    onMoveToPosition: () => void
 }) {
     const {
         attributes,
@@ -516,62 +626,173 @@ function PlannerSortableItem({
         isDragging,
     } = useSortable({ id })
 
+    const [contextMenuOpen, setContextMenuOpen] = useState(false)
+    const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 })
+    const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
+    const startPosRef = useRef<{ x: number; y: number } | null>(null)
+
+    const handleContextMenu = useCallback((e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setContextMenuPos({ x: e.clientX, y: e.clientY })
+        setContextMenuOpen(true)
+    }, [])
+
+    const handlePointerDown = useCallback((e: React.PointerEvent) => {
+        startPosRef.current = { x: e.clientX, y: e.clientY }
+        longPressTimerRef.current = setTimeout(() => {
+            const rect = (e.target as HTMLElement).getBoundingClientRect()
+            setContextMenuPos({ x: rect.left + rect.width / 2, y: rect.bottom + 4 })
+            setContextMenuOpen(true)
+        }, 500)
+    }, [])
+
+    const handlePointerMove = useCallback((e: React.PointerEvent) => {
+        if (!startPosRef.current) return
+        const dx = Math.abs(e.clientX - startPosRef.current.x)
+        const dy = Math.abs(e.clientY - startPosRef.current.y)
+        if (Math.sqrt(dx * dx + dy * dy) > 10) {
+            if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current)
+                longPressTimerRef.current = null
+            }
+        }
+    }, [])
+
+    const handlePointerUp = useCallback(() => {
+        startPosRef.current = null
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current)
+            longPressTimerRef.current = null
+        }
+    }, [])
+
+    const closeMenu = useCallback(() => {
+        setContextMenuOpen(false)
+    }, [])
+
+    useEffect(() => {
+        if (!contextMenuOpen) return
+        const handleClickOutside = (e: MouseEvent) => setContextMenuOpen(false)
+        const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenuOpen(false) }
+        document.addEventListener('mousedown', handleClickOutside)
+        document.addEventListener('keydown', handleEsc)
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside)
+            document.removeEventListener('keydown', handleEsc)
+        }
+    }, [contextMenuOpen])
+
     const style = {
         transform: CSS.Transform.toString(transform),
         transition,
     }
 
     return (
-        <div
-            ref={setNodeRef}
-            style={style}
-            className={`w-full touch-none select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''}`}
-        >
-            <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-1">
-                <div className="flex min-w-0 items-center gap-0.5">
-                    <button
-                        type="button"
-                        aria-label="Drag to reorder"
-                        className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
-                        {...attributes}
-                        {...listeners}
-                    >
-                        <GripVertical className="h-4 w-4" />
-                    </button>
-                    <span className="min-w-6 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
-                    <div className="min-w-0">
-                        <p className="text-[14px] font-medium leading-tight break-words sm:text-[15px]">{title}</p>
-                        {area ? <p className="text-[10px] text-muted-foreground break-words sm:text-[11px]">{area}</p> : null}
+        <>
+            <div
+                ref={setNodeRef}
+                style={style}
+                tabIndex={0}
+                className={`w-full touch-none select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''} focus-within:ring-2 focus-within:ring-primary/50`}
+                onContextMenu={handleContextMenu}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onMoveToPosition()
+                    }
+                }}
+            >
+                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-1">
+                    <div className="flex min-w-0 items-center gap-0.5">
+                        <button
+                            type="button"
+                            aria-label="Drag to reorder"
+                            className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
+                            {...attributes}
+                            {...listeners}
+                        >
+                            <GripVertical className="h-4 w-4" />
+                        </button>
+                        <span className="min-w-6 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
+                        <div className="min-w-0">
+                            <p className="text-[14px] font-medium leading-tight break-words sm:text-[15px]">{title}</p>
+                            {area ? <p className="text-[10px] text-muted-foreground break-words sm:text-[11px]">{area}</p> : null}
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-xs"
+                            onClick={onMoveToPosition}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onTouchStart={(event) => event.stopPropagation()}
+                        >
+                            Move
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-xs"
+                            onClick={onMoveUp}
+                            disabled={!canMoveUp}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onTouchStart={(event) => event.stopPropagation()}
+                        >
+                            Up
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-xs"
+                            onClick={onMoveDown}
+                            disabled={!canMoveDown}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onTouchStart={(event) => event.stopPropagation()}
+                        >
+                            Down
+                        </Button>
                     </div>
                 </div>
-                <div className="grid grid-cols-2 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs"
-                        onClick={onMoveUp}
-                        disabled={!canMoveUp}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onTouchStart={(event) => event.stopPropagation()}
-                    >
-                        Up
-                    </Button>
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs"
-                        onClick={onMoveDown}
-                        disabled={!canMoveDown}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onTouchStart={(event) => event.stopPropagation()}
-                    >
-                        Down
-                    </Button>
-                </div>
             </div>
-        </div>
+            <AnimatePresence>
+                {contextMenuOpen && (
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.1 }}
+                        className="fixed z-50 min-w-[160px] overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg"
+                        style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+                        role="menu"
+                    >
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full cursor-pointer items-center rounded-lg px-3 py-2 text-sm text-popover-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                            onClick={() => { onMoveToPosition(); closeMenu() }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault()
+                                    onMoveToPosition()
+                                    closeMenu()
+                                }
+                            }}
+                        >
+                            Move to Position
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </>
     )
 }
 
