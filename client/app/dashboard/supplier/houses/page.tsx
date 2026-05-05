@@ -435,7 +435,13 @@ export default function SupplierHousesPage() {
                                 ) : (
                                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('morning', event)}>
                                         <SortableContext items={morningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                                            <div className="space-y-1 sm:space-y-1.5">
+                                            <motion.div 
+                                                className="space-y-1 sm:space-y-1.5"
+                                                layout
+                                                initial={{ opacity: 0 }}
+                                                animate={{ opacity: 1 }}
+                                                transition={{ duration: 0.2 }}
+                                            >
                                                 {morningPlan.map((config, idx) => {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
                                                     return (
@@ -457,7 +463,7 @@ export default function SupplierHousesPage() {
                                                         />
                                                     )
                                                 })}
-                                            </div>
+                                            </motion.div>
                                         </SortableContext>
                                     </DndContext>
                                 )}
@@ -480,7 +486,13 @@ export default function SupplierHousesPage() {
                                 ) : (
                                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('evening', event)}>
                                         <SortableContext items={eveningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                                            <div className="space-y-1 sm:space-y-1.5">
+                                            <motion.div 
+                                                className="space-y-1 sm:space-y-1.5"
+                                                layout
+                                                initial={{ opacity: 0 }}
+                                                animate={{ opacity: 1 }}
+                                                transition={{ duration: 0.2 }}
+                                            >
                                                 {eveningPlan.map((config, idx) => {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
                                                     return (
@@ -502,7 +514,7 @@ export default function SupplierHousesPage() {
                                                         />
                                                     )
                                                 })}
-                                            </div>
+                                            </motion.div>
                                         </SortableContext>
                                     </DndContext>
                                 )}
@@ -690,9 +702,14 @@ function PlannerSortableItem({
 
     return (
         <>
-            <div
+            <motion.div
                 ref={setNodeRef}
                 style={style}
+                layout
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
                 tabIndex={0}
                 className={`w-full touch-none select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''} focus-within:ring-2 focus-within:ring-primary/50`}
                 onContextMenu={handleContextMenu}
@@ -762,7 +779,7 @@ function PlannerSortableItem({
                         </Button>
                     </div>
                 </div>
-            </div>
+            </motion.div>
             <AnimatePresence>
                 {contextMenuOpen && (
                     <motion.div
