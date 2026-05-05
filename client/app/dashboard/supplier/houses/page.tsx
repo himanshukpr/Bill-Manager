@@ -770,7 +770,7 @@ function PlannerSortableItem({
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.95 }}
                         transition={{ duration: 0.1 }}
-                        className="fixed z-50 min-w-[160px] overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg"
+                        className="fixed z-[99] min-w-[160px] overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg"
                         style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
                         role="menu"
                     >
@@ -778,12 +778,15 @@ function PlannerSortableItem({
                             type="button"
                             role="menuitem"
                             className="flex w-full cursor-pointer items-center rounded-lg px-3 py-2 text-sm text-popover-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
-                            onClick={() => { onMoveToPosition(); closeMenu() }}
+                            onClick={() => { 
+                                closeMenu()
+                                setTimeout(() => onMoveToPosition(), 50)
+                            }}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' || e.key === ' ') {
                                     e.preventDefault()
-                                    onMoveToPosition()
                                     closeMenu()
+                                    setTimeout(() => onMoveToPosition(), 50)
                                 }
                             }}
                         >
