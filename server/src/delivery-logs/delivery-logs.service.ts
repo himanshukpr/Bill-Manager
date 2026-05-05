@@ -61,7 +61,7 @@ export class DeliveryLogsService {
             this.prisma.deliveryLog.create({
                 data: {
                     houseId: dto.houseId,
-                    supplierId: supplierId,
+                    supplierId: supplierId ?? undefined,
                     shift: dto.shift as Shift,
                     billGenerated: dto.billGenerated ?? false,
                     items: items as any,

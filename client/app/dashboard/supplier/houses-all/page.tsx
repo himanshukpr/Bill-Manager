@@ -441,7 +441,7 @@ export default function HousesPage() {
       return (
         house.houseNo.toLowerCase().includes(query) ||
         (house.area || '').toLowerCase().includes(query) ||
-        house.phoneNo.includes(query)
+        (house.phoneNo || '').includes(query)
       )
     })
   }, [houses, debouncedSearch, shiftFilter, paymentFilter, houseStatusFilter])
@@ -463,7 +463,7 @@ export default function HousesPage() {
         return (
           house.houseNo.toLowerCase().includes(query) ||
           (house.area || '').toLowerCase().includes(query) ||
-          house.phoneNo.includes(query)
+(house.phoneNo || '').includes(query)
         )
       })
       .slice(0, 6)
