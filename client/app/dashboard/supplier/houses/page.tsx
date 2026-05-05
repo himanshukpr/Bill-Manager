@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, BadgeAlert, Clock3, RefreshCcw, GripVertical, Check, Calendar } from 'lucide-react'
+import { ArrowRight, BadgeAlert, Clock3, RefreshCcw, GripVertical, Check, Calendar, Search, X } from 'lucide-react'
 import {
     DndContext,
     MouseSensor,
@@ -70,6 +70,7 @@ export default function SupplierHousesPage() {
     const [modalOpen, setModalOpen] = useState(false)
     const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null)
     const [selectedShiftForModal, setSelectedShiftForModal] = useState<'morning' | 'evening'>('morning')
+    const [searchQuery, setSearchQuery] = useState('')
 
     const sensors = useSensors(
         useSensor(MouseSensor, {
@@ -229,6 +230,28 @@ export default function SupplierHousesPage() {
         return eveningPlan.some((config, index) => config.id !== eveningBaselineOrder[index])
     }, [eveningPlan, eveningBaselineOrder])
 
+    const filteredMorningPlan = useMemo(() => {
+        if (!searchQuery.trim()) return morningPlan
+        const query = searchQuery.toLowerCase()
+        return morningPlan.filter((config) => {
+            const house = allHouses.find((h) => h.id === config.houseId)
+            const houseNo = house?.houseNo?.toString() ?? config.houseId.toString()
+            const area = house?.area?.toLowerCase() ?? ''
+            return houseNo.toLowerCase().includes(query) || area.includes(query)
+        })
+    }, [morningPlan, allHouses, searchQuery])
+
+    const filteredEveningPlan = useMemo(() => {
+        if (!searchQuery.trim()) return eveningPlan
+        const query = searchQuery.toLowerCase()
+        return eveningPlan.filter((config) => {
+            const house = allHouses.find((h) => h.id === config.houseId)
+            const houseNo = house?.houseNo?.toString() ?? config.houseId.toString()
+            const area = house?.area?.toLowerCase() ?? ''
+            return houseNo.toLowerCase().includes(query) || area.includes(query)
+        })
+    }, [eveningPlan, allHouses, searchQuery])
+
     function handleDragEnd(section: 'morning' | 'evening', event: DragEndEvent) {
         const { active, over } = event
         if (!over || active.id === over.id) return
@@ -247,28 +270,31 @@ export default function SupplierHousesPage() {
         setEveningPlan(reorder)
     }
 
-    function movePlanItem(section: 'morning' | 'evening', index: number, direction: 'up' | 'down') {
-        const updater = (prev: HouseConfig[]) => {
-            if (direction === 'up' && index === 0) return prev
-            if (direction === 'down' && index === prev.length - 1) return prev
-            const next = [...prev]
-            const swapIndex = direction === 'up' ? index - 1 : index + 1
-            const temp = next[index]
-            next[index] = next[swapIndex]
-            next[swapIndex] = temp
-            return next
-        }
-
+    function movePlanItemById(section: 'morning' | 'evening', configId: number, direction: 'up' | 'down') {
+        const currentPlan = section === 'morning' ? morningPlan : eveningPlan
+        const originalIndex = currentPlan.findIndex((c) => c.id === configId)
+        if (originalIndex === -1) return
+        
+        if (direction === 'up' && originalIndex === 0) return
+        if (direction === 'down' && originalIndex === currentPlan.length - 1) return
+        
+        const next = [...currentPlan]
+        const swapIndex = direction === 'up' ? originalIndex - 1 : originalIndex + 1
+        const temp = next[originalIndex]
+        next[originalIndex] = next[swapIndex]
+        next[swapIndex] = temp
+        
         if (section === 'morning') {
-            setMorningPlan(updater)
+            setMorningPlan(next)
             return
         }
-        setEveningPlan(updater)
+        setEveningPlan(next)
     }
 
-    function handleMoveToPosition(section: 'morning' | 'evening', fromIndex: number, toIndex: number) {
+    function handleMoveToPositionById(section: 'morning' | 'evening', configId: number, toIndex: number) {
         const currentPlan = section === 'morning' ? morningPlan : eveningPlan
-        if (fromIndex < 0 || toIndex < 0 || fromIndex >= currentPlan.length || toIndex >= currentPlan.length) return
+        const fromIndex = currentPlan.findIndex((c) => c.id === configId)
+        if (fromIndex === -1 || fromIndex < 0 || toIndex < 0 || fromIndex >= currentPlan.length || toIndex >= currentPlan.length) return
         if (fromIndex === toIndex) return
         
         const newPlan = moveItem(currentPlan, fromIndex, toIndex)
@@ -278,8 +304,22 @@ export default function SupplierHousesPage() {
         } else {
             setEveningPlan(newPlan)
         }
-        
         toast.success(`Moved to position ${toIndex + 1}`)
+    }
+
+    // Legacy functions - use filtered list when searching
+    function movePlanItem(section: 'morning' | 'evening', filteredIndex: number, direction: 'up' | 'down') {
+        const currentPlan = section === 'morning' ? filteredMorningPlan : filteredEveningPlan
+        if (filteredIndex < 0 || filteredIndex >= currentPlan.length) return
+        const configId = currentPlan[filteredIndex].id
+        movePlanItemById(section, configId, direction)
+    }
+
+    function handleMoveToPosition(section: 'morning' | 'evening', filteredFromIndex: number, toIndex: number) {
+        const currentPlan = section === 'morning' ? filteredMorningPlan : filteredEveningPlan
+        if (filteredFromIndex < 0 || filteredFromIndex >= currentPlan.length) return
+        const configId = currentPlan[filteredFromIndex].id
+        handleMoveToPositionById(section, configId, toIndex)
     }
 
     async function saveMorningPlan() {
@@ -400,25 +440,46 @@ export default function SupplierHousesPage() {
             <div className="rounded-2xl border border-border bg-card p-2 shadow-sm sm:p-6">
                 <div className="mb-6 sm:mb-8">
                     <h2 className="text-lg font-semibold mb-2">Drag Route Planner</h2>
-                    <div className="mb-4 inline-flex rounded-xl border border-border/70 bg-muted/30 p-1 sm:mb-5">
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant={selectedShift === 'morning' ? 'default' : 'ghost'}
-                            onClick={() => setSelectedShift('morning')}
-                            className="rounded-lg px-4"
-                        >
-                            Morning
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant={selectedShift === 'evening' ? 'default' : 'ghost'}
-                            onClick={() => setSelectedShift('evening')}
-                            className="rounded-lg px-4"
-                        >
-                            Evening
-                        </Button>
+                    <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="inline-flex rounded-xl border border-border/70 bg-muted/30 p-1">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={selectedShift === 'morning' ? 'default' : 'ghost'}
+                                onClick={() => setSelectedShift('morning')}
+                                className="rounded-lg px-4"
+                            >
+                                Morning
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={selectedShift === 'evening' ? 'default' : 'ghost'}
+                                onClick={() => setSelectedShift('evening')}
+                                className="rounded-lg px-4"
+                            >
+                                Evening
+                            </Button>
+                        </div>
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <input
+                                type="text"
+                                placeholder="Search houses..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-8 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                            />
+                            {searchQuery && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSearchQuery('')}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-md hover:bg-muted"
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </button>
+                            )}
+                        </div>
                     </div>
 
                     <div className="grid gap-3">
@@ -430,11 +491,13 @@ export default function SupplierHousesPage() {
                                         <Check className="mr-1 h-4 w-4" /> {savingMorning ? 'Saving...' : 'Save Morning'}
                                     </Button>
                                 </div>
-                                {morningPlan.length === 0 ? (
-                                    <p className="text-sm text-muted-foreground">No morning routes assigned.</p>
+                                {filteredMorningPlan.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">
+                                        {searchQuery ? 'No houses match your search.' : 'No morning routes assigned.'}
+                                    </p>
                                 ) : (
                                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('morning', event)}>
-                                        <SortableContext items={morningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                                        <SortableContext items={filteredMorningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                                             <motion.div 
                                                 className="space-y-1 sm:space-y-1.5"
                                                 layout
@@ -442,7 +505,7 @@ export default function SupplierHousesPage() {
                                                 animate={{ opacity: 1 }}
                                                 transition={{ duration: 0.2 }}
                                             >
-                                                {morningPlan.map((config, idx) => {
+                                                {filteredMorningPlan.map((config, idx) => {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
                                                     return (
                                                         <PlannerSortableItem
@@ -454,7 +517,7 @@ export default function SupplierHousesPage() {
                                                             onMoveUp={() => movePlanItem('morning', idx, 'up')}
                                                             onMoveDown={() => movePlanItem('morning', idx, 'down')}
                                                             canMoveUp={idx > 0}
-                                                            canMoveDown={idx < morningPlan.length - 1}
+                                                            canMoveDown={idx < filteredMorningPlan.length - 1}
                                                             onMoveToPosition={() => {
                                                                 setSelectedItemIndex(idx)
                                                                 setSelectedShiftForModal('morning')
@@ -481,11 +544,13 @@ export default function SupplierHousesPage() {
                                         <Check className="mr-1 h-4 w-4" /> {savingEvening ? 'Saving...' : 'Save Evening'}
                                     </Button>
                                 </div>
-                                {eveningPlan.length === 0 ? (
-                                    <p className="text-sm text-muted-foreground">No evening routes available.</p>
+                                {filteredEveningPlan.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">
+                                        {searchQuery ? 'No houses match your search.' : 'No evening routes available.'}
+                                    </p>
                                 ) : (
                                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd('evening', event)}>
-                                        <SortableContext items={eveningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                                        <SortableContext items={filteredEveningPlan.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                                             <motion.div 
                                                 className="space-y-1 sm:space-y-1.5"
                                                 layout
@@ -493,7 +558,7 @@ export default function SupplierHousesPage() {
                                                 animate={{ opacity: 1 }}
                                                 transition={{ duration: 0.2 }}
                                             >
-                                                {eveningPlan.map((config, idx) => {
+                                                {filteredEveningPlan.map((config, idx) => {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
                                                     return (
                                                         <PlannerSortableItem
@@ -505,7 +570,7 @@ export default function SupplierHousesPage() {
                                                             onMoveUp={() => movePlanItem('evening', idx, 'up')}
                                                             onMoveDown={() => movePlanItem('evening', idx, 'down')}
                                                             canMoveUp={idx > 0}
-                                                            canMoveDown={idx < eveningPlan.length - 1}
+                                                            canMoveDown={idx < filteredEveningPlan.length - 1}
                                                             onMoveToPosition={() => {
                                                                 setSelectedItemIndex(idx)
                                                                 setSelectedShiftForModal('evening')
@@ -531,29 +596,29 @@ export default function SupplierHousesPage() {
                         <div className="space-y-1">
                             <h2 className="text-lg font-semibold">Move to Position</h2>
                             <p className="text-sm text-muted-foreground">
-                                Move {selectedShiftForModal === 'morning' ? morningPlan[selectedItemIndex]?.houseId : eveningPlan[selectedItemIndex]?.houseId} to position
+                                Move {selectedShiftForModal === 'morning' ? filteredMorningPlan[selectedItemIndex ?? 0]?.houseId : filteredEveningPlan[selectedItemIndex ?? 0]?.houseId} to position
                             </p>
                         </div>
                         <div className="space-y-4 mt-4">
                             <div className="rounded-lg bg-muted/50 p-3">
                                 <p className="text-xs text-muted-foreground">Current Position</p>
-                                <p className="text-lg font-semibold">#{selectedItemIndex + 1} of {selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length}</p>
+                                <p className="text-lg font-semibold">#{(selectedItemIndex ?? 0) + 1} of {selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length}</p>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-sm">New Position (1-{selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length})</label>
+                                <label className="text-sm">New Position (1-{selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length})</label>
                                 <input
                                     id="new-position"
                                     type="number"
                                     min={1}
-                                    max={selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length}
+                                    max={selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                     autoFocus
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
                                             const value = parseInt((e.target as HTMLInputElement).value, 10)
-                                            const total = selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length
-                                            if (!isNaN(value) && value >= 1 && value <= total && value !== selectedItemIndex + 1) {
-                                                handleMoveToPosition(selectedShiftForModal, selectedItemIndex, value - 1)
+                                            const total = selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length
+                                            if (!isNaN(value) && value >= 1 && value <= total && value !== (selectedItemIndex ?? 0) + 1) {
+                                                handleMoveToPosition(selectedShiftForModal, selectedItemIndex ?? 0, value - 1)
                                             }
                                             setModalOpen(false)
                                             setSelectedItemIndex(null)
@@ -580,9 +645,9 @@ export default function SupplierHousesPage() {
                                 onClick={(e) => {
                                     const input = document.getElementById('new-position') as HTMLInputElement
                                     const value = parseInt(input.value, 10)
-                                    const total = selectedShiftForModal === 'morning' ? morningPlan.length : eveningPlan.length
-                                    if (!isNaN(value) && value >= 1 && value <= total && value !== selectedItemIndex + 1) {
-                                        handleMoveToPosition(selectedShiftForModal, selectedItemIndex, value - 1)
+                                    const total = selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length
+                                    if (!isNaN(value) && value >= 1 && value <= total && value !== (selectedItemIndex ?? 0) + 1) {
+                                        handleMoveToPosition(selectedShiftForModal, selectedItemIndex ?? 0, value - 1)
                                     }
                                     setModalOpen(false)
                                     setSelectedItemIndex(null)
