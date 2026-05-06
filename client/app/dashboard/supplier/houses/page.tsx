@@ -64,13 +64,16 @@ export default function SupplierHousesPage() {
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening'>('morning')
     const [morningPlan, setMorningPlan] = useState<HouseConfig[]>([])
     const [eveningPlan, setEveningPlan] = useState<HouseConfig[]>([])
+    const [morningBaselineOrder, setMorningBaselineOrder] = useState<number[]>([])
     const [eveningBaselineOrder, setEveningBaselineOrder] = useState<number[]>([])
     const [savingMorning, setSavingMorning] = useState(false)
     const [savingEvening, setSavingEvening] = useState(false)
     const [modalOpen, setModalOpen] = useState(false)
-    const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null)
+    const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
     const [selectedShiftForModal, setSelectedShiftForModal] = useState<'morning' | 'evening'>('morning')
     const [searchQuery, setSearchQuery] = useState('')
+    const [moveAnimation, setMoveAnimation] = useState<{ id: number; direction: 'up' | 'down' } | null>(null)
+    const moveAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const sensors = useSensors(
         useSensor(MouseSensor, {
@@ -170,6 +173,7 @@ export default function SupplierHousesPage() {
                 })
                 .sort((a, b) => a.position - b.position)
             setMorningPlan(morningConfigs)
+            setMorningBaselineOrder(morningConfigs.map((config) => config.id))
         } else {
             // Evening: show evening routes visible to all suppliers
             filtered = data
@@ -230,6 +234,13 @@ export default function SupplierHousesPage() {
         return eveningPlan.some((config, index) => config.id !== eveningBaselineOrder[index])
     }, [eveningPlan, eveningBaselineOrder])
 
+    const isMorningPlanChanged = useMemo(() => {
+        if (morningPlan.length !== morningBaselineOrder.length) return true
+        return morningPlan.some((config, index) => config.id !== morningBaselineOrder[index])
+    }, [morningPlan, morningBaselineOrder])
+
+    const hasUnsavedChanges = selectedShift === 'morning' ? isMorningPlanChanged : isEveningPlanChanged
+
     const filteredMorningPlan = useMemo(() => {
         if (!searchQuery.trim()) return morningPlan
         const query = searchQuery.toLowerCase()
@@ -286,9 +297,17 @@ export default function SupplierHousesPage() {
         
         if (section === 'morning') {
             setMorningPlan(next)
-            return
+        } else {
+            setEveningPlan(next)
         }
-        setEveningPlan(next)
+
+        setMoveAnimation({ id: configId, direction })
+        if (moveAnimationTimerRef.current) {
+            clearTimeout(moveAnimationTimerRef.current)
+        }
+        moveAnimationTimerRef.current = setTimeout(() => {
+            setMoveAnimation(null)
+        }, 420)
     }
 
     function handleMoveToPositionById(section: 'morning' | 'evening', configId: number, toIndex: number) {
@@ -306,6 +325,14 @@ export default function SupplierHousesPage() {
         }
         toast.success(`Moved to position ${toIndex + 1}`)
     }
+
+    useEffect(() => {
+        return () => {
+            if (moveAnimationTimerRef.current) {
+                clearTimeout(moveAnimationTimerRef.current)
+            }
+        }
+    }, [])
 
     // Legacy functions - use filtered list when searching
     function movePlanItem(section: 'morning' | 'evening', filteredIndex: number, direction: 'up' | 'down') {
@@ -355,7 +382,7 @@ export default function SupplierHousesPage() {
         try {
             await houseConfigApi.reorder(eveningPlan.map((c) => c.id))
             toast.success('Evening route order saved')
-                if (auth && selectedShift) {
+            if (auth && selectedShift) {
                 const data = await housesApi.list()
                 const configs = await houseConfigApi.list()
                 // Keep only active houses for supplier
@@ -369,6 +396,12 @@ export default function SupplierHousesPage() {
             setSavingEvening(false)
         }
     }
+
+    const modalPlan = selectedShiftForModal === 'morning' ? morningPlan : eveningPlan
+    const modalSelectedIndex = selectedItemId === null ? -1 : modalPlan.findIndex((config) => config.id === selectedItemId)
+    const modalSelectedConfig = modalSelectedIndex >= 0 ? modalPlan[modalSelectedIndex] : null
+    const modalTotal = modalPlan.length
+    const modalCurrentPosition = modalSelectedIndex >= 0 ? modalSelectedIndex + 1 : 0
 
     const renderSkeleton = () => (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -507,19 +540,22 @@ export default function SupplierHousesPage() {
                                             >
                                                 {filteredMorningPlan.map((config, idx) => {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
+                                                    const originalIndex = morningPlan.findIndex((item) => item.id === config.id)
                                                     return (
                                                         <PlannerSortableItem
                                                             key={config.id}
                                                             id={config.id}
                                                             idx={idx}
+                                                            displayIndex={originalIndex >= 0 ? originalIndex + 1 : idx + 1}
                                                             title={`House ${house?.houseNo ?? config.houseId}`}
                                                             area={house?.area}
+                                                            moveAnimation={moveAnimation}
                                                             onMoveUp={() => movePlanItem('morning', idx, 'up')}
                                                             onMoveDown={() => movePlanItem('morning', idx, 'down')}
                                                             canMoveUp={idx > 0}
                                                             canMoveDown={idx < filteredMorningPlan.length - 1}
                                                             onMoveToPosition={() => {
-                                                                setSelectedItemIndex(idx)
+                                                                setSelectedItemId(config.id)
                                                                 setSelectedShiftForModal('morning')
                                                                 setModalOpen(true)
                                                             }}
@@ -560,19 +596,22 @@ export default function SupplierHousesPage() {
                                             >
                                                 {filteredEveningPlan.map((config, idx) => {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
+                                                    const originalIndex = eveningPlan.findIndex((item) => item.id === config.id)
                                                     return (
                                                         <PlannerSortableItem
                                                             key={config.id}
                                                             id={config.id}
                                                             idx={idx}
+                                                            displayIndex={originalIndex >= 0 ? originalIndex + 1 : idx + 1}
                                                             title={`House ${house?.houseNo ?? config.houseId}`}
                                                             area={house?.area}
+                                                            moveAnimation={moveAnimation}
                                                             onMoveUp={() => movePlanItem('evening', idx, 'up')}
                                                             onMoveDown={() => movePlanItem('evening', idx, 'down')}
                                                             canMoveUp={idx > 0}
                                                             canMoveDown={idx < filteredEveningPlan.length - 1}
                                                             onMoveToPosition={() => {
-                                                                setSelectedItemIndex(idx)
+                                                                setSelectedItemId(config.id)
                                                                 setSelectedShiftForModal('evening')
                                                                 setModalOpen(true)
                                                             }}
@@ -589,43 +628,43 @@ export default function SupplierHousesPage() {
                 </div>
             </div>
 
-            {modalOpen && selectedItemIndex !== null && (
+            {modalOpen && selectedItemId !== null && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center">
-                    <div className="fixed inset-0 z-[101] bg-black/80" onClick={() => { setModalOpen(false); setSelectedItemIndex(null) }} />
+                    <div className="fixed inset-0 z-[101] bg-black/80" onClick={() => { setModalOpen(false); setSelectedItemId(null) }} />
                     <div className="relative z-[102] w-full max-w-md rounded-4xl bg-popover p-6 text-popover-foreground ring-1 ring-foreground/5">
+                        <>
                         <div className="space-y-1">
                             <h2 className="text-lg font-semibold">Move to Position</h2>
                             <p className="text-sm text-muted-foreground">
-                                Move {selectedShiftForModal === 'morning' ? filteredMorningPlan[selectedItemIndex ?? 0]?.houseId : filteredEveningPlan[selectedItemIndex ?? 0]?.houseId} to position
+                                Move {modalSelectedConfig?.houseId} to position
                             </p>
                         </div>
                         <div className="space-y-4 mt-4">
                             <div className="rounded-lg bg-muted/50 p-3">
                                 <p className="text-xs text-muted-foreground">Current Position</p>
-                                <p className="text-lg font-semibold">#{(selectedItemIndex ?? 0) + 1} of {selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length}</p>
+                                <p className="text-lg font-semibold">#{modalCurrentPosition} of {modalTotal}</p>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-sm">New Position (1-{selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length})</label>
+                                <label className="text-sm">New Position (1-{modalTotal})</label>
                                 <input
                                     id="new-position"
                                     type="number"
                                     min={1}
-                                    max={selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length}
+                                    max={modalTotal}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                     autoFocus
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
                                             const value = parseInt((e.target as HTMLInputElement).value, 10)
-                                            const total = selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length
-                                            if (!isNaN(value) && value >= 1 && value <= total && value !== (selectedItemIndex ?? 0) + 1) {
-                                                handleMoveToPosition(selectedShiftForModal, selectedItemIndex ?? 0, value - 1)
+                                            if (!isNaN(value) && value >= 1 && value <= modalTotal && value !== modalCurrentPosition) {
+                                                handleMoveToPositionById(selectedShiftForModal, selectedItemId, value - 1)
                                             }
                                             setModalOpen(false)
-                                            setSelectedItemIndex(null)
+                                            setSelectedItemId(null)
                                         }
                                         if (e.key === 'Escape') {
                                             setModalOpen(false)
-                                            setSelectedItemIndex(null)
+                                            setSelectedItemId(null)
                                         }
                                     }}
                                 />
@@ -635,7 +674,7 @@ export default function SupplierHousesPage() {
                             <button
                                 type="button"
                                 className="flex-1 rounded-md border border-input bg-background px-4 py-2 text-sm hover:bg-accent"
-                                onClick={() => { setModalOpen(false); setSelectedItemIndex(null) }}
+                                onClick={() => { setModalOpen(false); setSelectedItemId(null) }}
                             >
                                 Cancel
                             </button>
@@ -645,20 +684,48 @@ export default function SupplierHousesPage() {
                                 onClick={(e) => {
                                     const input = document.getElementById('new-position') as HTMLInputElement
                                     const value = parseInt(input.value, 10)
-                                    const total = selectedShiftForModal === 'morning' ? filteredMorningPlan.length : filteredEveningPlan.length
-                                    if (!isNaN(value) && value >= 1 && value <= total && value !== (selectedItemIndex ?? 0) + 1) {
-                                        handleMoveToPosition(selectedShiftForModal, selectedItemIndex ?? 0, value - 1)
+                                    if (!isNaN(value) && value >= 1 && value <= modalTotal && value !== modalCurrentPosition) {
+                                        handleMoveToPositionById(selectedShiftForModal, selectedItemId, value - 1)
                                     }
                                     setModalOpen(false)
-                                    setSelectedItemIndex(null)
+                                    setSelectedItemId(null)
                                 }}
                             >
                                 Move
                             </button>
                         </div>
+                        </>
                     </div>
                 </div>
             )}
+
+            {hasUnsavedChanges ? (
+                <div className="fixed bottom-2 right-2 z-[90] sm:hidden">
+                    {selectedShift === 'morning' ? (
+                        <Button
+                            type="button"
+                            size="sm"
+                            className="h-8 rounded-full px-2.5 text-[11px] shadow-lg shadow-black/20"
+                            onClick={saveMorningPlan}
+                            disabled={savingMorning || morningPlan.length === 0}
+                        >
+                            <Check className="mr-1 h-3 w-3" />
+                            {savingMorning ? 'Saving...' : 'Save Morning'}
+                        </Button>
+                    ) : (
+                        <Button
+                            type="button"
+                            size="sm"
+                            className="h-8 rounded-full px-2.5 text-[11px] shadow-lg shadow-black/20"
+                            onClick={saveEveningPlan}
+                            disabled={savingEvening || eveningPlan.length === 0 || !isEveningPlanChanged}
+                        >
+                            <Check className="mr-1 h-3 w-3" />
+                            {savingEvening ? 'Saving...' : 'Save Evening'}
+                        </Button>
+                    )}
+                </div>
+            ) : null}
         </div>
     )
 }
@@ -676,8 +743,10 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint: 
 function PlannerSortableItem({
     id,
     idx,
+    displayIndex,
     title,
     area,
+    moveAnimation,
     onMoveUp,
     onMoveDown,
     canMoveUp,
@@ -686,8 +755,10 @@ function PlannerSortableItem({
 }: {
     id: number
     idx: number
+    displayIndex: number
     title: string
     area?: string
+    moveAnimation: { id: number; direction: 'up' | 'down' } | null
     onMoveUp: () => void
     onMoveDown: () => void
     canMoveUp: boolean
@@ -765,16 +836,14 @@ function PlannerSortableItem({
         transition,
     }
 
+    const isMoveAnimating = moveAnimation?.id === id
+    const moveAnimationDirection = moveAnimation?.direction ?? 'up'
+
     return (
         <>
-            <motion.div
+            <div
                 ref={setNodeRef}
                 style={style}
-                layout
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
                 tabIndex={0}
                 className={`w-full touch-none select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''} focus-within:ring-2 focus-within:ring-primary/50`}
                 onContextMenu={handleContextMenu}
@@ -789,62 +858,88 @@ function PlannerSortableItem({
                     }
                 }}
             >
-                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-1">
-                    <div className="flex min-w-0 items-center gap-0.5">
-                        <button
-                            type="button"
-                            aria-label="Drag to reorder"
-                            className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
-                            {...attributes}
-                            {...listeners}
-                        >
-                            <GripVertical className="h-4 w-4" />
-                        </button>
-                        <span className="min-w-6 text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
-                        <div className="min-w-0">
-                            <p className="text-[14px] font-medium leading-tight break-words sm:text-[15px]">{title}</p>
-                            {area ? <p className="text-[10px] text-muted-foreground break-words sm:text-[11px]">{area}</p> : null}
+                <motion.div
+                    animate={isDragging ? {
+                        y: -8,
+                        scale: 1.02,
+                        rotate: -0.4,
+                        boxShadow: '0 18px 40px -18px rgba(15, 23, 42, 0.38), 0 0 0 1px rgba(59, 130, 246, 0.18)',
+                    } : isMoveAnimating ? {
+                        y: moveAnimationDirection === 'up' ? [-2, -7, 0] : [2, 7, 0],
+                        boxShadow: [
+                            '0 0 0 0 rgba(34, 197, 94, 0)',
+                            '0 10px 30px -18px rgba(34, 197, 94, 0.45)',
+                            '0 0 0 0 rgba(34, 197, 94, 0)',
+                        ],
+                    } : { y: 0, scale: 1, rotate: 0, boxShadow: '0 0 0 0 rgba(0, 0, 0, 0)' }}
+                    transition={isDragging ? {
+                        type: 'spring',
+                        stiffness: 520,
+                        damping: 32,
+                    } : {
+                        duration: 0.42,
+                        ease: 'easeOut',
+                    }}
+                    style={{ willChange: 'transform, box-shadow' }}
+                    className={isDragging ? 'pointer-events-none' : ''}
+                >
+                    <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-1">
+                        <div className="flex min-w-0 items-center gap-0.5">
+                            <button
+                                type="button"
+                                aria-label="Drag to reorder"
+                                className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
+                                {...attributes}
+                                {...listeners}
+                            >
+                                <GripVertical className="h-4 w-4" />
+                            </button>
+                            <span className="min-w-6 text-xs font-semibold text-muted-foreground">#{displayIndex}</span>
+                            <div className="min-w-0">
+                                <p className="text-[14px] font-medium leading-tight break-words sm:text-[15px]">{title}</p>
+                                {area ? <p className="text-[10px] text-muted-foreground break-words sm:text-[11px]">{area}</p> : null}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-xs"
+                                onClick={onMoveToPosition}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onTouchStart={(event) => event.stopPropagation()}
+                            >
+                                Move
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-xs"
+                                onClick={onMoveUp}
+                                disabled={!canMoveUp}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onTouchStart={(event) => event.stopPropagation()}
+                            >
+                                Up
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-xs"
+                                onClick={onMoveDown}
+                                disabled={!canMoveDown}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onTouchStart={(event) => event.stopPropagation()}
+                            >
+                                Down
+                            </Button>
                         </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 px-2 text-xs"
-                            onClick={onMoveToPosition}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onTouchStart={(event) => event.stopPropagation()}
-                        >
-                            Move
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 px-2 text-xs"
-                            onClick={onMoveUp}
-                            disabled={!canMoveUp}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onTouchStart={(event) => event.stopPropagation()}
-                        >
-                            Up
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 px-2 text-xs"
-                            onClick={onMoveDown}
-                            disabled={!canMoveDown}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onTouchStart={(event) => event.stopPropagation()}
-                        >
-                            Down
-                        </Button>
-                    </div>
-                </div>
-            </motion.div>
+                </motion.div>
+            </div>
             <AnimatePresence>
                 {contextMenuOpen && (
                     <motion.div

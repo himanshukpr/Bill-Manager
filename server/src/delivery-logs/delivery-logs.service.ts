@@ -51,6 +51,19 @@ export class DeliveryLogsService {
         const openingBalance = Number(balance.currentBalance ?? 0);
         const closingBalance = openingBalance + computedTotal;
         
+        const data: any = {
+            houseId: dto.houseId,
+            shift: dto.shift as Shift,
+            billGenerated: dto.billGenerated ?? false,
+            items: items as any,
+            totalAmount: computedTotal,
+            openingBalance,
+            closingBalance,
+        };
+        if (typeof supplierId === 'string') data.supplierId = supplierId;
+        if (dto.note) data.note = dto.note;
+        if (dto.deliveredAt) data.deliveredAt = new Date(dto.deliveredAt);
+
         const [updatedBalance, log] = await this.prisma.$transaction([
             this.prisma.houseBalance.update({
                 where: { houseId: dto.houseId },
@@ -59,18 +72,7 @@ export class DeliveryLogsService {
                 },
             }),
             this.prisma.deliveryLog.create({
-                data: {
-                    houseId: dto.houseId,
-                    supplierId: supplierId ?? undefined,
-                    shift: dto.shift as Shift,
-                    billGenerated: dto.billGenerated ?? false,
-                    items: items as any,
-                    totalAmount: computedTotal,
-                    openingBalance,
-                    closingBalance,
-                    note: dto.note,
-                    ...(dto.deliveredAt ? { deliveredAt: new Date(dto.deliveredAt) } : {}),
-                },
+                data,
                 include: {
                     house: { select: { id: true, houseNo: true, area: true } },
                     supplier: { select: { uuid: true, username: true } },

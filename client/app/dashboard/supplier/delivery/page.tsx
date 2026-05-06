@@ -1854,8 +1854,8 @@ export default function DeliveryPage() {
                         </div>
 
                         {/* ACTION */}
-                        <div className="shrink-0 sticky bottom-0 z-10 bg-card">
-                            <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-none rounded-b-2xl py-2 text-xs sm:text-sm">
+                        <div className="sticky bottom-0 z-10 -mx-2 mb-4 rounded-2xl border border-border/70 bg-card px-2 py-2 shadow-lg shadow-black/10 sm:mx-0 sm:mb-0 sm:rounded-none sm:border-0 sm:bg-card sm:px-0 sm:py-0 sm:shadow-none">
+                            <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-xl py-2 text-xs shadow-sm sm:rounded-none sm:rounded-b-2xl sm:text-sm">
                                 {marking ? 'Saving...' : isCompleted ? 'Update Delivery' : 'Mark Delivered'}
                             </Button>
                         </div>
