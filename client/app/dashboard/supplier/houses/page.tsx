@@ -73,6 +73,9 @@ export default function SupplierHousesPage() {
     const [selectedShiftForModal, setSelectedShiftForModal] = useState<'morning' | 'evening'>('morning')
     const [searchQuery, setSearchQuery] = useState('')
     const [moveAnimation, setMoveAnimation] = useState<{ id: number; direction: 'up' | 'down' } | null>(null)
+    const [modalSearchMode, setModalSearchMode] = useState<'position' | 'houseNumber'>('position')
+    const [modalPlacement, setModalPlacement] = useState<'before' | 'after'>('before')
+    const [modalHouseNumber, setModalHouseNumber] = useState('')
     const moveAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const sensors = useSensors(
@@ -402,6 +405,17 @@ export default function SupplierHousesPage() {
     const modalSelectedConfig = modalSelectedIndex >= 0 ? modalPlan[modalSelectedIndex] : null
     const modalTotal = modalPlan.length
     const modalCurrentPosition = modalSelectedIndex >= 0 ? modalSelectedIndex + 1 : 0
+    const modalTargetConfig = modalSearchMode === 'houseNumber'
+        ? modalPlan.find((config) => {
+            const house = allHouses.find((item) => item.id === config.houseId)
+            const displayNo = house?.houseNo?.toString() ?? config.houseId.toString()
+            return displayNo === modalHouseNumber.trim()
+        })
+        : null
+    const modalTargetIndex = modalTargetConfig ? modalPlan.findIndex((config) => config.id === modalTargetConfig.id) : -1
+    const modalTargetHouseNo = modalTargetConfig
+        ? allHouses.find((item) => item.id === modalTargetConfig.houseId)?.houseNo?.toString() ?? modalTargetConfig.houseId.toString()
+        : ''
 
     const renderSkeleton = () => (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -558,6 +572,9 @@ export default function SupplierHousesPage() {
                                                                 setSelectedItemId(config.id)
                                                                 setSelectedShiftForModal('morning')
                                                                 setModalOpen(true)
+                                                                setModalSearchMode('position')
+                                                                setModalPlacement('before')
+                                                                setModalHouseNumber('')
                                                             }}
                                                         />
                                                     )
@@ -614,6 +631,9 @@ export default function SupplierHousesPage() {
                                                                 setSelectedItemId(config.id)
                                                                 setSelectedShiftForModal('evening')
                                                                 setModalOpen(true)
+                                                                setModalSearchMode('position')
+                                                                setModalPlacement('before')
+                                                                setModalHouseNumber('')
                                                             }}
                                                         />
                                                     )
@@ -644,31 +664,116 @@ export default function SupplierHousesPage() {
                                 <p className="text-xs text-muted-foreground">Current Position</p>
                                 <p className="text-lg font-semibold">#{modalCurrentPosition} of {modalTotal}</p>
                             </div>
-                            <div className="space-y-2">
-                                <label className="text-sm">New Position (1-{modalTotal})</label>
-                                <input
-                                    id="new-position"
-                                    type="number"
-                                    min={1}
-                                    max={modalTotal}
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    autoFocus
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            const value = parseInt((e.target as HTMLInputElement).value, 10)
-                                            if (!isNaN(value) && value >= 1 && value <= modalTotal && value !== modalCurrentPosition) {
-                                                handleMoveToPositionById(selectedShiftForModal, selectedItemId, value - 1)
-                                            }
-                                            setModalOpen(false)
-                                            setSelectedItemId(null)
-                                        }
-                                        if (e.key === 'Escape') {
-                                            setModalOpen(false)
-                                            setSelectedItemId(null)
-                                        }
-                                    }}
-                                />
+                            
+                            <div className="flex gap-2 border-b border-border/50 pb-3">
+                                <button
+                                    type="button"
+                                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                                        modalSearchMode === 'position'
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'text-muted-foreground hover:text-foreground'
+                                    }`}
+                                    onClick={() => setModalSearchMode('position')}
+                                >
+                                    By Position
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                                        modalSearchMode === 'houseNumber'
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'text-muted-foreground hover:text-foreground'
+                                    }`}
+                                    onClick={() => setModalSearchMode('houseNumber')}
+                                >
+                                    By House #
+                                </button>
                             </div>
+
+                            {modalSearchMode === 'position' ? (
+                                <div className="space-y-2">
+                                    <label className="text-sm">New Position (1-{modalTotal})</label>
+                                    <input
+                                        id="new-position"
+                                        type="number"
+                                        min={1}
+                                        max={modalTotal}
+                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                const value = parseInt((e.target as HTMLInputElement).value, 10)
+                                                if (!isNaN(value) && value >= 1 && value <= modalTotal && value !== modalCurrentPosition) {
+                                                    handleMoveToPositionById(selectedShiftForModal, selectedItemId, value - 1)
+                                                }
+                                                setModalOpen(false)
+                                                setSelectedItemId(null)
+                                            }
+                                            if (e.key === 'Escape') {
+                                                setModalOpen(false)
+                                                setSelectedItemId(null)
+                                            }
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-sm">House Number</label>
+                                        <input
+                                            id="house-number"
+                                            type="text"
+                                            placeholder="Enter house number"
+                                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
+                                            autoFocus
+                                            value={modalHouseNumber}
+                                            onChange={(e) => setModalHouseNumber(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Escape') {
+                                                    setModalOpen(false)
+                                                    setSelectedItemId(null)
+                                                }
+                                            }}
+                                        />
+                                        {modalTargetConfig ? (
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                                This will move {modalPlacement} House #{modalTargetHouseNo}.
+                                            </p>
+                                        ) : modalHouseNumber.trim() ? (
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                                House #{modalHouseNumber.trim()} not found in this route.
+                                            </p>
+                                        ) : null}
+                                    </div>
+                                    <div>
+                                        <p className="text-sm mb-2">Placement</p>
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                                                    modalPlacement === 'before'
+                                                        ? 'bg-primary text-primary-foreground'
+                                                        : 'border border-input hover:bg-accent'
+                                                }`}
+                                                onClick={() => setModalPlacement('before')}
+                                            >
+                                                Before
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                                                    modalPlacement === 'after'
+                                                        ? 'bg-primary text-primary-foreground'
+                                                        : 'border border-input hover:bg-accent'
+                                                }`}
+                                                onClick={() => setModalPlacement('after')}
+                                            >
+                                                After
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         <div className="flex gap-2 mt-6">
                             <button
@@ -682,13 +787,35 @@ export default function SupplierHousesPage() {
                                 type="button"
                                 className="flex-1 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
                                 onClick={(e) => {
-                                    const input = document.getElementById('new-position') as HTMLInputElement
-                                    const value = parseInt(input.value, 10)
-                                    if (!isNaN(value) && value >= 1 && value <= modalTotal && value !== modalCurrentPosition) {
-                                        handleMoveToPositionById(selectedShiftForModal, selectedItemId, value - 1)
+                                    if (modalSearchMode === 'position') {
+                                        const input = document.getElementById('new-position') as HTMLInputElement
+                                        const value = parseInt(input.value, 10)
+                                        if (!isNaN(value) && value >= 1 && value <= modalTotal && value !== modalCurrentPosition) {
+                                            handleMoveToPositionById(selectedShiftForModal, selectedItemId, value - 1)
+                                        }
+                                    } else {
+                                        const houseNo = modalHouseNumber.trim()
+                                        if (!houseNo) {
+                                            toast.error('Please enter a house number')
+                                            return
+                                        }
+                                        if (!modalTargetConfig) {
+                                            toast.error(`House #${houseNo} not found in this route`)
+                                            return
+                                        }
+                                        const targetIndex = modalTargetIndex
+                                        const finalIndex = modalPlacement === 'before' ? targetIndex : targetIndex + 1
+
+                                        if (finalIndex === modalCurrentPosition - 1 || finalIndex === modalCurrentPosition) {
+                                            toast.error('Item is already at this position')
+                                            return
+                                        }
+
+                                        handleMoveToPositionById(selectedShiftForModal, selectedItemId, finalIndex)
                                     }
                                     setModalOpen(false)
                                     setSelectedItemId(null)
+                                    setModalHouseNumber('')
                                 }}
                             >
                                 Move
@@ -845,7 +972,7 @@ function PlannerSortableItem({
                 ref={setNodeRef}
                 style={style}
                 tabIndex={0}
-                className={`w-full touch-none select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''} focus-within:ring-2 focus-within:ring-primary/50`}
+                className={`w-full select-none rounded-lg border border-border bg-background px-0.5 py-1.5 transition-shadow sm:px-1 sm:py-1.5 ${isDragging ? 'z-10 shadow-lg ring-2 ring-primary/20' : ''} focus-within:ring-2 focus-within:ring-primary/50`}
                 onContextMenu={handleContextMenu}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
@@ -888,7 +1015,7 @@ function PlannerSortableItem({
                             <button
                                 type="button"
                                 aria-label="Drag to reorder"
-                                className="cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
+                                className="touch-none cursor-grab rounded-md p-1 text-muted-foreground active:cursor-grabbing"
                                 {...attributes}
                                 {...listeners}
                             >
