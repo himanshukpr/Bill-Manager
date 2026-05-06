@@ -76,6 +76,7 @@ export default function SupplierHousesPage() {
     const [modalSearchMode, setModalSearchMode] = useState<'position' | 'houseNumber'>('position')
     const [modalPlacement, setModalPlacement] = useState<'before' | 'after'>('before')
     const [modalHouseNumber, setModalHouseNumber] = useState('')
+    const [dropdownOpen, setDropdownOpen] = useState(false)
     const moveAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const sensors = useSensors(
@@ -416,6 +417,19 @@ export default function SupplierHousesPage() {
     const modalTargetHouseNo = modalTargetConfig
         ? allHouses.find((item) => item.id === modalTargetConfig.houseId)?.houseNo?.toString() ?? modalTargetConfig.houseId.toString()
         : ''
+    
+    const modalHouseDropdown = useMemo(() => {
+        if (!modalHouseNumber.trim()) return []
+        const query = modalHouseNumber.toLowerCase().trim()
+        return modalPlan
+            .map((config) => {
+                const house = allHouses.find((item) => item.id === config.houseId)
+                const displayNo = house?.houseNo?.toString() ?? config.houseId.toString()
+                return { config, displayNo, house, houseId: config.houseId }
+            })
+            .filter((item) => item.displayNo.toLowerCase().includes(query))
+            .slice(0, 8)
+    }, [modalHouseNumber, modalPlan, allHouses])
 
     const renderSkeleton = () => (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -575,6 +589,7 @@ export default function SupplierHousesPage() {
                                                                 setModalSearchMode('position')
                                                                 setModalPlacement('before')
                                                                 setModalHouseNumber('')
+                                                                setDropdownOpen(false)
                                                             }}
                                                         />
                                                     )
@@ -634,6 +649,7 @@ export default function SupplierHousesPage() {
                                                                 setModalSearchMode('position')
                                                                 setModalPlacement('before')
                                                                 setModalHouseNumber('')
+                                                                setDropdownOpen(false)
                                                             }}
                                                         />
                                                     )
@@ -650,7 +666,7 @@ export default function SupplierHousesPage() {
 
             {modalOpen && selectedItemId !== null && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center">
-                    <div className="fixed inset-0 z-[101] bg-black/80" onClick={() => { setModalOpen(false); setSelectedItemId(null) }} />
+                    <div className="fixed inset-0 z-[101] bg-black/80" onClick={() => { setModalOpen(false); setSelectedItemId(null); setDropdownOpen(false); setModalHouseNumber('') }} />
                     <div className="relative z-[102] w-full max-w-md rounded-4xl bg-popover p-6 text-popover-foreground ring-1 ring-foreground/5">
                         <>
                         <div className="space-y-1">
@@ -717,24 +733,49 @@ export default function SupplierHousesPage() {
                                     />
                                 </div>
                             ) : (
-                                <div className="space-y-3">
+                                <div className="space-y-3 pb-2">
                                     <div>
                                         <label className="text-sm">House Number</label>
-                                        <input
-                                            id="house-number"
-                                            type="text"
-                                            placeholder="Enter house number"
-                                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
-                                            autoFocus
-                                            value={modalHouseNumber}
-                                            onChange={(e) => setModalHouseNumber(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Escape') {
-                                                    setModalOpen(false)
-                                                    setSelectedItemId(null)
-                                                }
-                                            }}
-                                        />
+                                        <div className="relative mt-1">
+                                            <input
+                                                id="house-number"
+                                                type="text"
+                                                placeholder="Enter house number"
+                                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                                autoFocus
+                                                value={modalHouseNumber}
+                                                onChange={(e) => {
+                                                    setModalHouseNumber(e.target.value)
+                                                    setDropdownOpen(true)
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Escape') {
+                                                        setModalOpen(false)
+                                                        setSelectedItemId(null)
+                                                    }
+                                                }}
+                                            />
+                                            {dropdownOpen && modalHouseDropdown.length > 0 && (
+                                                <div className="absolute top-full left-0 right-0 mt-1 z-50 border border-input rounded-md bg-popover shadow-lg max-h-48 overflow-y-auto">
+                                                    {modalHouseDropdown.map((item) => (
+                                                        <button
+                                                            key={item.config.id}
+                                                            type="button"
+                                                            className="w-full text-left px-3 py-2 hover:bg-accent hover:text-accent-foreground text-sm first:rounded-t-md last:rounded-b-md transition-colors"
+                                                            onClick={() => {
+                                                                setModalHouseNumber(item.displayNo)
+                                                                setDropdownOpen(false)
+                                                            }}
+                                                        >
+                                                            <span className="font-medium">House #{item.displayNo}</span>
+                                                            {item.house?.area && (
+                                                                <span className="text-xs text-muted-foreground ml-2">{item.house.area}</span>
+                                                            )}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                         {modalTargetConfig ? (
                                             <p className="mt-2 text-xs text-muted-foreground">
                                                 This will move {modalPlacement} House #{modalTargetHouseNo}.
@@ -779,7 +820,7 @@ export default function SupplierHousesPage() {
                             <button
                                 type="button"
                                 className="flex-1 rounded-md border border-input bg-background px-4 py-2 text-sm hover:bg-accent"
-                                onClick={() => { setModalOpen(false); setSelectedItemId(null) }}
+                                onClick={() => { setModalOpen(false); setSelectedItemId(null); setDropdownOpen(false); setModalHouseNumber('') }}
                             >
                                 Cancel
                             </button>
@@ -816,6 +857,7 @@ export default function SupplierHousesPage() {
                                     setModalOpen(false)
                                     setSelectedItemId(null)
                                     setModalHouseNumber('')
+                                    setDropdownOpen(false)
                                 }}
                             >
                                 Move
