@@ -491,7 +491,7 @@ export default function SupplierDirectEntryPage() {
                     <CardHeader className="border-b border-border px-5 py-4">
                         <CardTitle>Recent delivery logs</CardTitle>
                         <CardDescription>
-                            Latest entries recorded through direct entry or route planning.
+                            Latest entries recorded through the admin or supplier flow.
                         </CardDescription>
                     </CardHeader>
 
