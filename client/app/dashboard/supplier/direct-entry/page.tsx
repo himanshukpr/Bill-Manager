@@ -47,6 +47,40 @@ function formatMoney(value: string | number): string {
     return `₹${Number.isFinite(parsed) ? parsed.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '0'}`
 }
 
+function normalizeName(value: string | undefined): string {
+    return (value ?? '').trim().toLowerCase()
+}
+
+function normalizeRateKey(value: string | undefined): string {
+    return normalizeName(value).replace(/\bmilk\b/g, '').replace(/\s+/g, ' ').trim()
+}
+
+function getGlobalRateByProductName(rates: ProductRate[], productName: string): string {
+    const normalizedProductName = normalizeRateKey(productName)
+    const match = rates.find((rate) => normalizeRateKey(rate.name) === normalizedProductName)
+    return match ? String(match.rate) : ''
+}
+
+function getHouseRateByProductName(house: House | undefined, productName: string): string {
+    const normalizedProductName = normalizeRateKey(productName)
+
+    if (!house) return ''
+
+    if (normalizeRateKey(house.rate1Type) === normalizedProductName && Number(house.rate1) > 0) {
+        return String(house.rate1)
+    }
+
+    if (normalizeRateKey(house.rate2Type) === normalizedProductName && Number(house.rate2) > 0) {
+        return String(house.rate2)
+    }
+
+    return ''
+}
+
+function getResolvedRateByProductName(house: House | undefined, rates: ProductRate[], productName: string): string {
+    return getHouseRateByProductName(house, productName) || getGlobalRateByProductName(rates, productName)
+}
+
 function formatDateTime(value: string) {
     return new Intl.DateTimeFormat('en-IN', {
         day: 'numeric',
@@ -100,11 +134,6 @@ export default function SupplierDirectEntryPage() {
             active = false
         }
     }, [])
-
-    const activeRates = useMemo(
-        () => rates.filter((rate) => rate.isActive),
-        [rates],
-    )
 
     const selectedHouse = useMemo(
         () => houses.find((house) => String(house.id) === houseId),
@@ -162,6 +191,18 @@ export default function SupplierDirectEntryPage() {
         [items],
     )
 
+    useEffect(() => {
+        setRows((current) =>
+            current.map((row) => {
+                const milkType = row.milkType.trim()
+                if (!milkType) return row
+
+                const resolvedRate = getResolvedRateByProductName(selectedHouse, rates, milkType)
+                return row.rate === resolvedRate ? row : { ...row, rate: resolvedRate }
+            }),
+        )
+    }, [rates, selectedHouse])
+
     const shopLogs = useMemo(
         () => logs.filter((log) => log.shift === 'shop'),
         [logs],
@@ -175,10 +216,6 @@ export default function SupplierDirectEntryPage() {
 
     function addBlankRow() {
         setRows((current) => [...current, createRow()])
-    }
-
-    function addTemplateRow(rate: ProductRate) {
-        setRows((current) => [...current, createRow(rate)])
     }
 
     function removeRow(id: string) {
@@ -327,10 +364,10 @@ export default function SupplierDirectEntryPage() {
                                                             value={row.milkType}
                                                             onChange={(event) => {
                                                                 const newMilkType = event.target.value
-                                                                const matchingRate = ratesByName[newMilkType]
+                                                                const matchingRate = getResolvedRateByProductName(selectedHouse, rates, newMilkType)
                                                                 updateRow(row.id, {
                                                                     milkType: newMilkType,
-                                                                    ...(matchingRate && { rate: matchingRate }),
+                                                                    rate: matchingRate,
                                                                 })
                                                             }}
                                                         />
@@ -387,7 +424,7 @@ export default function SupplierDirectEntryPage() {
                                 >
                                     <div
                                         className={cn(
-                                            'rounded-2xl border border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 p-4 shadow-sm',
+                                            'rounded-2xl border border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80 p-4 shadow-sm',
                                             rows.length > 1 && 'border-t'
                                         )}
                                     >
