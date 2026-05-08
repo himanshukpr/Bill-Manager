@@ -611,6 +611,10 @@ export const housesApi = {
         },
       );
 
+      // Invalidate house config session cache when house is updated
+      // This ensures stale cached configs don't persist across page reloads
+      removeHouseConfigSessionCacheByHouseId(id);
+
       // Sync in background
       if (isOnline()) {
         (async () => {

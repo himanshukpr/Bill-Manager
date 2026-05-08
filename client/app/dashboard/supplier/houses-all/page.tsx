@@ -449,8 +449,7 @@ export default function HousesPage() {
   const filtered = useMemo(() => {
     const query = debouncedSearch.trim().toLowerCase()
 
-    // Exclude deactivated houses from supplier views
-    return (houses || []).filter((h) => h.active).filter((house) => {
+    return (houses || []).filter((house) => {
       const shift = getHouseShift(house)
       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
@@ -473,7 +472,7 @@ export default function HousesPage() {
     const query = search.trim().toLowerCase()
     if (!query) return []
 
-    return houses
+    return (houses || [])
       .filter((house) => {
         const shift = getHouseShift(house)
         if (shiftFilter !== 'all' && shift !== shiftFilter) return false
