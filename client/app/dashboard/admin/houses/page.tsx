@@ -61,6 +61,13 @@ function normalizeMilkType(value: unknown): string {
   return String(value ?? '').trim()
 }
 
+function normalizeRateType(value: unknown): string {
+  const text = String(value ?? '').trim().toLowerCase()
+  if (text.includes('buffalo')) return 'buffalo'
+  if (text.includes('cow')) return 'cow'
+  return text
+}
+
 function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
   if (!Array.isArray(items)) return []
 
@@ -477,7 +484,7 @@ export default function HousesPage() {
         return (
           house.houseNo.toLowerCase().includes(query) ||
           (house.area || '').toLowerCase().includes(query) ||
-(house.phoneNo || '').includes(query)
+          (house.phoneNo || '').includes(query)
         )
       })
       .slice(0, 6)
@@ -667,6 +674,18 @@ export default function HousesPage() {
     return summaryBills.find((bill) => bill.month === month && bill.year === year)
   }
 
+  function getPreferredRateForHouse(milkType: string): number {
+    const mt = normalizeRateType(milkType)
+    // Prefer house-specific rates if present
+    if (summaryHouse) {
+      const r1Type = normalizeRateType(summaryHouse.rate1Type)
+      const r2Type = normalizeRateType(summaryHouse.rate2Type)
+      if (r1Type && r1Type === mt && Number(summaryHouse.rate1) > 0) return Number(summaryHouse.rate1)
+      if (r2Type && r2Type === mt && Number(summaryHouse.rate2) > 0) return Number(summaryHouse.rate2)
+    }
+    return getRateByProductName(productRates, milkType)
+  }
+
   function isDeliveryBlockedByBill(dateKey: string): boolean {
     const bill = getBillForDateKey(dateKey)
     if (!bill) return false
@@ -686,16 +705,22 @@ export default function HousesPage() {
 
   function openEditDeliveryDialog(row: HouseDeliverySummaryRow) {
     // Check if this specific date is blocked by a generated bill
-    if (isDeliveryBlockedByBill(row.dateKey)) {
+    if (isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)) {
       toast.error('Cannot edit deliveries that were included in a generated bill')
       return
     }
 
     if (row.log) {
-      // Edit existing delivery
+      // Edit existing delivery - overwrite item rates with house-preferred rates
       setEditingDeliveryLog(row.log)
+      const normalized = normalizeDeliveryItems(row.log.items)
+      const updated = normalized.map((it) => {
+        const qty = Number(it.qty ?? 0)
+        const rate = getPreferredRateForHouse(it.milkType)
+        return { ...it, rate, amount: qty * rate }
+      })
       setEditDeliveryForm({
-        items: normalizeDeliveryItems(row.log.items),
+        items: updated,
         note: row.log.note,
       })
     } else {
@@ -722,7 +747,7 @@ export default function HousesPage() {
       }
       setEditingDeliveryLog(newLog)
       setEditDeliveryForm({
-        items: [{ milkType: firstProduct.name, qty: 0, rate: Number(firstProduct.rate), amount: 0 }],
+        items: [{ milkType: firstProduct.name, qty: 0, rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
         note: ''
       })
     }
@@ -743,12 +768,13 @@ export default function HousesPage() {
 
       // Save delivery changes (create or update)
       if (isNewDelivery) {
-        // Create new delivery
+        // Create new delivery (use the delivery date from the opened editor)
         const result = await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
+          deliveredAt: editingDeliveryLog.deliveredAt,
         })
         toast.success('Delivery created successfully')
       } else {
@@ -790,6 +816,10 @@ export default function HousesPage() {
 
   async function handleDeleteDeliveryLog() {
     if (!deletingDeliveryLog || !summaryHouse) return
+    if (deletingDeliveryLog.billGenerated) {
+      toast.error('Cannot delete a delivery that was included in a generated bill')
+      return
+    }
     setEditDeliverySaving(true)
     try {
       await deliveryLogsApi.delete(deletingDeliveryLog.id)
@@ -1574,6 +1604,7 @@ export default function HousesPage() {
                       </TableHeader>
                       <TableBody>
                         {summaryRows.map((row) => {
+                          const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
                           return (
                             <TableRow key={row.dateKey}>
                               <TableCell className="font-medium text-foreground">{row.dayLabel}</TableCell>
@@ -1586,13 +1617,13 @@ export default function HousesPage() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => openEditDeliveryDialog(row)}
-                                    title={isDeliveryBlockedByBill(row.dateKey) ? 'Cannot edit after bill generation' : 'Edit delivery'}
-                                    disabled={isDeliveryBlockedByBill(row.dateKey)}
+                                    title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                    disabled={blocked}
                                     className="h-8 w-8 p-0"
                                   >
                                     <Edit2 className="h-4 w-4" />
                                   </Button>
-                                  {!isDeliveryBlockedByBill(row.dateKey) && row.log && (
+                                  {!blocked && row.log && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1737,7 +1768,7 @@ export default function HousesPage() {
                         const added = {
                           milkType: firstProduct.name,
                           qty: 0,
-                          rate: Number(firstProduct.rate),
+                          rate: getPreferredRateForHouse(firstProduct.name),
                           amount: 0,
                         }
                         setEditDeliveryForm({ ...editDeliveryForm, items: [...editDeliveryForm.items, added] })
@@ -1761,13 +1792,13 @@ export default function HousesPage() {
                           <div className="col-span-1" />
                         </div>
 
-{(editDeliveryForm.items || []).map((item, index) => (
+                        {(editDeliveryForm.items || []).map((item, index) => (
                           <div key={index} className="grid grid-cols-12 gap-2 items-center px-3 py-2 text-sm border-b border-border">
                             <div className="col-span-5 flex items-center gap-2">
                               <Select
                                 value={item.milkType || ''}
                                 onValueChange={(val) => {
-                                  const newRate = getRateByProductName(productRates, val)
+                                  const newRate = getPreferredRateForHouse(val)
                                   const updated = [...editDeliveryForm.items]
                                   const newQty = updated[index].qty ?? 0
                                   updated[index] = { ...updated[index], milkType: val, rate: newRate, amount: newQty * newRate }
@@ -1782,7 +1813,7 @@ export default function HousesPage() {
                                 <SelectContent>
                                   {getActiveProducts(productRates).map((rate) => (
                                     <SelectItem key={rate.id} value={rate.name}>
-                                      {rate.name} (₹{rate.rate})
+                                      {rate.name} (₹{getPreferredRateForHouse(rate.name)})
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
