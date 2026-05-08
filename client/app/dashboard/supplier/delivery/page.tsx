@@ -72,7 +72,7 @@ type DeliveryItemForm = {
 
 
 const emptyDeliveryItem: DeliveryItemForm = {
-    milkType: '',
+    milkType: 'Buffalo Milk',
     qty: '',
 }
 
