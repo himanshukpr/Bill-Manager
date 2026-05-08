@@ -81,6 +81,22 @@ function getResolvedRateByProductName(house: House | undefined, rates: ProductRa
     return getHouseRateByProductName(house, productName) || getGlobalRateByProductName(rates, productName)
 }
 
+function getTodayDateKey(): string {
+    const today = new Date()
+    const year = today.getFullYear()
+    const month = String(today.getMonth() + 1).padStart(2, '0')
+    const day = String(today.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+
+function buildDeliveredAtForDate(dateKey: string): string {
+    const [year, month, day] = dateKey.split('-').map(Number)
+    const deliveredAt = new Date(year, month - 1, day)
+    const now = new Date()
+    deliveredAt.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0)
+    return deliveredAt.toISOString()
+}
+
 function formatDateTime(value: string) {
     return new Intl.DateTimeFormat('en-IN', {
         day: 'numeric',
@@ -101,6 +117,7 @@ export default function SupplierDirectEntryPage() {
     const [houseId, setHouseId] = useState('')
     const [houseSearch, setHouseSearch] = useState('')
     const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('shop')
+    const [deliveryDate, setDeliveryDate] = useState(getTodayDateKey())
     const [note, setNote] = useState('')
     const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
 
@@ -226,6 +243,7 @@ export default function SupplierDirectEntryPage() {
         setHouseId('')
         setHouseSearch('')
         setShift('shop')
+        setDeliveryDate(getTodayDateKey())
         setNote('')
         setRows([createRow()])
     }
@@ -249,6 +267,7 @@ export default function SupplierDirectEntryPage() {
                 shift: shift,
                 items,
                 note: note.trim() || undefined,
+                deliveredAt: buildDeliveredAtForDate(deliveryDate),
             })
 
             setLogs((current) => [response.log, ...current])
@@ -328,6 +347,16 @@ export default function SupplierDirectEntryPage() {
                                             {selectedHouse.area && <p className="text-xs text-muted-foreground">{selectedHouse.area}</p>}
                                         </div>
                                     )}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="delivery-date">Date</Label>
+                                    <Input
+                                        id="delivery-date"
+                                        type="date"
+                                        value={deliveryDate}
+                                        onChange={(event) => setDeliveryDate(event.target.value)}
+                                    />
                                 </div>
 
                                 <div className="space-y-4">
