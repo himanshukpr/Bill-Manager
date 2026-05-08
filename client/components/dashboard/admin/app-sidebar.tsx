@@ -49,7 +49,7 @@ const navItems = [
         icon: FileText,
     },
     {
-        title: "Delivery Entry",
+        title: "Direct Entry",
         url: "/dashboard/admin/direct-entry",
         icon: Truck,
     },

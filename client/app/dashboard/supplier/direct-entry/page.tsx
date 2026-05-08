@@ -66,7 +66,7 @@ export default function SupplierDirectEntryPage() {
 
     const [houseId, setHouseId] = useState('')
     const [houseSearch, setHouseSearch] = useState('')
-    const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('morning')
+    const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('shop')
     const [note, setNote] = useState('')
     const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
 
@@ -162,6 +162,11 @@ export default function SupplierDirectEntryPage() {
         [items],
     )
 
+    const shopLogs = useMemo(
+        () => logs.filter((log) => log.shift === 'shop'),
+        [logs],
+    )
+
     function updateRow(id: string, patch: Partial<DeliveryEntryRow>) {
         setRows((current) =>
             current.map((row) => (row.id === id ? { ...row, ...patch } : row)),
@@ -183,7 +188,7 @@ export default function SupplierDirectEntryPage() {
     function resetForm() {
         setHouseId('')
         setHouseSearch('')
-        setShift('morning')
+        setShift('shop')
         setNote('')
         setRows([createRow()])
     }
@@ -196,11 +201,6 @@ export default function SupplierDirectEntryPage() {
 
         if (items.length === 0) {
             toast.error('Add at least one product with quantity and rate')
-            return
-        }
-
-        if (shift === 'shop') {
-            toast.error('Shop entries can only be added from the admin panel')
             return
         }
 
@@ -227,15 +227,12 @@ export default function SupplierDirectEntryPage() {
     return (
         <div className="space-y-6">
             <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
-                <Card className="rounded-3xl border border-border bg-card py-0">
+                <Card className="relative overflow-visible rounded-3xl border border-border bg-card py-0">
                     <CardHeader className="border-b border-border px-5 py-4">
                         <CardTitle>Direct entry</CardTitle>
-                        <CardDescription>
-                            Choose the house, enter the delivered products, and save the entry.
-                        </CardDescription>
                     </CardHeader>
 
-                    <CardContent className="space-y-2 px-5 py-1">
+                    <CardContent className="space-y-2 px-5 py-1 pb-2">
                         {loading ? (
                             <div className="space-y-4">
                                 <Skeleton className="h-12 w-full rounded-xl" />
@@ -245,16 +242,21 @@ export default function SupplierDirectEntryPage() {
                         ) : (
                             <>
                                 <div className="space-y-1">
-                                    <Label htmlFor="delivery-house">House</Label>
-                                    <div className="relative">
-                                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                                        <Input
-                                            id="delivery-house"
-                                            placeholder="Search by house number or area..."
-                                            value={houseSearch}
-                                            onChange={(e) => setHouseSearch(e.target.value)}
-                                            className="pl-9"
-                                        />
+                                    <div className="flex gap-2 items-end">
+                                        <div className="relative flex-1">
+                                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                                            <Input
+                                                id="delivery-house"
+                                                placeholder="Search by house number or area..."
+                                                value={houseSearch}
+                                                onChange={(e) => setHouseSearch(e.target.value)}
+                                                className="pl-9"
+                                            />
+                                        </div>
+                                        <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
+                                            <Plus className="h-3.5 w-3.5" />
+                                            Add blank row
+                                        </Button>
                                     </div>
 
                                     {houseSearch && filteredHouses.length > 0 && (
@@ -291,55 +293,6 @@ export default function SupplierDirectEntryPage() {
                                     )}
                                 </div>
 
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="delivery-shift">Shift</Label>
-                                    <Select value={shift} onValueChange={(v) => setShift(v as typeof shift)}>
-                                        <SelectTrigger id="delivery-shift">
-                                            <SelectValue placeholder="Select shift" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="morning">Morning</SelectItem>
-                                            <SelectItem value="evening">Evening</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                <div className="rounded-2xl border border-border bg-muted/20 p-4">
-                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                        <div>
-                                            <p className="text-sm font-semibold">Quick product add</p>
-                                            <p className="text-xs text-muted-foreground">
-                                                Tap a product to add a prefilled line, or add a blank row for custom entries.
-                                            </p>
-                                        </div>
-                                        <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
-                                            <Plus className="h-3.5 w-3.5" />
-                                            Add blank row
-                                        </Button>
-                                    </div>
-
-                                    <div className="mt-4 flex flex-wrap gap-2">
-                                        {activeRates.length === 0 ? (
-                                            <p className="text-sm text-muted-foreground">
-                                                No active product rates found. You can still enter product names manually.
-                                            </p>
-                                        ) : (
-                                            activeRates.map((rate) => (
-                                                <button
-                                                    key={rate.id}
-                                                    type="button"
-                                                    onClick={() => addTemplateRow(rate)}
-                                                    className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-                                                >
-                                                    <CirclePlus className="h-3.5 w-3.5 text-primary" />
-                                                    {rate.name}
-                                                    {/* <span className="text-xs text-muted-foreground">{formatMoney(rate.rate)}/{rate.unit}</span> */}
-                                                </button>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-
                                 <div className="space-y-4">
                                     {rows.map((row, index) => {
                                         const rowAmount = toNumber(row.qty) * toNumber(row.rate)
@@ -364,7 +317,7 @@ export default function SupplierDirectEntryPage() {
                                                     </Button>
                                                 </div>
 
-                                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_0.7fr_0.7fr_0.7fr]">
+                                                <div className="grid gap-4 grid-cols-2">
                                                     <div className="space-y-1.5">
                                                         <Label htmlFor={`milkType-${row.id}`}>Product</Label>
                                                         <Input
@@ -425,23 +378,65 @@ export default function SupplierDirectEntryPage() {
                                     />
                                 </div>
 
-                                <div className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
-                                    <div>
-                                        <p className="text-sm font-semibold">Ready to save</p>
-                                        <p className="text-xs text-muted-foreground">
-                                            {selectedHouse ? `House ${selectedHouse.houseNo}${selectedHouse.area ? ` · ${selectedHouse.area}` : ''}` : 'Select a house to continue'}
-                                        </p>
-                                    </div>
+                                <div
+                                    className={cn(
+                                        rows.length > 1
+                                            ? 'sticky bottom-4 z-30 mt-6'
+                                            : 'mt-6'
+                                    )}
+                                >
+                                    <div
+                                        className={cn(
+                                            'rounded-2xl border border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 p-4 shadow-sm',
+                                            rows.length > 1 && 'border-t'
+                                        )}
+                                    >
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <div>
+                                                <p className="text-sm font-semibold">Ready to save</p>
 
-                                    <div className="flex items-center gap-3">
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Entry total</p>
-                                            <p className="text-2xl font-bold text-foreground">{formatMoney(totalAmount)}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {selectedHouse
+                                                        ? `House ${selectedHouse.houseNo}${selectedHouse.area
+                                                            ? ` · ${selectedHouse.area}`
+                                                            : ''}`
+                                                        : 'Select a house to continue'}
+                                                </p>
+
+                                                {totalQuantity > 0 && (
+                                                    <p className="mt-1 text-xs text-muted-foreground">
+                                                        Total Qty: {totalQuantity}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-right">
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Entry total
+                                                    </p>
+
+                                                    <p className="text-2xl font-bold text-foreground">
+                                                        {formatMoney(totalAmount)}
+                                                    </p>
+                                                </div>
+
+                                                <Button
+                                                    type="button"
+                                                    onClick={handleSave}
+                                                    disabled={saving}
+                                                    className="gap-2"
+                                                >
+                                                    {saving ? (
+                                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <Truck className="h-4 w-4" />
+                                                    )}
+
+                                                    {saving ? 'Saving...' : 'Save entry'}
+                                                </Button>
+                                            </div>
                                         </div>
-                                        <Button type="button" onClick={handleSave} disabled={saving} className="gap-2">
-                                            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
-                                            {saving ? 'Saving...' : 'Save entry'}
-                                        </Button>
                                     </div>
                                 </div>
 
@@ -470,7 +465,7 @@ export default function SupplierDirectEntryPage() {
                                     <Skeleton key={index} className="h-20 w-full rounded-2xl" />
                                 ))}
                             </div>
-                        ) : logs.length === 0 ? (
+                        ) : shopLogs.length === 0 ? (
                             <div className="flex flex-col items-center justify-center px-6 py-14 text-center text-muted-foreground">
                                 <Package2 className="h-12 w-12 opacity-30" />
                                 <p className="mt-3 font-medium text-foreground">No delivery logs yet</p>
@@ -492,12 +487,12 @@ export default function SupplierDirectEntryPage() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {logs.map((log, index) => (
+                                            {shopLogs.map((log, index) => (
                                                 <tr
                                                     key={log.id}
                                                     className={cn(
                                                         'border-b border-border/60 transition-colors hover:bg-muted/30',
-                                                        index === logs.length - 1 && 'border-b-0',
+                                                        index === shopLogs.length - 1 && 'border-b-0',
                                                     )}
                                                 >
                                                     <td className="px-4 py-3">
