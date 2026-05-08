@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -50,6 +51,12 @@ type HouseDeliverySummaryRow = {
   hasDelivery: boolean
   logId?: number
   log?: DeliveryLog
+}
+
+type MonthlyProductSummary = {
+  product: string
+  months: { month: number; year: number; quantity: number }[]
+  totalQuantity: number
 }
 
 type DeliveryEditForm = {
@@ -193,6 +200,39 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
   }
 
   return rows
+}
+
+function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: number): MonthlyProductSummary[] {
+  const productMap = new Map<string, number>()
+
+  // Group quantities by product for the selected month only.
+  for (const log of logs) {
+    const deliveredAt = new Date(log.deliveredAt)
+    const logYear = deliveredAt.getFullYear()
+    const logMonth = deliveredAt.getMonth()
+
+    if (logYear !== year || logMonth !== month) continue
+
+    for (const item of log.items ?? []) {
+      const product = normalizeMilkType(item.milkType)
+      const qty = Number(item.qty ?? 0)
+
+      if (!product || qty <= 0) continue
+
+      productMap.set(product, (productMap.get(product) ?? 0) + qty)
+    }
+  }
+
+  // Convert to summary format
+  const summary: MonthlyProductSummary[] = Array.from(productMap.entries()).map(([product, quantity]) => {
+    return {
+      product,
+      months: [{ month, year, quantity }],
+      totalQuantity: quantity,
+    }
+  })
+
+  return summary.sort((a, b) => b.totalQuantity - a.totalQuantity)
 }
 
 function isValidMonth(year: number, month: number): boolean {
@@ -364,6 +404,11 @@ export default function HousesPage() {
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
     return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const monthlyProductSummary = useMemo(() => {
+    if (!summaryHouse) return []
+    return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
 
   const editDeliveryTotal = useMemo(() => {
@@ -1542,7 +1587,7 @@ export default function HousesPage() {
           setSummaryLogs([])
         }
       }}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           {summaryHouse && (
             <>
               <DialogHeader>
@@ -1574,67 +1619,124 @@ export default function HousesPage() {
                 </Button>
               </div>
 
-              <div className="space-y-4 py-2">
-                <div className="rounded-xl border border-border bg-muted/30 p-4">
-                  {summaryLoading ? (
-                    <div className="space-y-3">
-                      <Skeleton className="h-10 w-full rounded-lg" />
-                      <Skeleton className="h-10 w-full rounded-lg" />
-                      <Skeleton className="h-10 w-full rounded-lg" />
-                    </div>
-                  ) : summaryRows.length === 0 ? (
-                    <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-                      <Rows3 className="h-10 w-10 opacity-30" />
-                      <p className="font-medium">No delivery summary available</p>
-                      <p className="text-sm">This house has no delivery logs for the selected month.</p>
-                    </div>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="min-w-35">Date</TableHead>
-                          <TableHead>Products</TableHead>
-                          <TableHead className="w-16 text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {summaryRows.map((row) => {
-                          const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
-                          return (
-                            <TableRow key={row.dateKey}>
-                              <TableCell className="font-medium text-foreground">{row.dayLabel}</TableCell>
-                              <TableCell className="whitespace-normal text-foreground">
-                                {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => openEditDeliveryDialog(row)}
-                                  title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
-                                  disabled={blocked}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  <Edit2 className="h-4 w-4" />
-                                </Button>
-                                {!blocked && row.log && (
+              <div className="space-y-6 py-2">
+                {/* Monthly Summary Grid */}
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Monthly Product Summary</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : monthlyProductSummary.length === 0 ? (
+                      <div className="flex min-h-32 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <Rows3 className="h-8 w-8 opacity-30" />
+                        <p className="text-sm">No product data available</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground min-w-32">Product</th>
+                              {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                const [year, month] = monthKey.split('-').map(Number)
+                                return (
+                                  <th key={monthKey} className="px-3 py-3 text-right font-semibold text-foreground min-w-20">{MONTH_NAMES[month]} {year}</th>
+                                )
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyProductSummary.map((row, idx) => {
+                              const uniqueMonths = Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort()
+                              return (
+                                <tr key={row.product} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                  <td className="px-4 py-3 font-medium text-foreground">{row.product}</td>
+                                  {uniqueMonths.map((monthKey) => {
+                                    const monthData = row.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground">
+                                        {monthData ? `${monthData.quantity.toLocaleString('en-IN')}L` : '-'}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Daily View */}
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Daily Deliveries</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : summaryRows.length === 0 ? (
+                      <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <Rows3 className="h-10 w-10 opacity-30" />
+                        <p className="font-medium">No delivery summary available</p>
+                        <p className="text-sm">This house has no delivery logs for the selected month.</p>
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="min-w-35">Date</TableHead>
+                            <TableHead>Products</TableHead>
+                            <TableHead className="w-16 text-right">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {summaryRows.map((row) => {
+                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
+                            return (
+                              <TableRow key={row.dateKey}>
+                                <TableCell className="font-medium text-foreground">{row.dayLabel}</TableCell>
+                                <TableCell className="whitespace-normal text-foreground">
+                                  {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                                </TableCell>
+                                <TableCell className="text-right">
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => setDeletingDeliveryLog(row.log!)}
-                                    title="Delete delivery"
+                                    onClick={() => openEditDeliveryDialog(row)}
+                                    title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                    disabled={blocked}
                                     className="h-8 w-8 p-0"
                                   >
-                                    <Trash2 className="h-4 w-4" />
+                                    <Edit2 className="h-4 w-4" />
                                   </Button>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          )
-                        })}
-                      </TableBody>
-                    </Table>
-                  )}
+                                  {!blocked && row.log && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setDeletingDeliveryLog(row.log!)}
+                                      title="Delete delivery"
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
                 </div>
               </div>
 

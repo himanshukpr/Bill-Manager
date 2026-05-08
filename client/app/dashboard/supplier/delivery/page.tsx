@@ -218,6 +218,7 @@ export default function DeliveryPage() {
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
     const [allocatedHouseProducts, setAllocatedHouseProducts] = useState<Record<number, string>>({})
+    const [selectedDateProductTotals, setSelectedDateProductTotals] = useState<Array<{ productName: string; qty: number }>>([])
     const [selectedDate, setSelectedDate] = useState<Date>(() => {
         try {
             if (typeof window !== 'undefined') {
@@ -591,6 +592,7 @@ export default function DeliveryPage() {
         const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         const nextProducts: Record<number, Map<string, number>> = {}
+        const overallProducts = new Map<string, number>()
         const nextCompleted = new Set<number>()
 
         for (const log of deliveredForSelectedDate) {
@@ -605,7 +607,10 @@ export default function DeliveryPage() {
                 if (!productName) continue
 
                 const currentQty = nextProducts[log.houseId].get(productName) ?? 0
-                nextProducts[log.houseId].set(productName, currentQty + Number(item.qty || 0))
+                const qty = Number(item.qty || 0)
+
+                nextProducts[log.houseId].set(productName, currentQty + qty)
+                overallProducts.set(productName, (overallProducts.get(productName) ?? 0) + qty)
             }
         }
 
@@ -619,6 +624,12 @@ export default function DeliveryPage() {
         }
 
         setAllocatedHouseProducts(resolvedProducts)
+        setSelectedDateProductTotals(
+            Array.from(overallProducts.entries())
+                .filter(([, qty]) => qty > 0)
+                .map(([productName, qty]) => ({ productName, qty }))
+                .sort((left, right) => right.qty - left.qty),
+        )
         setCompletedHouses(nextCompleted)
     }, [auth, selectedShift, selectedDate])
 
@@ -647,6 +658,7 @@ export default function DeliveryPage() {
     useEffect(() => {
         setCompletedHouses(new Set())
         setAllocatedHouseProducts({})
+        setSelectedDateProductTotals([])
         setCurrentHouseLogs([])
         setHouseLogsCache({})
         setLoadedHouseLogIds(new Set())
@@ -1361,6 +1373,30 @@ export default function DeliveryPage() {
                     value={houseSearch}
                     onChange={(event) => setHouseSearch(event.target.value)}
                 />
+
+                <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                            Delivered By Product ({selectedDate.toLocaleDateString('en-IN')})
+                        </p>
+                    </div>
+
+                    {selectedDateProductTotals.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No deliveries recorded for this date yet.</p>
+                    ) : (
+                        <div className="rounded-xl border border-border overflow-hidden">
+                            {selectedDateProductTotals.map((item, index) => (
+                                <div
+                                    key={item.productName}
+                                    className={`flex items-center justify-between px-3 py-2 ${index !== 0 ? 'border-t border-border' : ''}`}
+                                >
+                                    <p className="text-sm text-foreground">{item.productName}</p>
+                                    <p className="text-sm font-semibold text-foreground">{item.qty.toLocaleString('en-IN')}L</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
 
                 <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card p-2">
                     <Table>
