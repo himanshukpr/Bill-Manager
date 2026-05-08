@@ -573,14 +573,14 @@ export default function DeliveryPage() {
                     .join(', ')
 
                 const searchable = [
-                    house.houseNo,
+                    house.houseNo ?? '',
                     house.area ?? '',
-                    house.phoneNo,
+                    house.phoneNo ?? '',
                     allocatedHouseProducts[house.id] ?? '',
                     alertText,
                 ]
 
-                return searchable.some((value) => value.toLowerCase().includes(query))
+                return searchable.some((value) => value && value.toLowerCase().includes(query))
             })
     }, [visibleHouses, houseSearch, allocatedHouseProducts])
 
