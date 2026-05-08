@@ -383,6 +383,24 @@ export type HouseConfig = {
   supplier?: { uuid: string; username: string };
 };
 
+function normalizeHouseConfigs(configs: unknown): HouseConfig[] | undefined {
+  if (Array.isArray(configs)) return configs as HouseConfig[];
+  if (configs && typeof configs === 'object') return [configs as HouseConfig];
+  return undefined;
+}
+
+function normalizeHouseRecord<T extends { configs?: unknown }>(house: T): Omit<T, 'configs'> & { configs?: HouseConfig[] } {
+  const { configs, ...rest } = house;
+  return {
+    ...rest,
+    configs: normalizeHouseConfigs(configs),
+  };
+}
+
+function normalizeHouseCollection<T extends { configs?: unknown }>(houses: T[]): Array<Omit<T, 'configs'> & { configs?: HouseConfig[] }> {
+  return houses.map((house) => normalizeHouseRecord(house));
+}
+
 export type HouseBalance = {
   id: number;
   houseId: number;
@@ -509,15 +527,16 @@ export const housesApi = {
   list: async () =>
     apiGet<House[]>('/houses', {
       onData: async (data) => {
-        if (isBrowser()) await db.houses.bulkPut(data);
+        const normalized = normalizeHouseCollection(data as House[]);
+        if (isBrowser()) await db.houses.bulkPut(normalized);
       },
-    }),
+    }).then((data) => normalizeHouseCollection(data as House[])),
   get: async (id: number) =>
     apiGet<House>(`/houses/${id}`, {
       onData: async (data) => {
-        if (isBrowser()) await db.houses.put(data);
+        if (isBrowser()) await db.houses.put(normalizeHouseRecord(data as House));
       },
-    }),
+    }).then((data) => normalizeHouseRecord(data as House)),
   stats: () => apiGet<HouseStats>('/houses/stats'),
   create: async (data: Partial<House>) => {
     // Optimistic update: create temporary house with negative ID
@@ -557,11 +576,11 @@ export const housesApi = {
       // Don't await - let it happen in background
       (async () => {
         try {
-          const res = await apiPost<House>('/houses', data);
+            const res = normalizeHouseRecord(await apiPost<House>('/houses', data));
           if (isBrowser()) {
             // Replace temp ID with real ID
             await db.houses.delete(tempId);
-            await db.houses.put(res);
+              await db.houses.put(res);
 
             // Update all caches to replace temp with real house
             await updateCachedQueries<House[]>(
@@ -599,33 +618,46 @@ export const housesApi = {
       const existing = await db.houses.get(id);
       const next = existing ? { ...existing, ...data } : ({ id, ...data } as House);
 
-      // Optimistic: update immediately in DB and cache
-      await db.houses.put(next);
-      await updateCachedQueries<House[]>(
-        (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
-        (cached) => {
-          if (Array.isArray(cached)) {
-            return cached.map((item) => (item.id === id ? next : item));
-          }
-          return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
-        },
-      );
-
-      // Sync in background
       if (isOnline()) {
-        (async () => {
-          try {
-            await apiPatch<House>(`/houses/${id}`, data);
-          } catch {
-            // On error, could revert or notify user
-            // For now, keep local state - user can retry
-          }
-        })();
-      } else {
-        void syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
-      }
+        const result = normalizeHouseRecord(await apiPatch<House>(`/houses/${id}`, data));
 
-      return next;
+        await db.houses.put(result);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+          (cached) => {
+            if (Array.isArray(cached)) {
+              return cached.map((item) => (item.id === id ? result : item));
+            }
+
+            return (cached as unknown as House)?.id === id ? (result as unknown as House[]) : cached;
+          },
+        );
+
+        // Invalidate house config session cache when house is updated.
+        // This ensures stale cached configs don't persist across page reloads.
+        removeHouseConfigSessionCacheByHouseId(id);
+
+        return result;
+      } else {
+        // Optimistic: update immediately in DB and cache when offline.
+        await db.houses.put(next);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${id}`,
+          (cached) => {
+            if (Array.isArray(cached)) {
+              return cached.map((item) => (item.id === id ? next : item));
+            }
+            return (cached as unknown as House)?.id === id ? (next as unknown as House[]) : cached;
+          },
+        );
+
+        // Invalidate house config session cache when house is updated.
+        // This ensures stale cached configs don't persist across page reloads.
+        removeHouseConfigSessionCacheByHouseId(id);
+
+        void syncEngine.enqueue(`/houses/${id}`, 'PATCH', data);
+        return next;
+      }
     }
 
     return apiPatch<House>(`/houses/${id}`, data);
@@ -681,7 +713,7 @@ export const housesApi = {
     }
 
     if (isOnline()) {
-      return apiPatch<House>(`/houses/${id}/deactivate`, {});
+      return normalizeHouseRecord(await apiPatch<House>(`/houses/${id}/deactivate`, {}));
     }
 
     return null;
@@ -708,7 +740,7 @@ export const housesApi = {
     }
 
     if (isOnline()) {
-      return apiPatch<House>(`/houses/${id}/reactivate`, {});
+      return normalizeHouseRecord(await apiPatch<House>(`/houses/${id}/reactivate`, {}));
     }
 
     return null;

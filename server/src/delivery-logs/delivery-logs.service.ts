@@ -14,17 +14,13 @@ export class DeliveryLogsService {
 
     async create(dto: CreateDeliveryLogDto, user: any) {
         const isShopShift = dto.shift === 'shop';
-        
-        if (isShopShift && user?.role === 'supplier') {
-            throw new ForbiddenException('Suppliers cannot create shop entries');
-        }
 
         const house = await this.prisma.house.findUnique({ where: { id: dto.houseId } });
         if (!house) throw new NotFoundException(`House #${dto.houseId} not found`);
 
         let supplierId: string | null = null;
-        
-        if (!isShopShift && user?.uuid) {
+
+        if (user?.role === 'supplier' && user?.uuid) {
             const supplier = await this.prisma.user.findUnique({ where: { uuid: user.uuid } });
             if (supplier) {
                 supplierId = user.uuid;
@@ -50,7 +46,7 @@ export class DeliveryLogsService {
 
         const openingBalance = Number(balance.currentBalance ?? 0);
         const closingBalance = openingBalance + computedTotal;
-        
+
         const data: any = {
             houseId: dto.houseId,
             shift: dto.shift as Shift,
@@ -92,8 +88,15 @@ export class DeliveryLogsService {
         if (filters?.houseId) where.houseId = filters.houseId;
         if (filters?.shift) where.shift = filters.shift;
 
-        if (user?.role === 'supplier' && filters?.shift !== Shift.evening) {
-            where.supplierId = user.uuid;
+        // Suppliers should only be restricted to their own logs when
+        // explicitly querying for morning/evening deliveries. For
+        // unfiltered queries (used by the supplier direct-entry UI to
+        // show recent shop entries) we allow returning admin-created shop
+        // records as well.
+        if (user?.role === 'supplier') {
+            if (filters?.shift === Shift.morning || filters?.shift === Shift.evening) {
+                where.supplierId = user.uuid;
+            }
         }
 
         return this.prisma.deliveryLog.findMany({

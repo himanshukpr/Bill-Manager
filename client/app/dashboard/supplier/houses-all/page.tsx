@@ -449,8 +449,7 @@ export default function HousesPage() {
   const filtered = useMemo(() => {
     const query = debouncedSearch.trim().toLowerCase()
 
-    // Exclude deactivated houses from supplier views
-    return (houses || []).filter((h) => h.active).filter((house) => {
+    return (houses || []).filter((house) => {
       const shift = getHouseShift(house)
       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
@@ -473,7 +472,7 @@ export default function HousesPage() {
     const query = search.trim().toLowerCase()
     if (!query) return []
 
-    return houses
+    return (houses || [])
       .filter((house) => {
         const shift = getHouseShift(house)
         if (shiftFilter !== 'all' && shift !== shiftFilter) return false
@@ -568,11 +567,11 @@ export default function HousesPage() {
         phoneNo: form.phoneNo,
         alternativePhone: form.alternativePhone || undefined,
         description: form.description || undefined,
-        rate1Type: form.rate1Type || undefined,
-        rate1: form.rate1 ? form.rate1 : undefined,
-        rate2Type: form.rate2Type || undefined,
-        rate2: form.rate2 ? form.rate2 : undefined,
-      }
+        rate1Type: form.rate1Type || null,
+        rate1: form.rate1 ? form.rate1 : null,
+        rate2Type: form.rate2Type || null,
+        rate2: form.rate2 ? form.rate2 : null,
+      } as Partial<House>
 
       const savedHouse = editingId
         ? await housesApi.update(editingId, payload)
