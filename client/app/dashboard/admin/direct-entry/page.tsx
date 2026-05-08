@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CirclePlus, Package2, Plus, RefreshCw, Search, Trash2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -21,6 +21,8 @@ type DeliveryEntryRow = {
   milkType: string
   qty: string
   rate: string
+  amount: string
+  source: 'qty' | 'amount' | null
 }
 
 function makeRowId() {
@@ -33,12 +35,54 @@ function createRow(rate?: ProductRate): DeliveryEntryRow {
     milkType: rate?.name ?? '',
     qty: '',
     rate: rate ? String(rate.rate) : '',
+    amount: '',
+    source: null,
   }
 }
 
 function toNumber(value: string): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function formatDecimal(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(2) : ''
+}
+
+function calculateAmountFromQty(qty: string, rate: string): string {
+  const qtyValue = toNumber(qty)
+  const rateValue = toNumber(rate)
+
+  if (!qty.trim() || rateValue <= 0) return ''
+  return formatDecimal(qtyValue * rateValue)
+}
+
+function calculateQtyFromAmount(amount: string, rate: string): string {
+  const amountValue = toNumber(amount)
+  const rateValue = toNumber(rate)
+
+  if (!amount.trim() || rateValue <= 0) return ''
+  return formatDecimal(amountValue / rateValue)
+}
+
+function getRowValues(row: DeliveryEntryRow): { qty: number; rate: number; amount: number } {
+  const rate = toNumber(row.rate)
+
+  if (row.source === 'amount') {
+    const amount = toNumber(row.amount)
+    return {
+      qty: rate > 0 ? amount / rate : 0,
+      rate,
+      amount,
+    }
+  }
+
+  const qty = toNumber(row.qty)
+  return {
+    qty,
+    rate,
+    amount: qty * rate,
+  }
 }
 
 function formatMoney(value: string | number): string {
@@ -148,6 +192,18 @@ export default function DeliveryEntryPage() {
   const [deliveryDate, setDeliveryDate] = useState(() => getCachedDeliveryDate())
   const [note, setNote] = useState('')
   const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
+  const newRowIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (newRowIdRef.current) {
+      const input = document.getElementById(`milkType-${newRowIdRef.current}`)
+      if (input) {
+        input.focus()
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      newRowIdRef.current = null
+    }
+  })
 
   useEffect(() => {
     let active = true
@@ -208,8 +264,7 @@ export default function DeliveryEntryPage() {
     return rows
       .map<DeliveryLogItem | null>((row) => {
         const milkType = row.milkType.trim()
-        const qty = toNumber(row.qty)
-        const rate = toNumber(row.rate)
+        const { qty, rate, amount } = getRowValues(row)
 
         if (!milkType || qty <= 0 || rate <= 0) {
           return null
@@ -219,7 +274,7 @@ export default function DeliveryEntryPage() {
           milkType,
           qty,
           rate,
-          amount: qty * rate,
+          amount,
         }
       })
       .filter((item): item is DeliveryLogItem => Boolean(item))
@@ -242,7 +297,17 @@ export default function DeliveryEntryPage() {
         if (!milkType) return row
 
         const resolvedRate = getResolvedRateByProductName(selectedHouse, rates, milkType)
-        return row.rate === resolvedRate ? row : { ...row, rate: resolvedRate }
+        if (row.rate === resolvedRate) return row
+
+        const nextRow: DeliveryEntryRow = { ...row, rate: resolvedRate }
+
+        if (row.source === 'amount') {
+          nextRow.qty = calculateQtyFromAmount(row.amount, resolvedRate)
+        } else if (row.qty.trim()) {
+          nextRow.amount = calculateAmountFromQty(row.qty, resolvedRate)
+        }
+
+        return nextRow
       }),
     )
   }, [rates, selectedHouse])
@@ -252,14 +317,63 @@ export default function DeliveryEntryPage() {
     [logs],
   )
 
-  function updateRow(id: string, patch: Partial<DeliveryEntryRow>) {
+  function updateRowQty(id: string, qty: string) {
     setRows((current) =>
-      current.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+      current.map((row) => {
+        if (row.id !== id) return row
+
+        return {
+          ...row,
+          qty,
+          amount: calculateAmountFromQty(qty, row.rate),
+          source: 'qty',
+        }
+      }),
+    )
+  }
+
+  function updateRowAmount(id: string, amount: string) {
+    setRows((current) =>
+      current.map((row) => {
+        if (row.id !== id) return row
+
+        return {
+          ...row,
+          amount,
+          qty: calculateQtyFromAmount(amount, row.rate),
+          source: 'amount',
+        }
+      }),
+    )
+  }
+
+  function updateRowMilkType(id: string, milkType: string) {
+    setRows((current) =>
+      current.map((row) => {
+        if (row.id !== id) return row
+
+        const resolvedRate = getResolvedRateByProductName(selectedHouse, rates, milkType)
+        const nextRow: DeliveryEntryRow = {
+          ...row,
+          milkType,
+          rate: resolvedRate,
+        }
+
+        if (row.source === 'amount') {
+          nextRow.qty = calculateQtyFromAmount(row.amount, resolvedRate)
+        } else if (row.qty.trim()) {
+          nextRow.amount = calculateAmountFromQty(row.qty, resolvedRate)
+        }
+
+        return nextRow
+      }),
     )
   }
 
   function addBlankRow() {
-    setRows((current) => [...current, createRow()])
+    const newRow = createRow()
+    newRowIdRef.current = newRow.id
+    setRows((current) => [...current, newRow])
   }
 
   function removeRow(id: string) {
@@ -393,7 +507,7 @@ export default function DeliveryEntryPage() {
 
                 <div className="space-y-4">
                   {rows.map((row, index) => {
-                    const rowAmount = toNumber(row.qty) * toNumber(row.rate)
+                    const { amount: rowAmount } = getRowValues(row)
 
                     return (
                       <div key={row.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -423,14 +537,7 @@ export default function DeliveryEntryPage() {
                               list="delivery-products"
                               placeholder="e.g. Cow Milk"
                               value={row.milkType}
-                              onChange={(event) => {
-                                const newMilkType = event.target.value
-                                const matchingRate = getResolvedRateByProductName(selectedHouse, rates, newMilkType)
-                                updateRow(row.id, {
-                                  milkType: newMilkType,
-                                  rate: matchingRate,
-                                })
-                              }}
+                              onChange={(event) => updateRowMilkType(row.id, event.target.value)}
                             />
                           </div>
 
@@ -443,7 +550,20 @@ export default function DeliveryEntryPage() {
                               step="0.01"
                               placeholder="0"
                               value={row.qty}
-                              onChange={(event) => updateRow(row.id, { qty: event.target.value })}
+                              onChange={(event) => updateRowQty(row.id, event.target.value)}
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label htmlFor={`amount-${row.id}`}>Amount</Label>
+                            <Input
+                              id={`amount-${row.id}`}
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="0"
+                              value={row.amount}
+                              onChange={(event) => updateRowAmount(row.id, event.target.value)}
                             />
                           </div>
 
@@ -451,13 +571,6 @@ export default function DeliveryEntryPage() {
                             <Label>Rate</Label>
                             <div className="text-sm font-semibold text-foreground">
                               {row.rate ? formatMoney(row.rate) : '—'}
-                            </div>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <div className="text-sm font-medium text-muted-foreground">Amount</div>
-                            <div className="text-sm font-semibold text-foreground">
-                              {formatMoney(rowAmount)}
                             </div>
                           </div>
                         </div>
