@@ -12,6 +12,7 @@ import {
     Rows3,
     Plus,
     Trash2,
+    Map as MapIcon,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -98,6 +99,13 @@ function normalizeProductName(name?: string | null): string {
     return (name ?? '').trim().toLowerCase()
 }
 
+function normalizeMilkCategory(value?: string | null): 'cow' | 'buffalo' | '' {
+    const text = normalizeProductName(value)
+    if (text.includes('buffalo')) return 'buffalo'
+    if (text.includes('cow')) return 'cow'
+    return ''
+}
+
 function resolveGlobalRateMap(rates: ProductRate[]): Record<string, number> {
     const next: Record<string, number> = {}
 
@@ -118,18 +126,21 @@ function resolveGlobalRateMap(rates: ProductRate[]): Record<string, number> {
 function resolveHouseRate(house: House | undefined, milkType: MilkType): number {
     if (!house) return 0
 
+    const selectedCategory = normalizeMilkCategory(milkType)
+    if (!selectedCategory) return 0
+
     const configured = [
-        { type: normalizeProductName(house.rate1Type), rate: Number(house.rate1 ?? 0) },
-        { type: normalizeProductName(house.rate2Type), rate: Number(house.rate2 ?? 0) },
+        { type: normalizeMilkCategory(house.rate1Type), rate: Number(house.rate1 ?? 0) },
+        { type: normalizeMilkCategory(house.rate2Type), rate: Number(house.rate2 ?? 0) },
     ]
 
     const typedMatch = configured.find((entry) =>
-        entry.type.includes(milkType) && Number.isFinite(entry.rate) && entry.rate > 0
+        entry.type === selectedCategory && Number.isFinite(entry.rate) && entry.rate > 0
     )
 
     if (typedMatch) return typedMatch.rate
 
-    const fallback = milkType === 'buffalo' ? Number(house.rate1 ?? 0) : Number(house.rate2 ?? 0)
+    const fallback = selectedCategory === 'buffalo' ? Number(house.rate1 ?? 0) : Number(house.rate2 ?? 0)
     return Number.isFinite(fallback) && fallback > 0 ? fallback : 0
 }
 
@@ -854,7 +865,7 @@ export default function DeliveryPage() {
         // Persist the chosen date so it remains until manually changed
         try {
             localStorage.setItem('delivery_selected_date', datePickerValue)
-        } catch {}
+        } catch { }
         setIsDatePickerOpen(false)
     }, [datePickerValue, handleDateInputChange])
 
@@ -891,14 +902,14 @@ export default function DeliveryPage() {
 
     const getEffectiveRate = (house: House | undefined, productName: string): { rate: number; source: 'house' | 'global' | 'none' } => {
         const normalizedName = normalizeProductName(productName)
-        const globalRate = Number(globalRateMap[normalizedName] ?? 0)
-        if (globalRate > 0) {
-            return { rate: globalRate, source: 'global' }
-        }
-
         const houseRate = resolveHouseRate(house, productName as MilkType)
         if (houseRate > 0) {
             return { rate: houseRate, source: 'house' }
+        }
+
+        const globalRate = Number(globalRateMap[normalizedName] ?? 0)
+        if (globalRate > 0) {
+            return { rate: globalRate, source: 'global' }
         }
 
         return { rate: 0, source: 'none' }
@@ -983,8 +994,6 @@ export default function DeliveryPage() {
         const deltaY = touch.clientY - start.y
 
         if (Math.abs(deltaY) > Math.abs(deltaX)) return
-
-        event.preventDefault()
 
         const panelWidth = pageContainerRef.current?.clientWidth ?? window.innerWidth
         const maxOffset = Math.max(160, Math.floor(panelWidth * 0.9))
@@ -1307,7 +1316,20 @@ export default function DeliveryPage() {
         )
     }
 
-    if (loading) return <Skeleton className="h-40 w-full" />
+    if (loading) return (
+        <div className="p-2 space-y-2 sm:p-4">
+            <div className="flex items-center justify-between">
+                <Skeleton className="h-8 w-20" />
+                <Skeleton className="h-8 w-8 rounded-full" />
+            </div>
+            <Skeleton className="h-60 w-full rounded-xl" />
+            <div className="grid grid-cols-2 gap-2">
+                <Skeleton className="h-16 rounded-xl" />
+                <Skeleton className="h-16 rounded-xl" />
+            </div>
+            <Skeleton className="h-32 w-full rounded-xl" />
+        </div>
+    )
 
     if (panelView === 'allocated-houses') {
         return (
@@ -1630,49 +1652,28 @@ export default function DeliveryPage() {
                 <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
                     {/* HOUSE CARD */}
                     <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                        <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setIsMapExpanded(true)}
-                            onKeyDown={(e) => e.key === 'Enter' && setIsMapExpanded(true)}
-                            className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2 cursor-pointer"
-                        >
-                            <div className="absolute inset-0 pointer-events-none">
-                                <iframe
-                                    title="Mini map preview"
-                                    src={miniMapEmbedUrl}
-                                    className="h-full w-full border-0"
-                                    loading="lazy"
-                                    referrerPolicy="no-referrer-when-downgrade"
-                                />
-                            </div>
-                            <div className="absolute inset-0 bg-emerald-900/10" />
-                            {miniMapLoading ? (
-                                <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/85">
-                                    Loading map...
-                                </div>
-                            ) : null}
-                            {miniMapLocationWarning ? (
-                                <div className="absolute left-2 right-2 top-2 rounded-md border border-amber-500/35 bg-amber-50/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
-                                    {miniMapLocationWarning}
-                                </div>
-                            ) : null}
+                        <div className="flex items-center justify-between">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={() => setIsMapExpanded(true)}
+                            >
+                                <MapIcon className="h-4 w-4" />
+                                Map
+                            </Button>
+
                             <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="absolute right-2 top-2 h-7 w-7 rounded-md bg-background/90 hover:bg-background/95 shadow-sm"
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleClearToday()
-                                }}
+                                className="h-8 w-8"
+                                onClick={handleClearToday}
                                 title="Clear selected-date deliveries"
                             >
-                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
-                            <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1">
-                                <Maximize2 className="h-3.5 w-3.5 text-foreground" />
-                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
@@ -1817,7 +1818,7 @@ export default function DeliveryPage() {
                                                                             {productRateOptions.length > 0 ? (
                                                                                 productRateOptions.map((option) => (
                                                                                     <SelectItem key={option.value} value={option.value}>
-                                                                                        {option.label}
+                                                                                        {option.label} (₹{getEffectiveRate(currentHouse, option.value).rate})
                                                                                     </SelectItem>
                                                                                 ))
                                                                             ) : (
