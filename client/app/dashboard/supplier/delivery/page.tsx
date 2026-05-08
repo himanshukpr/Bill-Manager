@@ -1121,12 +1121,41 @@ export default function DeliveryPage() {
         setSwipedDeliveryItem({ index, offset: nextOffset })
     }
 
-    const handleDeliveryItemTouchEnd = (index: number) => {
+    const handleDeliveryItemTouchEnd = async (index: number) => {
         const start = deliveryItemSwipeStartRef.current
         if (!start || start.index !== index) return
 
-        const shouldRevealDelete = swipedDeliveryItem.index === index && swipedDeliveryItem.offset <= -56
-        setSwipedDeliveryItem(shouldRevealDelete ? { index, offset: -84 } : { index: null, offset: 0 })
+        const shouldDelete = swipedDeliveryItem.index === index && swipedDeliveryItem.offset <= -56
+        if (shouldDelete) {
+            const itemsAfterDelete = deliveryItems.filter((_, i) => i !== index)
+            if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
+                try {
+                    await Promise.all(currentHouseLogs.map((log) => deliveryLogsApi.delete(log.id)))
+                    setCurrentHouseLogs([])
+                    setCompletedHouses((prev) => {
+                        const next = new Set(prev)
+                        next.delete(currentHouse.id)
+                        return next
+                    })
+                    setHouseLogsCache((prev) => {
+                        const next = { ...prev }
+                        delete next[currentHouse.id]
+                        return next
+                    })
+                    setLoadedHouseLogIds((prev) => {
+                        const next = new Set(prev)
+                        next.delete(currentHouse.id)
+                        return next
+                    })
+                    await loadSelectedDateDeliveredSummary()
+                } catch (err: any) {
+                    toast.error(err.message)
+                }
+            }
+            removeDeliveryItem(index)
+        } else {
+            setSwipedDeliveryItem({ index: null, offset: 0 })
+        }
         deliveryItemSwipeStartRef.current = null
     }
 
