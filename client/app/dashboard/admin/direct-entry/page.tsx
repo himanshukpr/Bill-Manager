@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CirclePlus, Package2, Plus, RefreshCw, Search, Trash2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -192,6 +192,18 @@ export default function DeliveryEntryPage() {
   const [deliveryDate, setDeliveryDate] = useState(() => getCachedDeliveryDate())
   const [note, setNote] = useState('')
   const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
+  const newRowIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (newRowIdRef.current) {
+      const input = document.getElementById(`milkType-${newRowIdRef.current}`)
+      if (input) {
+        input.focus()
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      newRowIdRef.current = null
+    }
+  })
 
   useEffect(() => {
     let active = true
@@ -359,7 +371,9 @@ export default function DeliveryEntryPage() {
   }
 
   function addBlankRow() {
-    setRows((current) => [...current, createRow()])
+    const newRow = createRow()
+    newRowIdRef.current = newRow.id
+    setRows((current) => [...current, newRow])
   }
 
   function removeRow(id: string) {
