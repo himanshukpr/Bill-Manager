@@ -254,12 +254,24 @@ export default function SupplierDirectEntryPage() {
         const q = houseSearch.trim().toLowerCase()
         if (!q) return houses.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
 
-        return houses
-            .filter((house) =>
-                house.houseNo.toLowerCase().includes(q) ||
-                (house.area || '').toLowerCase().includes(q),
-            )
-            .sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+        const exactMatches: typeof houses = []
+        const partialMatches: typeof houses = []
+
+        houses.forEach((house) => {
+          const houseNo = house.houseNo.toLowerCase()
+          const area = (house.area || '').toLowerCase()
+
+          if (houseNo === q || area === q) {
+            exactMatches.push(house)
+          } else if (houseNo.includes(q) || area.includes(q)) {
+            partialMatches.push(house)
+          }
+        })
+
+        exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+        partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+        return [...exactMatches, ...partialMatches]
     }, [houses, houseSearch])
 
     const items = useMemo(() => {
