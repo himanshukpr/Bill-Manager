@@ -52,18 +52,45 @@ export class BillsService {
   }
 
   private async buildBillDraft(dto: GenerateBillDto) {
-    const { periodStart, periodEnd, month, year } = this.resolvePeriod(dto);
+    let periodStart: Date
+    let periodEnd: Date
+    let month: number
+    let year: number
     const noteText = dto.note?.trim();
 
-    const existing = await this.prisma.bill.findUnique({
-      where: {
-        houseId_month_year: {
-          houseId: dto.houseId,
-          month,
-          year,
-        },
-      },
-    });
+    // If no fromDate/date provided, attempt to use the last bill's generatedDate + 1 day
+    if (!dto.fromDate && !dto.date) {
+      const lastBill = await this.prisma.bill.findFirst({
+        where: { houseId: dto.houseId },
+        orderBy: { generatedDate: 'desc' },
+        select: { generatedDate: true },
+      });
+
+      if (!lastBill) {
+        throw new BadRequestException('From date is required for first bill');
+      }
+
+      periodStart = new Date(lastBill.generatedDate);
+      periodStart.setHours(0, 0, 0, 0);
+      periodStart.setDate(periodStart.getDate() + 1);
+
+      const toInput = dto.toDate ?? new Date().toISOString();
+      periodEnd = new Date(toInput);
+      periodEnd.setHours(23, 59, 59, 999);
+
+      if (periodStart > periodEnd) {
+        throw new BadRequestException('From date must be before or equal to upto date');
+      }
+
+      month = periodEnd.getMonth() + 1;
+      year = periodEnd.getFullYear();
+    } else {
+      const resolved = this.resolvePeriod(dto);
+      periodStart = resolved.periodStart;
+      periodEnd = resolved.periodEnd;
+      month = resolved.month;
+      year = resolved.year;
+    }
 
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId: dto.houseId },
@@ -142,7 +169,6 @@ export class BillsService {
       totalAmount,
       billItems,
       previousBalance: Number(balance.previousBalance),
-      existingBill: existing,
       noteText,
     };
   }
@@ -182,37 +208,11 @@ export class BillsService {
       totalAmount,
       billItems,
       previousBalance,
-      existingBill,
       noteText,
     } = await this.buildBillDraft(dto);
 
-    return this.prisma.$transaction(async (tx) => {
-      if (existingBill) {
-        const existingTotal = Number(existingBill.totalAmount ?? 0);
-        const existingPeriodEnd = new Date(existingBill.generatedDate);
-        existingPeriodEnd.setHours(23, 59, 59, 999);
-
-        await tx.bill.delete({ where: { id: existingBill.id } });
-        await tx.deliveryLog.updateMany({
-          where: {
-            houseId: dto.houseId,
-            deliveredAt: {
-              gte: new Date(existingBill.year, existingBill.month - 1, 1, 0, 0, 0, 0),
-              lte: existingPeriodEnd,
-            },
-          },
-          data: { billGenerated: false },
-        });
-        await tx.houseBalance.update({
-          where: { houseId: dto.houseId },
-          data: {
-            previousBalance: { decrement: existingTotal },
-            currentBalance: { increment: existingTotal },
-          },
-        });
-      }
-
-      const bill = await tx.bill.create({
+    const bill = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.bill.create({
         data: {
           houseId: dto.houseId,
           month,
@@ -245,8 +245,74 @@ export class BillsService {
         },
       });
 
-      return bill;
+      return created;
     });
+
+    // After creating a bill, recompute closures in case payments already cover it
+    try {
+      await this.recomputeClosuresForHouse(dto.houseId);
+    } catch {
+      // ignore errors from recompute to avoid breaking bill generation
+    }
+
+    return bill;
+  }
+
+  async getPendingBills(houseId: number) {
+    const bills = await this.prisma.bill.findMany({
+      where: { houseId },
+      orderBy: { generatedDate: 'asc' },
+      include: {
+        house: { select: { id: true, houseNo: true, area: true } },
+      },
+    });
+
+    // Get all payments for this house
+    const balance = await this.prisma.houseBalance.findUnique({
+      where: { houseId },
+    });
+    if (!balance) {
+      throw new NotFoundException(`Balance for house #${houseId} not found`);
+    }
+
+    const payments = await this.prisma.paymentHistory.findMany({
+      where: { balanceRef: balance.id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Calculate pending amounts for each bill using FIFO
+    const paymentQueue = payments.map((p) => ({ amount: Number(p.amount) + Number((p as any).discount ?? 0) }));
+    const billsWithPending = bills.map((bill) => {
+      const billAmount = Number(bill.totalAmount ?? 0);
+      return {
+        ...bill,
+        pendingAmount: billAmount, // Will be recalculated below
+        isClosed: bill.isClosed,
+      };
+    });
+
+    // Simulate payment allocation using FIFO
+    let paymentIndex = 0;
+    for (let i = 0; i < billsWithPending.length; i++) {
+      const bill = billsWithPending[i];
+      let remaining = Number(bill.totalAmount ?? 0);
+
+      while (remaining > 0 && paymentIndex < paymentQueue.length) {
+        const head = paymentQueue[paymentIndex];
+        if (head.amount <= 0) {
+          paymentIndex++;
+          continue;
+        }
+        const take = Math.min(head.amount, remaining);
+        head.amount = +(head.amount - take).toFixed(2);
+        remaining = +(remaining - take).toFixed(2);
+        if (head.amount <= 0) paymentIndex++;
+      }
+
+      billsWithPending[i].pendingAmount = Math.max(0, remaining);
+    }
+
+    return billsWithPending;
   }
 
   async generateAll(dto: GenerateAllBillsDto) {
@@ -290,15 +356,10 @@ export class BillsService {
   async preview(houseId: number, period: { date?: string; fromDate?: string; toDate?: string }) {
     const { periodStart, periodEnd, month, year } = this.resolvePeriod(period);
 
-    const existingBill = await this.prisma.bill.findUnique({
-      where: {
-        houseId_month_year: {
-          houseId,
-          month,
-          year,
-        },
-      },
+    const existingBill = await this.prisma.bill.findFirst({
+      where: { houseId, month, year },
       select: { id: true },
+      orderBy: { generatedDate: 'desc' },
     });
 
     const balance = await this.prisma.houseBalance.findUnique({
@@ -397,5 +458,52 @@ export class BillsService {
       billsThisMonth,
       totalPendingBalance: totalBalance._sum.previousBalance ?? 0,
     };
+  }
+
+  // Recompute bill closures for a house by allocating payments to oldest outstanding bills
+  async recomputeClosuresForHouse(houseId: number) {
+    const balance = await this.prisma.houseBalance.findUnique({ where: { houseId } });
+    if (!balance) return;
+
+    const payments = await this.prisma.paymentHistory.findMany({
+      where: { balanceRef: balance.id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const bills = await this.prisma.bill.findMany({
+      where: { houseId },
+      orderBy: { generatedDate: 'asc' },
+      select: { id: true, totalAmount: true, generatedDate: true, isClosed: true },
+    });
+
+    // Build payment queue (include any discount recorded with the payment)
+    const paymentQueue = payments.map((p) => ({ amount: Number(p.amount) + Number((p as any).discount ?? 0) }));
+
+    for (const bill of bills) {
+      let remaining = Number(bill.totalAmount ?? 0);
+      // If already closed, skip
+      if (bill.isClosed) continue;
+
+      // Consume payments in FIFO order
+      while (remaining > 0 && paymentQueue.length > 0) {
+        const head = paymentQueue[0];
+        if (head.amount <= 0) {
+          paymentQueue.shift();
+          continue;
+        }
+        const take = Math.min(head.amount, remaining);
+        head.amount = +(head.amount - take).toFixed(2);
+        remaining = +(remaining - take).toFixed(2);
+        if (head.amount <= 0) paymentQueue.shift();
+      }
+
+      if (remaining <= 0) {
+        // mark bill closed
+        await this.prisma.bill.update({ where: { id: bill.id }, data: { isClosed: true } });
+      } else {
+        // leave as not closed
+        await this.prisma.bill.update({ where: { id: bill.id }, data: { isClosed: false } });
+      }
+    }
   }
 }

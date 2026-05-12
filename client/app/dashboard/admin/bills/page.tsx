@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Plus, FileText, Search, Trash2, Eye, CalendarDays } from 'lucide-react'
+import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check } from 'lucide-react'
 import { billsApi, housesApi, type Bill, type House, type BillItem } from '@/lib/api'
 import { toast } from 'sonner'
 import {
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@/components/ui/badge'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -159,10 +160,45 @@ export default function BillsPage() {
 
   const selectedGenHouse = useMemo(() => houses.find((h) => String(h.id) === genHouseId), [houses, genHouseId])
 
-  const filtered = bills.filter(b =>
-    b.house?.houseNo.toLowerCase().includes(search.toLowerCase()) ||
-    b.house?.area?.toLowerCase().includes(search.toLowerCase())
-  )
+  // When a house is selected for generation, default the from date to last bill.generatedDate + 1 day
+  useEffect(() => {
+    if (!genHouseId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const houseId = parseInt(genHouseId)
+        const billsForHouse = await billsApi.list({ houseId })
+        if (cancelled) return
+        if (billsForHouse && billsForHouse.length > 0) {
+          const latest = billsForHouse
+            .map(b => new Date(b.generatedDate))
+            .filter(d => !Number.isNaN(d.getTime()))
+            .sort((a, b) => b.getTime() - a.getTime())[0]
+          if (latest) {
+            const next = new Date(latest)
+            next.setDate(next.getDate() + 1)
+            setGenFromDate(formatLocalDate(next))
+            return
+          }
+        }
+        setGenFromDate(getMonthStart())
+      } catch {
+        setGenFromDate(getMonthStart())
+      }
+    })()
+    return () => { cancelled = true }
+  }, [genHouseId])
+
+  const filtered = bills
+    .filter(b =>
+      b.house?.houseNo.toLowerCase().includes(search.toLowerCase()) ||
+      b.house?.area?.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      // Unpaid bills first (isClosed = false), paid bills at bottom (isClosed = true)
+      if (a.isClosed === b.isClosed) return 0
+      return a.isClosed ? 1 : -1
+    })
 
   function openGenerate() {
     setGenerateMode('single')
@@ -214,7 +250,7 @@ export default function BillsPage() {
           toDate,
           note: genNote || undefined,
         })
-        toast.success(previewData?.existingBillId ? 'Bill overwritten successfully' : 'Bill generated successfully')
+        toast.success('Bill generated successfully')
       }
       setGenerateOpen(false)
       load()
@@ -304,7 +340,7 @@ export default function BillsPage() {
               </thead>
               <tbody>
                 {filtered.map((b, idx) => (
-                  <tr key={b.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
+                  <tr key={b.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''} ${b.isClosed ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
                     <td className="px-4 py-3">
                       <div>
                         <p className="font-semibold">{b.house?.houseNo}</p>
@@ -318,7 +354,16 @@ export default function BillsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-bold text-primary">₹{Number(b.totalAmount).toLocaleString('en-IN')}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold ${b.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-primary'}`}>
+                          ₹{Number(b.totalAmount).toLocaleString('en-IN')}
+                        </span>
+                        {b.isClosed && (
+                          <Badge className="bg-emerald-600 text-white flex items-center gap-1 h-5 px-2">
+                            <Check className="h-3 w-3" /> Paid
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">
                       ₹{Number(b.previousBalance).toLocaleString('en-IN')}
@@ -444,11 +489,7 @@ export default function BillsPage() {
                     </div>
                   ) : previewData ? (
                     <>
-                      {previewData.existingBillId && (
-                        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-                          A bill for this period already exists. Generating again will overwrite the existing bill.
-                        </div>
-                      )}
+                      {/* no overwrite warning — bills are now appended instead of overwritten */}
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-muted-foreground">Period</span>
                         <span className="font-semibold">

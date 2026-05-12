@@ -435,8 +435,10 @@ export type Bill = {
   items: BillItem[];
   previousBalance: string;
   generatedDate: string;
+  isClosed?: boolean;
   note?: string;
   house?: { id: number; houseNo: string; area?: string; phoneNo?: string };
+  pendingAmount?: number;
 };
 
 export type GenerateAllBillsResult = {
@@ -1106,14 +1108,22 @@ export const balanceApi = {
 
     return { queued: true };
   },
-  record: async (data: { houseId: number; amount: number; note?: string }) => {
+  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number }) => {
     if (isBrowser()) {
       void syncEngine.enqueue('/house-balance/payment', 'POST', data);
       return { queued: true };
     }
 
     if (isOnline()) {
-      return apiPost('/house-balance/payment', data);
+      const res = await apiPost('/house-balance/payment', data);
+      if (isBrowser()) {
+        // Ensure UI reflects updated payments and bill closures
+        await invalidateCache('/bills');
+        await invalidateCache('/house-balance');
+        await invalidateCache('/houses');
+        await invalidateCache('/delivery-logs');
+      }
+      return res;
     }
 
     return { queued: true };
@@ -1181,6 +1191,13 @@ export const billsApi = {
       await invalidateCache('/houses');
     }
     return res;
+  },
+  pending: (houseId: number) => {
+    // Prevent querying pending bills for temporary houses
+    if (houseId < 0) {
+      return Promise.resolve([] as Bill[]);
+    }
+    return apiGet<Bill[]>(`/bills/pending/${houseId}`);
   },
   delete: async (id: number) => {
     if (isOnline()) {
