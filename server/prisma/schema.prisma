@@ -77,8 +77,8 @@ model PaymentHistory {
   amount     Decimal      @db.Decimal(10, 2)
   discount   Decimal      @default(0) @db.Decimal(10, 2)
   note       String?
-  billIds    Json?        @map("bill_ids")
   createdAt  DateTime     @default(now()) @map("created_at")
+  billIds    Json?        @map("bill_ids")
   balance    HouseBalance @relation(fields: [balanceRef], references: [id], onDelete: Cascade)
 
   @@map("payment_history")
@@ -99,6 +99,7 @@ model Bill {
   houseId         Int        @map("house_id")
   notes           BillNote[]
   house           House      @relation(fields: [houseId], references: [id], onDelete: Cascade)
+
   @@map("bills")
 }
 
