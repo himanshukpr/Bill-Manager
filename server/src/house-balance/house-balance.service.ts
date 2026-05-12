@@ -37,6 +37,7 @@ export class HouseBalanceService {
           amount: dto.amount,
           note: dto.note,
           discount: dto.discount || 0,
+          ...(dto.billIds ? { billIds: dto.billIds } : {}),
         },
       }),
       this.prisma.houseBalance.update({

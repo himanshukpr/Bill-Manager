@@ -217,6 +217,8 @@ export class BillsService {
           houseId: dto.houseId,
           month,
           year,
+          fromDate: periodStart,
+          toDate: periodEnd,
           totalAmount,
           items: billItems as any,
           previousBalance,

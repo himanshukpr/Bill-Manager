@@ -1109,21 +1109,111 @@ export const balanceApi = {
     return { queued: true };
   },
   record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number }) => {
-    if (isBrowser()) {
-      void syncEngine.enqueue('/house-balance/payment', 'POST', data);
-      return { queued: true };
-    }
+    const applyLocalPaymentUpdate = async (payment?: PaymentHistory, balance?: HouseBalance) => {
+      if (!isBrowser()) return;
+
+      const totalAmount = data.amount + (data.discount ?? 0);
+      const now = new Date().toISOString();
+      const existingHouse = await db.houses.get(data.houseId);
+      const paymentBase: PaymentHistory = {
+        id: payment?.id ?? -Math.floor(Math.random() * 1_000_000_000),
+        balanceRef: payment?.balanceRef ?? balance?.id ?? 0,
+        amount: String(data.amount),
+        note: data.note,
+        createdAt: payment?.createdAt ?? now,
+        balance: payment?.balance ?? (existingHouse ? { house: { id: existingHouse.id, houseNo: existingHouse.houseNo, area: existingHouse.area } } : undefined),
+      };
+
+      if (data.billIds?.length) (paymentBase as PaymentHistory & { billIds?: number[] }).billIds = data.billIds;
+      if (data.discount) (paymentBase as PaymentHistory & { discount?: number }).discount = data.discount;
+
+      const resolveNextPreviousBalance = (current: number) => {
+        if (balance?.previousBalance !== undefined && balance?.previousBalance !== null) {
+          return Number(balance.previousBalance) || 0;
+        }
+        return Math.round((current - totalAmount) * 100) / 100;
+      };
+
+      if (existingHouse) {
+        const currentPrev = Number(existingHouse.balance?.previousBalance ?? 0);
+        const nextPrev = resolveNextPreviousBalance(currentPrev);
+        await db.houses.put({
+          ...existingHouse,
+          balance: {
+            ...(existingHouse.balance ?? { id: balance?.id ?? 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId: data.houseId,
+            previousBalance: String(nextPrev),
+          },
+        });
+      }
+
+      await updateCachedQueries<House[] | House>(
+        (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${data.houseId}`,
+        (cached) => {
+          const updateHouse = (house: House) => {
+            if (house.id !== data.houseId) return house;
+            const currentPrev = Number(house.balance?.previousBalance ?? 0);
+            const nextPrev = resolveNextPreviousBalance(currentPrev);
+            return {
+              ...house,
+              balance: {
+                ...(house.balance ?? { id: balance?.id ?? 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' }),
+                houseId: data.houseId,
+                previousBalance: String(nextPrev),
+              },
+            };
+          };
+
+          if (Array.isArray(cached)) return cached.map(updateHouse);
+          if (cached && typeof cached === 'object' && 'id' in cached) return updateHouse(cached as House);
+          return cached;
+        },
+      );
+
+      await updateCachedQueries<HouseBalance>(
+        (cacheKey) => cacheKey === `GET:/house-balance/${data.houseId}`,
+        (cached) => {
+          const currentPrev = Number(cached?.previousBalance ?? 0);
+          const nextPrev = resolveNextPreviousBalance(currentPrev);
+          const nextPayments = cached?.payments ? [paymentBase, ...cached.payments.filter((p) => p.id !== paymentBase.id)] : [paymentBase];
+          return {
+            ...(cached ?? { id: balance?.id ?? 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId: data.houseId,
+            previousBalance: String(nextPrev),
+            payments: nextPayments,
+          };
+        },
+      );
+
+      const updatePaymentsList = (cached: PaymentHistory[] | null | undefined) => {
+        if (!Array.isArray(cached)) return cached as PaymentHistory[];
+        return [paymentBase, ...cached.filter((p) => p.id !== paymentBase.id)];
+      };
+
+      await updateCachedQueries<PaymentHistory[]>(
+        (cacheKey) => cacheKey === `GET:/house-balance/${data.houseId}/payments`,
+        (cached) => updatePaymentsList(cached),
+      );
+
+      await updateCachedQueries<PaymentHistory[]>(
+        (cacheKey) => cacheKey === 'GET:/house-balance/payments',
+        (cached) => updatePaymentsList(cached),
+      );
+    };
 
     if (isOnline()) {
-      const res = await apiPost('/house-balance/payment', data);
+      const res = await apiPost<{ payment: PaymentHistory; balance: HouseBalance }>('/house-balance/payment', data);
       if (isBrowser()) {
-        // Ensure UI reflects updated payments and bill closures
+        await applyLocalPaymentUpdate(res.payment, res.balance);
         await invalidateCache('/bills');
-        await invalidateCache('/house-balance');
-        await invalidateCache('/houses');
-        await invalidateCache('/delivery-logs');
       }
       return res;
+    }
+
+    if (isBrowser()) {
+      await applyLocalPaymentUpdate();
+      void syncEngine.enqueue('/house-balance/payment', 'POST', data);
+      return { queued: true };
     }
 
     return { queued: true };

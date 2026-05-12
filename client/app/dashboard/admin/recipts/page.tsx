@@ -29,6 +29,7 @@ export default function ReceiptsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loadingBills, setLoadingBills] = useState(false)
+  const [billsCache, setBillsCache] = useState<Map<number, Bill>>(new Map())
 
   // Form
   const [formHouseId, setFormHouseId] = useState('')
@@ -75,12 +76,20 @@ export default function ReceiptsPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      const [paymentsData, housesData] = await Promise.all([
+      const [paymentsData, housesData, billsData] = await Promise.all([
         balanceApi.allPayments(),
         housesApi.list(),
+        billsApi.list(),
       ])
       setPayments(paymentsData)
       setHouses(housesData)
+      
+      // Cache bills for quick lookup
+      const cache = new Map<number, Bill>()
+      for (const bill of billsData) {
+        cache.set(bill.id, bill)
+      }
+      setBillsCache(cache)
     } catch (e: any) {
       toast.error(e.message)
     } finally {
@@ -130,6 +139,32 @@ export default function ReceiptsPage() {
     return houses.find((house) => house.id === houseId)?.phoneNo ?? '—'
   }
 
+  const getBillPeriods = async (billIds?: any): Promise<string> => {
+    if (!billIds || (Array.isArray(billIds) && billIds.length === 0)) return '—'
+    
+    const ids = Array.isArray(billIds) ? billIds : []
+    if (ids.length === 0) return '—'
+
+    try {
+      const periodsText: string[] = []
+      for (const billId of ids) {
+        if (billsCache.has(billId)) {
+          const bill = billsCache.get(billId)!
+          if (bill.fromDate && bill.toDate) {
+            periodsText.push(
+              `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+            )
+          } else {
+            periodsText.push(`${MONTH_NAMES[bill.month - 1]} ${bill.year}`)
+          }
+        }
+      }
+      return periodsText.length > 0 ? periodsText.join(', ') : '—'
+    } catch {
+      return '—'
+    }
+  }
+
   const totalReceived = payments.reduce((sum, p) => sum + Number(p.amount), 0)
 
   async function handleRecord() {
@@ -140,7 +175,7 @@ export default function ReceiptsPage() {
         houseId: parseInt(formHouseId),
         amount: parseFloat(formAmount),
         note: formNote || undefined,
-        billIds: formPaymentMode === 'selected' && formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
+        billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
         discount: formDiscount ? parseFloat(formDiscount) : undefined,
       })
       toast.success('Payment recorded successfully')
@@ -211,31 +246,53 @@ export default function ReceiptsPage() {
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Area</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Phone</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
+                    {/* <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Bill Period</th> */}
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Note</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((p, idx) => (
-                    <tr key={p.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
-                      <td className="px-4 py-3">
-                        <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.area ?? '—'}</td>
-                      <td className="px-4 py-3 text-muted-foreground text-sm">{getHousePhone(p.balance?.house?.id)}</td>
-                      <td className="px-4 py-3">
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                          ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                        </span>
-                      </td>
-                      <td className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">{p.note ?? '—'}</td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {new Date(p.createdAt).toLocaleDateString('en-IN', {
-                          day: 'numeric', month: 'short', year: 'numeric'
-                        })}
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map((p, idx) => {
+                    // Get bill periods from billIds
+                    const billIds = (p.billIds as number[]) || []
+                    const periodsList: string[] = []
+                    
+                    for (const billId of billIds) {
+                      if (billsCache.has(billId)) {
+                        const bill = billsCache.get(billId)!
+                        if (bill.fromDate && bill.toDate) {
+                          periodsList.push(
+                            `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                          )
+                        } else {
+                          periodsList.push(`${MONTH_NAMES[bill.month - 1]} ${bill.year}`)
+                        }
+                      }
+                    }
+                    const billPeriodsText = periodsList.length > 0 ? periodsList.join(', ') : '—'
+
+                    return (
+                      <tr key={p.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
+                        <td className="px-4 py-3">
+                          <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.area ?? '—'}</td>
+                        <td className="px-4 py-3 text-muted-foreground text-sm">{getHousePhone(p.balance?.house?.id)}</td>
+                        <td className="px-4 py-3">
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </span>
+                        </td>
+                        <td className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">{p.note ?? '—'}</td>
+
+                        <td className="px-4 py-3 text-sm text-muted-foreground">
+                          {new Date(p.createdAt).toLocaleDateString('en-IN', {
+                            day: 'numeric', month: 'short', year: 'numeric'
+                          })}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -366,7 +423,10 @@ export default function ReceiptsPage() {
                     <div className="space-y-1 max-h-48 overflow-y-auto">
                       {formBills.map(bill => {
                         const daysInMonth = new Date(bill.year, bill.month, 0).getDate()
-                        const dateRange = `1 - ${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
+                        const calculatedDateRange = `1 - ${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
+                        const actualDateRange = bill.fromDate && bill.toDate
+                          ? `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                          : calculatedDateRange
                         return (
                           <div key={bill.id} className={`flex items-center gap-2 p-2 rounded border ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
                             {formPaymentMode === 'selected' && (
@@ -390,8 +450,7 @@ export default function ReceiptsPage() {
                               />
                             )}
                             <div className="flex-1 text-xs">
-                              <div className="font-medium">{MONTH_NAMES[bill.month - 1]} {bill.year}</div>
-                              <div className="text-muted-foreground text-xs">{dateRange}</div>
+                              <div className="font-medium">{actualDateRange}</div>
                               <div className="text-muted-foreground">₹{Number(bill.totalAmount).toLocaleString('en-IN')}</div>
                             </div>
                             <div className={`text-right font-semibold text-xs ${bill.isClosed ? 'text-emerald-600' : 'text-amber-600'}`}>
