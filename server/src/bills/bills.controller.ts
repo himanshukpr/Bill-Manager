@@ -41,6 +41,11 @@ export class BillsController {
     return this.service.getMonthlyStats(year);
   }
 
+  @Get('pending/:houseId')
+  getPendingBills(@Param('houseId', ParseIntPipe) houseId: number) {
+    return this.service.getPendingBills(houseId);
+  }
+
   @Get('preview')
   preview(
     @Query('houseId', ParseIntPipe) houseId: number,

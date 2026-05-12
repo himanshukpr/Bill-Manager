@@ -131,8 +131,34 @@ class SyncEngine {
 
           // If success or a 4xx error (excluding Auth 401), we consider it processed/failed-permanently
           // If 5xx or network fail, it remains in queue
-          if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 401)) {
-            await db.syncQueue.delete(action.id!);
+                if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 401)) {
+                  await db.syncQueue.delete(action.id!);
+                  // Invalidate local GET caches affected by this write so UI can re-fetch fresh data
+                  try {
+                    const url = action.url || '';
+                    // payments affect bills, house-balance and houses lists
+                    if (url.startsWith('/house-balance') || url.startsWith('/house-balance/payment')) {
+                      await Promise.all([
+                        db.queryCache.where('key').startsWith('GET:/bills').delete(),
+                        db.queryCache.where('key').startsWith('GET:/house-balance').delete(),
+                        db.queryCache.where('key').startsWith('GET:/houses').delete(),
+                        db.queryCache.where('key').startsWith('GET:/delivery-logs').delete(),
+                      ]);
+                    } else if (url.startsWith('/bills')) {
+                      await Promise.all([
+                        db.queryCache.where('key').startsWith('GET:/bills').delete(),
+                        db.queryCache.where('key').startsWith('GET:/house-balance').delete(),
+                      ]);
+                    } else if (url.startsWith('/delivery-logs')) {
+                      await Promise.all([
+                        db.queryCache.where('key').startsWith('GET:/delivery-logs').delete(),
+                        db.queryCache.where('key').startsWith('GET:/house-balance').delete(),
+                        db.queryCache.where('key').startsWith('GET:/bills').delete(),
+                      ]);
+                    }
+                  } catch {
+                    // ignore cache invalidation errors
+                  }
           } else if (res.status === 401) {
             // Unauthorized, must halt queue
             break;

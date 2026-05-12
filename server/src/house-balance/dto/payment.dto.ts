@@ -1,4 +1,4 @@
-import { IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsString, Min, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RecordPaymentDto {
@@ -14,6 +14,17 @@ export class RecordPaymentDto {
   @IsOptional()
   @IsString()
   note?: string;
+
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  billIds?: number[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  discount?: number;
 }
 
 export class UpdatePreviousBalanceDto {
