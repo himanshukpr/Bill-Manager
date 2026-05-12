@@ -350,7 +350,12 @@ export default function BillsPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="font-medium">{MONTH_NAMES[b.month]} {b.year}</span>
+                        <span className="font-medium">
+                          {b.fromDate && b.toDate 
+                            ? `${new Date(b.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(b.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                            : `${MONTH_NAMES[b.month]} ${b.year}`
+                          }
+                        </span>
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -551,7 +556,10 @@ export default function BillsPage() {
               <DialogHeader>
                 <DialogTitle>Bill — House {viewBill.house?.houseNo}</DialogTitle>
                 <DialogDescription>
-                  {MONTH_NAMES[viewBill.month]} {viewBill.year}
+                  {viewBill.fromDate && viewBill.toDate 
+                    ? `${new Date(viewBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(viewBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                    : `${MONTH_NAMES[viewBill.month]} ${viewBill.year}`
+                  }
                   {viewBill.house?.area && ` · ${viewBill.house.area}`}
                 </DialogDescription>
               </DialogHeader>
