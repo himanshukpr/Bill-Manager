@@ -94,8 +94,9 @@ model Bill {
   items           Json
   previousBalance Decimal    @default(0) @map("previous_balance") @db.Decimal(10, 2)
   generatedDate   DateTime   @default(now()) @map("generated_date")
-  isClosed        Boolean    @default(false) @map("is_closed")
-  note            String?
+  isClosed           Boolean   @default(false) @map("is_closed")
+  outstandingAmount  Decimal?  @map("outstanding_amount") @db.Decimal(10, 2)
+  note               String?
   houseId         Int        @map("house_id")
   notes           BillNote[]
   house           House      @relation(fields: [houseId], references: [id], onDelete: Cascade)
