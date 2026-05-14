@@ -827,23 +827,32 @@ export default function HousesPage() {
 
       // Save delivery changes (create or update)
       if (isNewDelivery) {
-        // Create new delivery (use the delivery date from the opened editor)
-        const result = await deliveryLogsApi.create({
+        await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
           deliveredAt: editingDeliveryLog.deliveredAt,
         })
-        toast.success('Delivery created successfully')
       } else {
-        // Update existing delivery
+        // Update the primary log with all combined items
         await deliveryLogsApi.update(editingDeliveryLog.id, {
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
         })
-        toast.success('Delivery updated successfully')
+
+        // Delete all secondary logs for this date so no stale/duplicate data remains
+        const secondaryLogs = editingDeliveryAllLogs.filter(l => l.id !== editingDeliveryLog.id)
+        for (const log of secondaryLogs) {
+          try {
+            await deliveryLogsApi.delete(log.id)
+          } catch (err) {
+            console.warn(`Could not delete secondary log ${log.id}:`, err)
+          }
+        }
       }
+
+      toast.success('Delivery updated successfully')
 
       // Update balance if amount changed
       if (amountDifference !== 0) {
@@ -852,14 +861,13 @@ export default function HousesPage() {
           const currentPreviousBalance = parseFloat(currentBalance.previousBalance) || 0
           const newPreviousBalance = currentPreviousBalance + amountDifference
           await balanceApi.updatePrevious(summaryHouse.id, newPreviousBalance)
-          toast.success('Balance updated')
         } catch (error: unknown) {
           console.error('Failed to update balance:', error)
-          toast.warning('Balance update failed - delivery saved but balance unchanged')
+          toast.warning('Balance update failed — delivery saved but balance unchanged')
         }
       }
 
-      // Reload logs to get updated data
+      // Reload logs to get clean updated data
       const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
       setSummaryLogs(logs)
 
@@ -874,6 +882,7 @@ export default function HousesPage() {
       setEditDeliverySaving(false)
     }
   }
+
 
   async function handleDeleteDeliveryLog() {
     if (!deletingDeliveryLog || !summaryHouse) return
@@ -1942,22 +1951,8 @@ export default function HousesPage() {
                               </Select>
                             </div>
 
-                            <div className="col-span-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                value={item.rate}
-                                onChange={(e) => {
-                                  const newRate = Number(e.target.value)
-                                  const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
-                                  updated[index] = { ...updated[index], rate: newRate, amount: newQty * newRate }
-                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
-                                }}
-                                className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
-                                placeholder="Rate"
-                              />
+                            <div className="col-span-2 text-right">
+                              <p className="text-sm font-medium text-muted-foreground">₹{Number(item.rate).toLocaleString('en-IN')}</p>
                             </div>
 
                             <div className="col-span-2">
