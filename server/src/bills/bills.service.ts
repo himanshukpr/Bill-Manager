@@ -224,6 +224,7 @@ export class BillsService {
           previousBalance,
           generatedDate: periodEnd,
           note: noteText || undefined,
+          outstandingAmount: totalAmount, // full amount outstanding at creation
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
       });
@@ -483,10 +484,10 @@ export class BillsService {
 
     for (const bill of bills) {
       let remaining = Number(bill.totalAmount ?? 0);
-      // If already closed, skip
-      if (bill.isClosed) continue;
 
-      // Consume payments in FIFO order
+      // Always consume from the queue for EVERY bill (closed or not).
+      // Skipping closed bills was the bug: it left their payment in the queue,
+      // causing later bills to be incorrectly closed on partial payments.
       while (remaining > 0 && paymentQueue.length > 0) {
         const head = paymentQueue[0];
         if (head.amount <= 0) {
@@ -499,12 +500,15 @@ export class BillsService {
         if (head.amount <= 0) paymentQueue.shift();
       }
 
-      if (remaining <= 0) {
-        // mark bill closed
-        await this.prisma.bill.update({ where: { id: bill.id }, data: { isClosed: true } });
-      } else {
-        // leave as not closed
-        await this.prisma.bill.update({ where: { id: bill.id }, data: { isClosed: false } });
+      const outstandingAmount = +Math.max(0, remaining).toFixed(2);
+      const shouldBeClosed = outstandingAmount <= 0;
+
+      // Only write to DB if something changed
+      if (bill.isClosed !== shouldBeClosed || outstandingAmount !== Number((bill as any).outstandingAmount ?? -1)) {
+        await this.prisma.bill.update({
+          where: { id: bill.id },
+          data: { isClosed: shouldBeClosed, outstandingAmount },
+        });
       }
     }
   }

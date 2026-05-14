@@ -29,6 +29,11 @@ const navItems = [
         icon: Home,
     },
     {
+        title: "Direct Entry",
+        url: "/dashboard/admin/direct-entry",
+        icon: Truck,
+    },
+    {
         title: "Houses",
         url: "/dashboard/admin/houses",
         icon: Building2,
@@ -49,21 +54,6 @@ const navItems = [
         icon: FileText,
     },
     {
-        title: "Direct Entry",
-        url: "/dashboard/admin/direct-entry",
-        icon: Truck,
-    },
-    {
-        title: "Users",
-        url: "/dashboard/admin/users",
-        icon: Users,
-    },
-    {
-        title: "Rates",
-        url: "/dashboard/admin/rates",
-        icon: Tag,
-    },
-    {
         title: "Receipts",
         url: "/dashboard/admin/recipts",
         icon: Receipt,
@@ -72,6 +62,16 @@ const navItems = [
         title: "Delivery Analysis",
         url: "/dashboard/admin/delivery-analysis",
         icon: BarChart3,
+    },
+    {
+        title: "Rates",
+        url: "/dashboard/admin/rates",
+        icon: Tag,
+    },
+    {
+        title: "Users",
+        url: "/dashboard/admin/users",
+        icon: Users,
     },
 ]
 

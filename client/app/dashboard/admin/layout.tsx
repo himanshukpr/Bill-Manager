@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
+import { usePathname } from "next/navigation"
 
 import { AppSidebar } from "@/components/dashboard/admin/app-sidebar"
 import { SiteHeader } from "@/components/dashboard/admin/site-header"
@@ -15,6 +16,23 @@ type AdminLayoutProps = {
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const { auth, ready } = useAuthGuard("admin")
+  const pathname = usePathname()
+
+  const pageTitle = useMemo(() => {
+    const titleMap: Record<string, string> = {
+      "/dashboard/admin": "Dashboard",
+      "/dashboard/admin/direct-entry": "Direct Entry",
+      "/dashboard/admin/houses": "Houses",
+      "/dashboard/admin/house-config": "House Config",
+      "/dashboard/admin/daily-alerts": "Daily Alerts",
+      "/dashboard/admin/bills": "Bills",
+      "/dashboard/admin/recipts": "Receipts",
+      "/dashboard/admin/delivery-analysis": "Delivery Analysis",
+      "/dashboard/admin/rates": "Rates",
+      "/dashboard/admin/users": "Users",
+    }
+    return titleMap[pathname] || "Dashboard"
+  }, [pathname])
 
   const todayText = useMemo(
     () =>
@@ -61,7 +79,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       />
       <SidebarInset>
         <SiteHeader
-          title="Dashboard"
+          title={pageTitle}
           todayText={todayText}
           todayShortText={todayShortText}
           onLogout={logout}

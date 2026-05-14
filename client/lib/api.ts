@@ -436,6 +436,7 @@ export type Bill = {
   previousBalance: string;
   generatedDate: string;
   isClosed?: boolean;
+  outstandingAmount?: string | null;
   note?: string;
   house?: { id: number; houseNo: string; area?: string; phoneNo?: string };
   pendingAmount?: number;

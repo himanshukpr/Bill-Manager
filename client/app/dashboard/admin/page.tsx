@@ -1,11 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import {
-  FileText, Home, DollarSign,
-  BarChart3, Truck,
-} from 'lucide-react'
-import { billsApi, housesApi, deliveryLogsApi } from '@/lib/api'
+import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck } from 'lucide-react'
+import { deliveryLogsApi } from '@/lib/api'
 import Link from 'next/link'
 
 function getLocalDateKey(date: Date = new Date()): string {
@@ -24,24 +21,13 @@ function isSameLocalDate(left: Date, right: Date): boolean {
 }
 
 export default function AdminDashboardPage() {
-  const [houseStats, setHouseStats] = useState({ totalHouses: 0, totalPreviousBalance: '0' })
-  const [billStats, setBillStats] = useState({ totalBills: 0, billsThisMonth: 0, totalPendingBalance: '0' })
   const [todayLogs, setTodayLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-
-  const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December']
 
   useEffect(() => {
     async function load() {
       try {
-        const [hs, bs, logs] = await Promise.all([
-          housesApi.stats(),
-          billsApi.dashboardStats(),
-          deliveryLogsApi.list()
-        ])
-        setHouseStats(hs)
-        setBillStats(bs)
+        const logs = await deliveryLogsApi.list()
         // Filter for today's logs based on createdAt
         const today = new Date()
         const filteredLogs = (logs as any[]).filter((log) => {
@@ -55,34 +41,32 @@ export default function AdminDashboardPage() {
     load()
   }, [])
 
-  const pendingBalance = Number(billStats.totalPendingBalance)
-
-  const stats = [
+  const quickLinks = [
     {
-      label: 'Total Houses',
-      value: loading ? '—' : String(houseStats.totalHouses),
-      sub: 'registered delivery locations',
+      label: 'Houses',
+      description: 'Manage registered delivery locations and house details.',
+      href: '/dashboard/admin/houses',
       icon: Home,
-      bgGradient: 'from-blue-500/10 to-blue-600/10',
-      iconBg: 'bg-blue-500/20',
-      iconColor: 'text-blue-600 dark:text-blue-400',
+      accent: 'from-sky-500/10 to-sky-600/10',
+      iconBg: 'bg-sky-500/15',
+      iconColor: 'text-sky-600 dark:text-sky-400',
     },
     {
-      label: 'Total Bills',
-      value: loading ? '—' : String(billStats.totalBills),
-      sub: `${billStats.billsThisMonth} this month`,
+      label: 'Direct Entry',
+      description: 'Record delivery logs quickly from the field.',
+      href: '/dashboard/admin/direct-entry',
+      icon: ClipboardPlus,
+      accent: 'from-emerald-500/10 to-emerald-600/10',
+      iconBg: 'bg-emerald-500/15',
+      iconColor: 'text-emerald-600 dark:text-emerald-400',
+    },
+    {
+      label: 'Receipts',
+      description: 'Open payment receipts and log collections.',
+      href: '/dashboard/admin/recipts',
       icon: FileText,
-      bgGradient: 'from-purple-500/10 to-purple-600/10',
-      iconBg: 'bg-purple-500/20',
-      iconColor: 'text-purple-600 dark:text-purple-400',
-    },
-    {
-      label: 'Pending Balance',
-      value: loading ? '—' : `₹${pendingBalance.toLocaleString('en-IN')}`,
-      sub: 'outstanding from all houses',
-      icon: DollarSign,
-      bgGradient: 'from-amber-500/10 to-amber-600/10',
-      iconBg: 'bg-amber-500/20',
+      accent: 'from-amber-500/10 to-amber-600/10',
+      iconBg: 'bg-amber-500/15',
       iconColor: 'text-amber-600 dark:text-amber-400',
     },
   ]
@@ -90,31 +74,36 @@ export default function AdminDashboardPage() {
   return (
     <div className="space-y-6 sm:space-y-8">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
+        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">Dashboard</h1>
+        <p className="mt-2 text-base sm:text-lg text-muted-foreground">
           Welcome back! Here&apos;s your dairy operations overview.
         </p>
       </div>
 
-      {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {stats.map((stat) => {
-          const Icon = stat.icon
+        {quickLinks.map((link) => {
+          const Icon = link.icon
           return (
-            <div key={stat.label}
-              className={`relative overflow-hidden rounded-2xl border border-neutral-200/50 bg-linear-to-br ${stat.bgGradient} p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-800/50`}>
+            <Link
+              key={link.label}
+              href={link.href}
+              className={`group relative overflow-hidden rounded-2xl border border-neutral-200/50 bg-linear-to-br ${link.accent} p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-800/50`}
+            >
               <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-white/10" />
-              <div className="relative flex items-start justify-between">
+              <div className="relative flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">{stat.label}</p>
-                  <p className="mt-2 text-3xl font-bold">{stat.value}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{stat.sub}</p>
+                  <p className="text-base sm:text-lg font-semibold text-muted-foreground">{link.label}</p>
+                  <p className="mt-2 text-base sm:text-lg font-medium text-foreground/90">{link.description}</p>
                 </div>
-                <div className={`rounded-xl ${stat.iconBg} p-3`}>
-                  <Icon className={`h-5 w-5 ${stat.iconColor}`} />
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${link.iconBg}`}>
+                  <Icon className={`h-5 w-5 ${link.iconColor}`} />
                 </div>
               </div>
-            </div>
+              <div className="relative mt-4 inline-flex items-center gap-1 text-sm font-medium text-foreground/80 transition-colors group-hover:text-foreground">
+                Open
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </div>
+            </Link>
           )
         })}
       </div>

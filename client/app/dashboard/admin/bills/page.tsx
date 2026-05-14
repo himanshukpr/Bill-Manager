@@ -333,6 +333,7 @@ export default function BillsPage() {
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Period</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Total</th>
+                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Outstanding</th>
                   <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Prev. Balance</th>
                   <th className="hidden lg:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Generated</th>
                   <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
@@ -369,6 +370,18 @@ export default function BillsPage() {
                           </Badge>
                         )}
                       </div>
+                    </td>
+                    {/* Outstanding Amount */}
+                    <td className="px-4 py-3">
+                      {b.isClosed ? (
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">— Cleared</span>
+                      ) : b.outstandingAmount != null ? (
+                        <span className="font-semibold text-amber-600 dark:text-amber-400">
+                          ₹{Number(b.outstandingAmount).toLocaleString('en-IN')}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">
                       ₹{Number(b.previousBalance).toLocaleString('en-IN')}
@@ -599,6 +612,14 @@ export default function BillsPage() {
                     <span>Grand Total</span>
                     <span className="text-primary">₹{(Number(viewBill.totalAmount) + Number(viewBill.previousBalance)).toLocaleString('en-IN')}</span>
                   </div>
+                  {viewBill.outstandingAmount != null && (
+                    <div className={`flex justify-between text-sm border-t border-border pt-2 mt-1 ${viewBill.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      <span className="font-medium">{viewBill.isClosed ? 'Status' : 'Outstanding Amount'}</span>
+                      <span className="font-bold">
+                        {viewBill.isClosed ? '✓ Fully Paid' : `₹${Number(viewBill.outstandingAmount).toLocaleString('en-IN')} remaining`}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 {viewBill.note && (
                   <div className="text-sm text-muted-foreground rounded-lg bg-muted/30 p-3">

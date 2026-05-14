@@ -51,6 +51,7 @@ type HouseDeliverySummaryRow = {
   hasDelivery: boolean
   logId?: number
   log?: DeliveryLog
+  allLogs?: DeliveryLog[]
 }
 
 type MonthlyProductSummary = {
@@ -151,10 +152,12 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
       hasDelivery: false,
       logId: undefined,
       log: undefined,
+      allLogs: [],
     }
 
     existing.hasDelivery = true
-    // Store the first log for this date (for editing)
+    existing.allLogs = [...(existing.allLogs ?? []), log]
+    // Store the first log for backwards compat
     if (!existing.logId) {
       existing.logId = log.id
       existing.log = log
@@ -163,13 +166,11 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
     const productParts = (log.items ?? []).map((item) => {
       const qty = Number(item.qty ?? 0)
       if (!qty) return null
-
       const milkType = normalizeMilkType(item.milkType)
       return `${milkType} ${qty.toLocaleString('en-IN')}L`
     }).filter((part): part is string => Boolean(part))
 
     const productText = productParts.join(', ')
-
     existing.productsLabel = existing.productsLabel
       ? `${existing.productsLabel}, ${productText}`
       : productText || '-'
@@ -195,6 +196,7 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
         hasDelivery: false,
         logId: undefined,
         log: undefined,
+        allLogs: [],
       },
     )
   }
@@ -395,6 +397,8 @@ export default function HousesPage() {
   })
   const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
   const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
+  const [editingDeliveryShifts, setEditingDeliveryShifts] = useState<string[]>([])
+  const [editingDeliveryAllLogs, setEditingDeliveryAllLogs] = useState<DeliveryLog[]>([])
   const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
@@ -756,16 +760,22 @@ export default function HousesPage() {
     }
 
     if (row.log) {
-      // Edit existing delivery - overwrite item rates with house-preferred rates
+      // Edit existing delivery — combine items from ALL logs for this date
       setEditingDeliveryLog(row.log)
-      const normalized = normalizeDeliveryItems(row.log.items)
-      const updated = normalized.map((it) => {
-        const qty = Number(it.qty ?? 0)
-        const rate = getPreferredRateForHouse(it.milkType)
-        return { ...it, rate, amount: qty * rate }
-      })
+      const logsForDate = row.allLogs ?? [row.log]
+      // Collect all unique shifts
+      const uniqueShifts = [...new Set(logsForDate.map(l => l.shift).filter(Boolean))]
+      setEditingDeliveryShifts(uniqueShifts)
+      setEditingDeliveryAllLogs(logsForDate)
+      const allItems = logsForDate.flatMap((log) =>
+        normalizeDeliveryItems(log.items).map((it) => {
+          const qty = Number(it.qty ?? 0)
+          const rate = getPreferredRateForHouse(it.milkType)
+          return { ...it, rate, amount: qty * rate }
+        })
+      )
       setEditDeliveryForm({
-        items: updated,
+        items: allItems,
         note: row.log.note,
       })
     } else {
@@ -805,31 +815,44 @@ export default function HousesPage() {
     setEditDeliverySaving(true)
     try {
       const isNewDelivery = editingDeliveryLog.id === 0
+      // Old amount = sum across ALL logs for this date (not just the first)
       const oldAmount = isNewDelivery
         ? 0
-        : (editingDeliveryLog.items ?? []).reduce((sum, item) => sum + (item.amount ?? 0), 0)
-      const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (item.amount ?? 0), 0)
+        : editingDeliveryAllLogs.reduce(
+            (sum, log) => sum + (log.items ?? []).reduce((s, item) => s + (Number(item.amount) ?? 0), 0),
+            0
+          )
+      const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (Number(item.amount) ?? 0), 0)
       const amountDifference = newAmount - oldAmount
 
       // Save delivery changes (create or update)
       if (isNewDelivery) {
-        // Create new delivery (use the delivery date from the opened editor)
-        const result = await deliveryLogsApi.create({
+        await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
           deliveredAt: editingDeliveryLog.deliveredAt,
         })
-        toast.success('Delivery created successfully')
       } else {
-        // Update existing delivery
+        // Update the primary log with all combined items
         await deliveryLogsApi.update(editingDeliveryLog.id, {
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
         })
-        toast.success('Delivery updated successfully')
+
+        // Delete all secondary logs for this date so no stale/duplicate data remains
+        const secondaryLogs = editingDeliveryAllLogs.filter(l => l.id !== editingDeliveryLog.id)
+        for (const log of secondaryLogs) {
+          try {
+            await deliveryLogsApi.delete(log.id)
+          } catch (err) {
+            console.warn(`Could not delete secondary log ${log.id}:`, err)
+          }
+        }
       }
+
+      toast.success('Delivery updated successfully')
 
       // Update balance if amount changed
       if (amountDifference !== 0) {
@@ -838,19 +861,20 @@ export default function HousesPage() {
           const currentPreviousBalance = parseFloat(currentBalance.previousBalance) || 0
           const newPreviousBalance = currentPreviousBalance + amountDifference
           await balanceApi.updatePrevious(summaryHouse.id, newPreviousBalance)
-          toast.success('Balance updated')
         } catch (error: unknown) {
           console.error('Failed to update balance:', error)
-          toast.warning('Balance update failed - delivery saved but balance unchanged')
+          toast.warning('Balance update failed — delivery saved but balance unchanged')
         }
       }
 
-      // Reload logs to get updated data
+      // Reload logs to get clean updated data
       const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
       setSummaryLogs(logs)
 
       setEditDeliveryDialogOpen(false)
       setEditingDeliveryLog(null)
+      setEditingDeliveryAllLogs([])
+      setEditingDeliveryShifts([])
       setEditDeliveryForm({ items: [], note: '' })
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))
@@ -858,6 +882,7 @@ export default function HousesPage() {
       setEditDeliverySaving(false)
     }
   }
+
 
   async function handleDeleteDeliveryLog() {
     if (!deletingDeliveryLog || !summaryHouse) return
@@ -1848,7 +1873,11 @@ export default function HousesPage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Shift</p>
-                    <p className="mt-1 text-sm font-semibold capitalize">{editingDeliveryLog.shift}</p>
+                    <p className="mt-1 text-sm font-semibold capitalize">
+                      {editingDeliveryShifts.length > 1
+                        ? editingDeliveryShifts.join(', ')
+                        : editingDeliveryShifts[0] ?? editingDeliveryLog.shift}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Supplier</p>
@@ -1922,22 +1951,8 @@ export default function HousesPage() {
                               </Select>
                             </div>
 
-                            <div className="col-span-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                value={item.rate}
-                                onChange={(e) => {
-                                  const newRate = Number(e.target.value)
-                                  const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
-                                  updated[index] = { ...updated[index], rate: newRate, amount: newQty * newRate }
-                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
-                                }}
-                                className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
-                                placeholder="Rate"
-                              />
+                            <div className="col-span-2 text-right">
+                              <p className="text-sm font-medium text-muted-foreground">₹{Number(item.rate).toLocaleString('en-IN')}</p>
                             </div>
 
                             <div className="col-span-2">
