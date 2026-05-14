@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CirclePlus, Package2, Plus, RefreshCw, Search, Trash2, Truck } from 'lucide-react'
+import { CirclePlus, Edit2, Package2, Plus, RefreshCw, Search, Trash2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -13,7 +13,14 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { balanceApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 type DeliveryEntryRow = {
@@ -193,6 +200,13 @@ export default function DeliveryEntryPage() {
   const [note, setNote] = useState('')
   const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
   const newRowIdRef = useRef<string | null>(null)
+
+  // Edit / Delete state
+  const [editingLog, setEditingLog] = useState<DeliveryLog | null>(null)
+  const [editForm, setEditForm] = useState<{ items: DeliveryLogItem[]; note: string }>({ items: [], note: '' })
+  const [editSaving, setEditSaving] = useState(false)
+  const [deletingLog, setDeletingLog] = useState<DeliveryLog | null>(null)
+  const [deleteSaving, setDeleteSaving] = useState(false)
 
   useEffect(() => {
     if (newRowIdRef.current) {
@@ -386,6 +400,88 @@ export default function DeliveryEntryPage() {
     setShift('shop')
     setNote('')
     setRows([createRow()])
+  }
+
+  function openEdit(log: DeliveryLog) {
+    setEditingLog(log)
+    setEditForm({
+      items: (log.items ?? []).map(item => ({ ...item })),
+      note: log.note ?? '',
+    })
+  }
+
+  async function handleSaveEdit() {
+    if (!editingLog) return
+    setEditSaving(true)
+    try {
+      const oldAmount = Number(editingLog.totalAmount) || 0
+      const newAmount = editForm.items.reduce((sum, item) => sum + (Number(item.amount) ?? 0), 0)
+      const diff = newAmount - oldAmount
+
+      await deliveryLogsApi.update(editingLog.id, {
+        items: editForm.items,
+        note: editForm.note,
+      })
+
+      // Reflect balance change
+      if (diff !== 0) {
+        try {
+          const balance = await balanceApi.get(editingLog.houseId)
+          await balanceApi.updatePrevious(
+            editingLog.houseId,
+            (parseFloat(balance.previousBalance) || 0) + diff,
+          )
+        } catch (err) {
+          console.warn('Balance update failed:', err)
+          toast.warning('Log updated but balance sync failed')
+        }
+      }
+
+      setLogs(current => current.map(l =>
+        l.id === editingLog.id
+          ? { ...l, items: editForm.items, note: editForm.note, totalAmount: String(newAmount) }
+          : l
+      ))
+      toast.success('Entry updated successfully')
+      setEditingLog(null)
+      setEditForm({ items: [], note: '' })
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update entry')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  async function handleDeleteLog() {
+    if (!deletingLog) return
+    setDeleteSaving(true)
+    try {
+      const amount = Number(deletingLog.totalAmount) || 0
+
+      await deliveryLogsApi.delete(deletingLog.id)
+
+      // Subtract deleted amount from balance
+      if (amount > 0) {
+        try {
+          const balance = await balanceApi.get(deletingLog.houseId)
+          await balanceApi.updatePrevious(
+            deletingLog.houseId,
+            (parseFloat(balance.previousBalance) || 0) - amount,
+          )
+        } catch (err) {
+          console.warn('Balance update failed:', err)
+          toast.warning('Log deleted but balance sync failed')
+        }
+      }
+
+      setLogs(current => current.filter(l => l.id !== deletingLog.id))
+      toast.success('Entry deleted successfully')
+      setDeletingLog(null)
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete entry')
+    } finally {
+      setDeleteSaving(false)
+    }
   }
 
   async function handleSave() {
@@ -696,6 +792,7 @@ export default function DeliveryEntryPage() {
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Shift</th>
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Time</th>
+                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -737,6 +834,30 @@ export default function DeliveryEntryPage() {
                           <td className="px-4 py-3 text-xs text-muted-foreground">
                             {formatDateTime(log.deliveredAt)}
                           </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                title="Edit entry"
+                                onClick={() => openEdit(log)}
+                                disabled={Boolean(log.billGenerated)}
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                title="Delete entry"
+                                onClick={() => setDeletingLog(log)}
+                                disabled={Boolean(log.billGenerated)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -748,20 +869,129 @@ export default function DeliveryEntryPage() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap gap-3 text-sm">
-        <Link
-          href="/dashboard/admin/delivery-analysis"
-          className="inline-flex h-10 items-center justify-center rounded-full border border-border bg-background px-4 font-medium text-foreground transition-colors hover:bg-muted"
-        >
-          Open delivery analysis
-        </Link>
-        <Link
-          href="/dashboard/admin/bills"
-          className="inline-flex h-10 items-center justify-center rounded-full border border-border bg-background px-4 font-medium text-foreground transition-colors hover:bg-muted"
-        >
-          View bills
-        </Link>
-      </div>
+      {/* Edit Dialog */}
+      <Dialog open={Boolean(editingLog)} onOpenChange={(open) => { if (!open) { setEditingLog(null); setEditForm({ items: [], note: '' }) } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Entry</DialogTitle>
+            <DialogDescription>
+              {editingLog && `House ${editingLog.house?.houseNo ?? editingLog.houseId} · ${formatDateTime(editingLog.deliveredAt)}`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            {/* Items */}
+            <div className="space-y-2">
+              <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-muted-foreground">
+                <div className="col-span-4">Product</div>
+                <div className="col-span-3 text-right">Rate</div>
+                <div className="col-span-3 text-right">Qty</div>
+                <div className="col-span-2 text-right">Amount</div>
+              </div>
+              {editForm.items.map((item, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-border bg-muted/20 px-3 py-2">
+                  <div className="col-span-4">
+                    <Select
+                      value={item.milkType}
+                      onValueChange={val => {
+                        const resolvedRate = getResolvedRateByProductName(undefined, rates, val)
+                        const newRate = Number(resolvedRate) || Number(item.rate)
+                        const updated = [...editForm.items]
+                        updated[idx] = { ...updated[idx], milkType: val, rate: newRate, amount: Number(updated[idx].qty) * newRate }
+                        setEditForm(f => ({ ...f, items: updated }))
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-sm">
+                        <SelectValue placeholder="Select product">{item.milkType || 'Select'}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {rates.filter(r => r.isActive).map(rate => (
+                          <SelectItem key={rate.id} value={rate.name}>
+                            {rate.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="col-span-3 text-right">
+                    <span className="text-sm text-muted-foreground">₹{Number(item.rate).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="col-span-3">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={item.qty}
+                      onChange={e => {
+                        const newQty = Number(e.target.value)
+                        const updated = [...editForm.items]
+                        updated[idx] = { ...updated[idx], qty: newQty, amount: newQty * Number(item.rate) }
+                        setEditForm(f => ({ ...f, items: updated }))
+                      }}
+                      className="h-8 text-sm text-right"
+                    />
+                  </div>
+                  <div className="col-span-2 text-right text-sm font-medium">
+                    ₹{Number(item.amount).toLocaleString('en-IN')}
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-sm font-semibold">
+                  Total: ₹{editForm.items.reduce((s, i) => s + Number(i.amount), 0).toLocaleString('en-IN')}
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditForm(f => ({ ...f, items: [...f.items, { milkType: '', qty: 0, rate: 0, amount: 0 }] }))}
+                >
+                  <Plus className="mr-1 h-4 w-4" /> Add item
+                </Button>
+              </div>
+            </div>
+
+            {/* Note */}
+            <div className="space-y-1.5">
+              <Label>Note</Label>
+              <Textarea
+                value={editForm.note}
+                onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))}
+                placeholder="Optional note"
+                rows={2}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setEditingLog(null); setEditForm({ items: [], note: '' }) }}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={editSaving}>
+              {editSaving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <AlertDialog open={Boolean(deletingLog)} onOpenChange={(open) => { if (!open) setDeletingLog(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Entry?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingLog && `This will permanently delete the delivery entry for House ${deletingLog.house?.houseNo ?? deletingLog.houseId} (${formatMoney(deletingLog.totalAmount)}) and adjust the house balance accordingly. This cannot be undone.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSaving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteLog}
+              disabled={deleteSaving}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteSaving ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
