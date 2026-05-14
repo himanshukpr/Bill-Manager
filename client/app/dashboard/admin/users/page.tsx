@@ -32,7 +32,7 @@ export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
   const [newRole, setNewRole] = useState<'admin' | 'supplier'>('supplier')
   const [newUsername, setNewUsername] = useState('')
-  const [newEmail, setNewEmail] = useState('')
+
   const [newPassword, setNewPassword] = useState('')
   const [addingSaving, setAddSaving] = useState(false)
   const [privilegeSaving, setPrivilegeSaving] = useState(false)
@@ -67,22 +67,20 @@ export default function UsersPage() {
   }
 
   async function handleAddUser() {
-    if (!newUsername || !newEmail || !newPassword) {
-      toast.error('Username, email, and password are required')
+    if (!newUsername || !newPassword) {
+      toast.error('Username and password are required')
       return
     }
     setAddSaving(true)
     try {
       await usersApi.create({
         username: newUsername,
-        email: newEmail,
         password: newPassword,
         role: 'supplier',
       })
       toast.success('User created successfully')
       setAddDialogOpen(false)
       setNewUsername('')
-      setNewEmail('')
       setNewPassword('')
       load()
     } catch (e: any) {
@@ -180,10 +178,7 @@ export default function UsersPage() {
               <Label>Username</Label>
               <Input placeholder="Enter username" value={newUsername} onChange={e => setNewUsername(e.target.value)} />
             </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input placeholder="Enter email" type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} />
-            </div>
+
             <div className="space-y-1.5">
               <Label>Password</Label>
               <Input placeholder="Enter password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
