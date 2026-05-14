@@ -206,7 +206,10 @@ function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: nu
   const productMap = new Map<string, number>()
 
   // Group quantities by product for the selected month only.
+  // Exclude logs that are already part of a paid bill.
   for (const log of logs) {
+    if (log.billGenerated) continue
+
     const deliveredAt = new Date(log.deliveredAt)
     const logYear = deliveredAt.getFullYear()
     const logMonth = deliveredAt.getMonth()
@@ -409,6 +412,32 @@ export default function HousesPage() {
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
     return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const summaryTotals = useMemo(() => {
+    if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
+    const monthLogs = summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
+    })
+    const productMap = new Map<string, { qty: number; amount: number }>()
+    let grandTotal = 0
+    for (const log of monthLogs) {
+      grandTotal += Number(log.totalAmount ?? 0)
+      for (const item of log.items ?? []) {
+        const product = normalizeMilkType(item.milkType)
+        const qty = Number(item.qty ?? 0)
+        const amount = Number(item.amount ?? 0)
+        if (product && qty > 0) {
+          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
+          productMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+        }
+      }
+    }
+    return {
+      productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+      grandTotal,
+    }
   }, [summaryHouse, summaryLogs, summaryPeriod])
 
   const editDeliveryTotal = useMemo(() => {
@@ -1650,22 +1679,39 @@ export default function HousesPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {monthlyProductSummary.map((row, idx) => {
+                              {monthlyProductSummary.map((row, idx) => {
                               const uniqueMonths = Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort()
+                              const productTotal = summaryTotals.productTotals.find(p => p.product === row.product)
                               return (
                                 <tr key={row.product} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
                                   <td className="px-4 py-3 font-medium text-foreground">{row.product}</td>
                                   {uniqueMonths.map((monthKey) => {
                                     const monthData = row.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
                                     return (
-                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground">
-                                        {monthData ? `${monthData.quantity.toLocaleString('en-IN')}L` : '-'}
+                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground whitespace-nowrap">
+                                        {monthData ? `${monthData.quantity.toLocaleString('en-IN')}L — ₹${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
                                       </td>
                                     )
                                   })}
                                 </tr>
                               )
                             })}
+                            {monthlyProductSummary.length > 0 && (
+                              <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                <td className="px-4 py-3 text-foreground">Total</td>
+                                {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                  const totalQty = monthlyProductSummary.reduce((sum, p) => {
+                                    const md = p.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
+                                    return sum + (md ? md.quantity : 0)
+                                  }, 0)
+                                  return (
+                                    <td key={monthKey} className="px-3 py-3 text-right text-foreground">
+                                      ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                    </td>
+                                  )
+                                })}
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1701,10 +1747,11 @@ export default function HousesPage() {
                         <TableBody>
                           {summaryRows.map((row) => {
                             const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
+                            const isPaid = Boolean(row.log?.billGenerated)
                             return (
-                              <TableRow key={row.dateKey}>
-                                <TableCell className="font-medium text-foreground">{row.dayLabel}</TableCell>
-                                <TableCell className="whitespace-normal text-foreground">
+                              <TableRow key={row.dateKey} className={isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
+                                <TableCell className={`font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</TableCell>
+                                <TableCell className={`whitespace-normal ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
                                   {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
                                 </TableCell>
                                 <TableCell className="text-right">
