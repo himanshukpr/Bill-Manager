@@ -416,6 +416,7 @@ export type PaymentHistory = {
   amount: string;
   note?: string;
   createdAt: string;
+  billIds?: number[];
   balance?: { house?: { id: number; houseNo: string; area?: string } };
 };
 
@@ -431,6 +432,8 @@ export type Bill = {
   houseId: number;
   month: number;
   year: number;
+  fromDate?: string;
+  toDate?: string;
   totalAmount: string;
   items: BillItem[];
   previousBalance: string;
@@ -1186,8 +1189,8 @@ export const balanceApi = {
         },
       );
 
-      const updatePaymentsList = (cached: PaymentHistory[] | null | undefined) => {
-        if (!Array.isArray(cached)) return cached as PaymentHistory[];
+      const updatePaymentsList = (cached: PaymentHistory[] | null | undefined): PaymentHistory[] => {
+        if (!Array.isArray(cached)) return [];
         return [paymentBase, ...cached.filter((p) => p.id !== paymentBase.id)];
       };
 
@@ -1319,11 +1322,11 @@ export const usersApi = {
         if (isBrowser()) await db.users.bulkPut(data);
       },
     }),
-  create: async (data: { username: string; email: string; password: string; role?: 'admin' | 'supplier' }) => {
+  create: async (data: { username: string; email?: string; password: string; role?: 'admin' | 'supplier' }) => {
     if (isBrowser()) {
       await invalidateCache('/users');
     }
-    return apiPost<User>('/auth/register', data);
+    return apiPost<User>('/auth/register', { ...data, email: data.email || `${data.username}@billmanager.local` });
   },
   verify: async (uuid: string, isVerified: boolean) => {
     if (isBrowser()) {
