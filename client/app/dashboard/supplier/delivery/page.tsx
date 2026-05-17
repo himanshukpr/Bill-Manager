@@ -203,6 +203,40 @@ function getStoredIndex(dateKey: string, shift: 'morning' | 'evening'): number {
     return isNaN(parsed) ? 0 : parsed
 }
 
+function updateAllocatedProductsOptimistically(
+    houseId: number,
+    items: Array<{ milkType: string; qty: number }>,
+    setAllocatedHouseProducts: React.Dispatch<React.SetStateAction<Record<number, string>>>,
+    setSelectedDateProductTotals: React.Dispatch<React.SetStateAction<Array<{ productName: string; qty: number }>>>,
+) {
+    setAllocatedHouseProducts((prev) => {
+        const grouped = new Map<string, number>()
+        for (const item of items) {
+            const name = item.milkType.trim()
+            if (!name || !item.qty) continue
+            grouped.set(name, (grouped.get(name) ?? 0) + item.qty)
+        }
+        const formatted = Array.from(grouped.entries())
+            .filter(([, qty]) => qty > 0)
+            .map(([name, qty]) => `${name} ${qty}L`)
+            .join(', ')
+        return { ...prev, [houseId]: formatted }
+    })
+
+    setSelectedDateProductTotals((prev) => {
+        const map = new Map(prev.map((p) => [p.productName, p.qty]))
+        for (const item of items) {
+            const name = item.milkType.trim()
+            if (!name || !item.qty) continue
+            map.set(name, (map.get(name) ?? 0) + item.qty)
+        }
+        return Array.from(map.entries())
+            .filter(([, qty]) => qty > 0)
+            .map(([productName, qty]) => ({ productName, qty }))
+            .sort((a, b) => b.qty - a.qty)
+    })
+}
+
 export default function DeliveryPage() {
     const router = useRouter()
 
@@ -276,7 +310,6 @@ export default function DeliveryPage() {
     const [logsLoading, setLogsLoading] = useState(false)
 
     const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
-    const [marking, setMarking] = useState(false)
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
     const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
@@ -795,52 +828,66 @@ export default function DeliveryPage() {
     const confirmClearToday = useCallback(async () => {
         if (!currentHouse || !selectedShift) return
 
-        try {
-            const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
+        const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
-            if (toDelete.length === 0) {
-                toast.info('No delivery items found for selected date')
-                setClearTodayDialogOpen(false)
-                return
-            }
-
-            await Promise.all(toDelete.map((log) => deliveryLogsApi.delete(log.id)))
-
-            // Update local UI state for current house
-            setCurrentHouseLogs([])
-            setCompletedHouses((prev) => {
-                const next = new Set(prev)
-                next.delete(currentHouse.id)
-                return next
-            })
-
-            setAllocatedHouseProducts((prev) => {
-                const next = { ...prev }
-                delete next[currentHouse.id]
-                return next
-            })
-
-            setHouseLogsCache((prev) => {
-                const next = { ...prev }
-                delete next[currentHouse.id]
-                return next
-            })
-
-            setLoadedHouseLogIds((prev) => {
-                const next = new Set(prev)
-                next.delete(currentHouse.id)
-                return next
-            })
-
-            setDeliveryItems([{ ...emptyDeliveryItem }])
-            await loadSelectedDateDeliveredSummary()
-            toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
-        } catch (err: any) {
-            toast.error(err.message || 'Failed to clear selected-date deliveries')
-        } finally {
+        if (toDelete.length === 0) {
+            toast.info('No delivery items found for selected date')
             setClearTodayDialogOpen(false)
+            return
         }
-    }, [currentHouse, currentHouseLogs, selectedShift, selectedDate, loadSelectedDateDeliveredSummary])
+
+        // Update local state immediately
+        setCurrentHouseLogs([])
+        setCompletedHouses((prev) => {
+            const next = new Set(prev)
+            next.delete(currentHouse.id)
+            return next
+        })
+        setAllocatedHouseProducts((prev) => {
+            const next = { ...prev }
+            delete next[currentHouse.id]
+            return next
+        })
+        setHouseLogsCache((prev) => {
+            const next = { ...prev }
+            delete next[currentHouse.id]
+            return next
+        })
+        setLoadedHouseLogIds((prev) => {
+            const next = new Set(prev)
+            next.delete(currentHouse.id)
+            return next
+        })
+
+        const deletedProducts = new Map<string, number>()
+        for (const log of toDelete) {
+            for (const item of log.items) {
+                const name = item.milkType.trim()
+                if (!name) continue
+                deletedProducts.set(name, (deletedProducts.get(name) ?? 0) + Number(item.qty || 0))
+            }
+        }
+        setSelectedDateProductTotals((prev) => {
+            const map = new Map(prev.map((p) => [p.productName, p.qty]))
+            for (const [name, qty] of deletedProducts) {
+                const current = map.get(name) ?? 0
+                const remaining = current - qty
+                if (remaining <= 0) map.delete(name)
+                else map.set(name, remaining)
+            }
+            return Array.from(map.entries())
+                .map(([productName, qty]) => ({ productName, qty }))
+                .sort((a, b) => b.qty - a.qty)
+        })
+
+        setDeliveryItems([{ ...emptyDeliveryItem }])
+
+        // Fire deletes in background
+        toDelete.forEach((log) => deliveryLogsApi.delete(log.id))
+
+        toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
+        setClearTodayDialogOpen(false)
+    }, [currentHouse, currentHouseLogs, selectedShift, selectedDate])
 
     // Navigate to previous day
     const handlePreviousDay = useCallback(() => {
@@ -1150,28 +1197,47 @@ export default function DeliveryPage() {
         if (shouldDelete) {
             const itemsAfterDelete = deliveryItems.filter((_, i) => i !== index)
             if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
-                try {
-                    await Promise.all(currentHouseLogs.map((log) => deliveryLogsApi.delete(log.id)))
-                    setCurrentHouseLogs([])
-                    setCompletedHouses((prev) => {
-                        const next = new Set(prev)
-                        next.delete(currentHouse.id)
-                        return next
-                    })
-                    setHouseLogsCache((prev) => {
-                        const next = { ...prev }
-                        delete next[currentHouse.id]
-                        return next
-                    })
-                    setLoadedHouseLogIds((prev) => {
-                        const next = new Set(prev)
-                        next.delete(currentHouse.id)
-                        return next
-                    })
-                    await loadSelectedDateDeliveredSummary()
-                } catch (err: any) {
-                    toast.error(err.message)
-                }
+                // Update local state immediately
+                setCurrentHouseLogs([])
+                setCompletedHouses((prev) => {
+                    const next = new Set(prev)
+                    next.delete(currentHouse.id)
+                    return next
+                })
+                setHouseLogsCache((prev) => {
+                    const next = { ...prev }
+                    delete next[currentHouse.id]
+                    return next
+                })
+                setLoadedHouseLogIds((prev) => {
+                    const next = new Set(prev)
+                    next.delete(currentHouse.id)
+                    return next
+                })
+                setAllocatedHouseProducts((prev) => {
+                    const next = { ...prev }
+                    delete next[currentHouse.id]
+                    return next
+                })
+                setSelectedDateProductTotals((prev) => {
+                    const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                    for (const log of currentHouseLogs) {
+                        for (const item of log.items) {
+                            const name = item.milkType.trim()
+                            if (!name) continue
+                            const current = map.get(name) ?? 0
+                            const remaining = current - Number(item.qty || 0)
+                            if (remaining <= 0) map.delete(name)
+                            else map.set(name, remaining)
+                        }
+                    }
+                    return Array.from(map.entries())
+                        .map(([productName, qty]) => ({ productName, qty }))
+                        .sort((a, b) => b.qty - a.qty)
+                })
+
+                // Fire deletes in background
+                currentHouseLogs.forEach((log) => deliveryLogsApi.delete(log.id))
             }
             removeDeliveryItem(index)
         } else {
@@ -1195,95 +1261,75 @@ export default function DeliveryPage() {
         if (!currentHouse) return
         if (!selectedShift) return
 
-        const wasCompleted = completedHouses.has(currentHouse.id)
-        const previousLogs = currentHouseLogs
-
-        setMarking(true)
-        setSaveStatus('idle')
-
-        try {
-            const payloadItems = deliveryItems
-                .map((item) => {
-                    const qty = Number(item.qty)
-                    const { rate } = getEffectiveRate(currentHouse, item.milkType)
-                    return {
-                        milkType: item.milkType,
-                        qty,
-                        rate,
-                        amount: qty > 0 ? qty * rate : 0,
-                    }
-                })
-                .filter((item) => item.qty > 0 && item.rate > 0)
-
-            if (payloadItems.length === 0) {
-                toast.error('Add at least one item with qty and rate before marking delivered')
-                return
-            }
-
-            if (isCompleted && currentHouseLogs.length > 0) {
-                const primaryLog = currentHouseLogs[0]
-                const updated = await deliveryLogsApi.update(primaryLog.id, {
-                    items: payloadItems as any,
-                })
-
-                const duplicateLogIds = currentHouseLogs
-                    .slice(1)
-                    .map((log) => log.id)
-
-                if (duplicateLogIds.length > 0) {
-                    await Promise.all(duplicateLogIds.map((logId) => deliveryLogsApi.delete(logId)))
+        const payloadItems = deliveryItems
+            .map((item) => {
+                const qty = Number(item.qty)
+                const { rate } = getEffectiveRate(currentHouse, item.milkType)
+                return {
+                    milkType: item.milkType,
+                    qty,
+                    rate,
+                    amount: qty > 0 ? qty * rate : 0,
                 }
+            })
+            .filter((item) => item.qty > 0 && item.rate > 0)
 
-                setCurrentHouseLogs([updated as DeliveryLog])
-                setHouseLogsCache((prev) => ({
-                    ...prev,
-                    [currentHouse.id]: [updated as DeliveryLog],
-                }))
-                setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
-            } else {
-                await deliveryLogsApi.create({
-                    houseId: currentHouse.id,
-                    shift: selectedShift,
-                    items: payloadItems,
-                    deliveredAt: buildDeliveredAtForDate(selectedDate),
-                })
+        if (payloadItems.length === 0) {
+            toast.error('Add at least one item with qty and rate before marking delivered')
+            return
+        }
 
-                setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
-                const refreshedLogs = await deliveryLogsApi.list({
-                    houseId: currentHouse.id,
-                    shift: selectedShift,
-                })
-                const selectedDateLogs = refreshedLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
-                setCurrentHouseLogs(selectedDateLogs)
-                setHouseLogsCache((prev) => ({
-                    ...prev,
-                    [currentHouse.id]: selectedDateLogs,
-                }))
-                setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
-            }
+        const now = new Date()
+        const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-            await loadSelectedDateDeliveredSummary()
+        if (isCompleted && currentHouseLogs.length > 0) {
+            const primaryLog = currentHouseLogs[0]
+            const duplicateIds = currentHouseLogs.slice(1).map((l) => l.id)
 
-            const now = new Date()
-            const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            const optimisticLog = { ...primaryLog, items: payloadItems } as DeliveryLog
+            setCurrentHouseLogs([optimisticLog])
+            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [optimisticLog] }))
             setHasUnsavedChanges(false)
             setSaveStatus('saved')
             setLastSavedAt(timeLabel)
 
-            toast.success(
-                isCompleted
-                    ? `${currentHouse.houseNo} delivery updated!`
-                    : `${currentHouse.houseNo} delivered!`
-            )
+            deliveryLogsApi.update(primaryLog.id, { items: payloadItems as any })
+            duplicateIds.forEach((id) => deliveryLogsApi.delete(id))
 
-            if (!isCompleted) {
-                setTimeout(() => handleNext(), 400)
+            updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)
+            toast.success(`${currentHouse.houseNo} delivery updated!`)
+        } else {
+            setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
+            setHasUnsavedChanges(false)
+            setSaveStatus('saved')
+            setLastSavedAt(timeLabel)
+
+            deliveryLogsApi.create({
+                houseId: currentHouse.id,
+                shift: selectedShift,
+                items: payloadItems,
+                deliveredAt: buildDeliveredAtForDate(selectedDate),
+            })
+
+            const optimisticLog: DeliveryLog = {
+                id: -Math.floor(Math.random() * 100000),
+                houseId: currentHouse.id,
+                shift: selectedShift,
+                items: payloadItems,
+                totalAmount: String(payloadItems.reduce((s, i) => s + i.amount, 0)),
+                openingBalance: '0',
+                closingBalance: '0',
+                billGenerated: false,
+                deliveredAt: buildDeliveredAtForDate(selectedDate),
+                createdAt: now.toISOString(),
             }
-        } catch (err: any) {
-            toast.error(err.message)
-            setSaveStatus('failed')
-        } finally {
-            setMarking(false)
+            setCurrentHouseLogs([optimisticLog])
+            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [optimisticLog] }))
+            setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
+
+            updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)
+            toast.success(`${currentHouse.houseNo} delivered!`)
+            setTimeout(() => handleNext(), 200)
         }
     }
 
@@ -1452,7 +1498,7 @@ export default function DeliveryPage() {
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
-    const canSubmitDelivery = !marking && (!isCompleted || hasUnsavedChanges)
+    const canSubmitDelivery = !isCompleted || hasUnsavedChanges
     const currentRouteNumber = currentIndex + 1
     const houseMotionClass =
         houseChangeDirection === 'next'
@@ -1850,7 +1896,7 @@ export default function DeliveryPage() {
                                                                         <SelectTrigger className="h-9 w-full">
                                                                             <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
                                                                         </SelectTrigger>
-                                                                        <SelectContent>
+                                                                        <SelectContent className="max-h-[50vh] overflow-y-auto">
                                                                             {productRateOptions.length > 0 ? (
                                                                                 productRateOptions.map((option) => (
                                                                                     <SelectItem key={option.value} value={option.value}>
@@ -1905,24 +1951,22 @@ export default function DeliveryPage() {
                             </div>
 
                             <p className="text-xs text-muted-foreground">
-                                {marking
-                                    ? 'Saving changes...'
-                                    : saveStatus === 'failed'
-                                        ? 'Save failed. Please try again.'
-                                        : hasUnsavedChanges
-                                            ? 'Unsaved changes. Click the button below to save.'
-                                            : saveStatus === 'saved'
-                                                ? `Changes saved${lastSavedAt ? ` at ${lastSavedAt}` : ''}.`
-                                                : isCompleted
-                                                    ? 'No new changes to save.'
-                                                    : ''}
+                                {saveStatus === 'failed'
+                                    ? 'Save failed. Please try again.'
+                                    : hasUnsavedChanges
+                                        ? 'Unsaved changes. Click the button below to save.'
+                                        : saveStatus === 'saved'
+                                            ? `Changes saved${lastSavedAt ? ` at ${lastSavedAt}` : ''}.`
+                                            : isCompleted
+                                                ? 'No new changes to save.'
+                                                : ''}
                             </p>
                         </div>
 
                         {/* ACTION */}
                         <div className="sticky bottom-0 z-10 -mx-2 mb-4 rounded-2xl border border-border/70 bg-card px-2 py-2 shadow-lg shadow-black/10 sm:mx-0 sm:mb-0 sm:rounded-none sm:border-0 sm:bg-card sm:px-0 sm:py-0 sm:shadow-none">
                             <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-xl py-2 text-xs shadow-sm sm:rounded-none sm:rounded-b-2xl sm:text-sm">
-                                {marking ? 'Saving...' : isCompleted ? 'Update Delivery' : 'Mark Delivered'}
+                                {isCompleted ? 'Update Delivery' : 'Mark Delivered'}
                             </Button>
                         </div>
                     </div>
