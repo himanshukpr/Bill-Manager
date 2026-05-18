@@ -1896,7 +1896,16 @@ export default function DeliveryPage() {
                                                                         <SelectTrigger className="h-9 w-full">
                                                                             <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
                                                                         </SelectTrigger>
-                                                                        <SelectContent className="max-h-[50vh] overflow-y-auto">
+                                                                        <SelectContent
+                                                                            position="popper"
+                                                                            side="bottom"
+                                                                            align="start"
+                                                                            collisionPadding={12}
+                                                                            sideOffset={6}
+                                                                            style={{
+                                                                                maxHeight: 'min(60dvh, var(--radix-select-content-available-height))',
+                                                                            }}
+                                                                        >
                                                                             {productRateOptions.length > 0 ? (
                                                                                 productRateOptions.map((option) => (
                                                                                     <SelectItem key={option.value} value={option.value}>
