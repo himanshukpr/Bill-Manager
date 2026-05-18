@@ -141,35 +141,6 @@ function buildDeliveredAtForDate(dateKey: string): string {
     return deliveredAt.toISOString()
 }
 
-function getCachedDeliveryDate(): string {
-    if (typeof window === 'undefined') return getTodayDateKey()
-    try {
-        const cached = window.localStorage.getItem('supplier-delivery-date-cache')
-        if (!cached) return getTodayDateKey()
-        const { dateKey, timestamp } = JSON.parse(cached)
-        const now = Date.now()
-        // Return cached date if less than 24 hours old (86400000 ms)
-        if (now - timestamp < 86400000) {
-            return dateKey
-        }
-    } catch {
-        // If parsing fails, fall back to today
-    }
-    return getTodayDateKey()
-}
-
-function setCachedDeliveryDate(dateKey: string): void {
-    if (typeof window === 'undefined') return
-    try {
-        window.localStorage.setItem('supplier-delivery-date-cache', JSON.stringify({
-            dateKey,
-            timestamp: Date.now(),
-        }))
-    } catch {
-        // Silently fail if localStorage is unavailable
-    }
-}
-
 function formatDateTime(value: string) {
     return new Intl.DateTimeFormat('en-IN', {
         day: 'numeric',
@@ -190,7 +161,7 @@ export default function SupplierDirectEntryPage() {
     const [houseId, setHouseId] = useState('')
     const [houseSearch, setHouseSearch] = useState('')
     const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('shop')
-    const [deliveryDate, setDeliveryDate] = useState(() => getCachedDeliveryDate())
+    const [deliveryDate, setDeliveryDate] = useState(() => getTodayDateKey())
     const [note, setNote] = useState('')
     const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
     const newRowIdRef = useRef<string | null>(null)
@@ -209,7 +180,7 @@ export default function SupplierDirectEntryPage() {
     useEffect(() => {
         let active = true
 
-        async function load() {
+                                                // Removed cached delivery date update
             try {
                 setLoading(true)
                 const [houseData, rateData, logData] = await Promise.all([
@@ -511,7 +482,6 @@ export default function SupplierDirectEntryPage() {
                                         value={deliveryDate}
                                         onChange={(event) => {
                                             setDeliveryDate(event.target.value)
-                                            setCachedDeliveryDate(event.target.value)
                                         }}
                                     />
                                 </div>

@@ -189,20 +189,6 @@ function parseHouseLocation(location?: string): { lat: number; lon: number } | n
     return { lat, lon }
 }
 
-function getStoredShift(dateKey: string): 'morning' | 'evening' | null {
-    if (typeof window === 'undefined') return null
-    const stored = localStorage.getItem(`delivery_shift_${dateKey}`)
-    if (stored === 'morning' || stored === 'evening') return stored
-    return null
-}
-
-function getStoredIndex(dateKey: string, shift: 'morning' | 'evening'): number {
-    if (typeof window === 'undefined') return 0
-    const stored = localStorage.getItem(`delivery_index_${dateKey}_${shift}`)
-    const parsed = parseInt(stored ?? '0', 10)
-    return isNaN(parsed) ? 0 : parsed
-}
-
 function updateAllocatedProductsOptimistically(
     houseId: number,
     items: Array<{ milkType: string; qty: number }>,
@@ -253,45 +239,10 @@ export default function DeliveryPage() {
     const [houseSearch, setHouseSearch] = useState('')
     const [allocatedHouseProducts, setAllocatedHouseProducts] = useState<Record<number, string>>({})
     const [selectedDateProductTotals, setSelectedDateProductTotals] = useState<Array<{ productName: string; qty: number }>>([])
-    const [selectedDate, setSelectedDate] = useState<Date>(() => {
-        try {
-            if (typeof window !== 'undefined') {
-                const saved = localStorage.getItem('delivery_selected_date')
-                if (saved) {
-                    const parsed = parseDateKeyToLocalDate(saved)
-                    if (parsed) return parsed
-                }
-            }
-        } catch {
-            // ignore
-        }
-
-        return new Date()
-    })
+    const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
 
     const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
-    const [datePickerValue, setDatePickerValue] = useState<string>(() => {
-        try {
-            if (typeof window !== 'undefined') {
-                const saved = localStorage.getItem('delivery_selected_date')
-                if (saved) return saved
-            }
-        } catch {
-            // ignore
-        }
-        return getLocalDateKey()
-    })
-
-    // Persist selected date so it remains until supplier changes it
-    useEffect(() => {
-        if (typeof window === 'undefined') return
-        try {
-            const key = getLocalDateKey(selectedDate)
-            localStorage.setItem('delivery_selected_date', key)
-        } catch {
-            // ignore
-        }
-    }, [selectedDate])
+    const [datePickerValue, setDatePickerValue] = useState<string>(() => getLocalDateKey())
 
     // Keep the date input value in sync with the authoritative selectedDate
     useEffect(() => {
@@ -401,27 +352,12 @@ export default function DeliveryPage() {
     // RESTORE PROGRESS WHEN SHIFT IS SELECTED
     const hasInitiallyRestored = useRef(false)
     useEffect(() => {
-        if (selectedShift && typeof window !== 'undefined' && !hasInitiallyRestored.current) {
+        if (selectedShift && !hasInitiallyRestored.current) {
             hasInitiallyRestored.current = true
-            const savedIndex = getStoredIndex(selectedDateKey, selectedShift)
-            setCurrentIndex(savedIndex)
+            setCurrentIndex(0)
             setShiftSelectorOpen(false)
         }
-    }, [selectedShift, selectedDateKey])
-
-    // SAVE SHIFT TO LOCALSTORAGE
-    useEffect(() => {
-        if (selectedShift && typeof window !== 'undefined') {
-            localStorage.setItem(`delivery_shift_${selectedDateKey}`, selectedShift)
-        }
-    }, [selectedShift, selectedDateKey])
-
-    // SAVE CURRENT INDEX TO LOCALSTORAGE
-    useEffect(() => {
-        if (selectedShift && typeof window !== 'undefined') {
-            localStorage.setItem(`delivery_index_${selectedDateKey}_${selectedShift}`, String(currentIndex))
-        }
-    }, [currentIndex, selectedShift, selectedDateKey])
+    }, [selectedShift])
 
     useEffect(() => {
         const updateHeight = () => {
@@ -462,9 +398,8 @@ export default function DeliveryPage() {
             })
             // Hide deactivated houses from supplier views
             setHouses(data.filter((h) => h.active))
-            if (resetIndex || selectedShift) {
-                const savedIndex = getStoredIndex(selectedDateKey, selectedShift)
-                setCurrentIndex(savedIndex)
+            if (resetIndex) {
+                setCurrentIndex(0)
             }
         } catch (err: any) {
             toast.error(err.message)
@@ -921,10 +856,6 @@ export default function DeliveryPage() {
 
     const handleDatePickerConfirm = useCallback(() => {
         handleDateInputChange(datePickerValue)
-        // Persist the chosen date so it remains until manually changed
-        try {
-            localStorage.setItem('delivery_selected_date', datePickerValue)
-        } catch { }
         setIsDatePickerOpen(false)
     }, [datePickerValue, handleDateInputChange])
 
@@ -1352,18 +1283,14 @@ export default function DeliveryPage() {
 
                     <div className="grid gap-3 sm:grid-cols-2">
                         <Button className="w-full" onClick={() => {
-                            const savedIndex = getStoredIndex(selectedDateKey, 'morning')
-                            setCurrentIndex(savedIndex)
-                            localStorage.setItem(`delivery_shift_${selectedDateKey}`, 'morning')
+                            setCurrentIndex(0)
                             setSelectedShift('morning')
                         }}>
                             Morning
                         </Button>
 
                         <Button className="w-full" onClick={() => {
-                            const savedIndex = getStoredIndex(selectedDateKey, 'evening')
-                            setCurrentIndex(savedIndex)
-                            localStorage.setItem(`delivery_shift_${selectedDateKey}`, 'evening')
+                            setCurrentIndex(0)
                             setSelectedShift('evening')
                         }}>
                             Evening

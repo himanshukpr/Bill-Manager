@@ -11,6 +11,7 @@ import {
 import { DEFAULT_CACHE_FRESH_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
 const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'theme', 'next-theme']);
+const SESSION_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth']);
 const revalidationLocks = new Map<string, Promise<void>>();
 const activeGetQueries = new Map<
   string,
@@ -39,7 +40,7 @@ function isOnline() {
   return isBrowser() && navigator.onLine;
 }
 
-async function ensureClientSessionStoragePolicy(): Promise<void> {
+export async function ensureClientSessionStoragePolicy(): Promise<void> {
   if (!isBrowser()) return;
   if (clientSessionInit) {
     await clientSessionInit;
@@ -47,54 +48,54 @@ async function ensureClientSessionStoragePolicy(): Promise<void> {
   }
 
   clientSessionInit = (async () => {
-    const markerKey = 'bill-manager-session-started';
-    let hasMarker = false;
-
     try {
-      hasMarker = window.sessionStorage.getItem(markerKey) === '1';
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i += 1) {
+        const key = window.localStorage.key(i);
+        if (!key) continue;
+        if (!LOCAL_STORAGE_PRESERVE_KEYS.has(key)) {
+          keysToRemove.push(key);
+        }
+      }
+
+      for (const key of keysToRemove) {
+        window.localStorage.removeItem(key);
+      }
     } catch {
-      hasMarker = false;
+      // Ignore storage cleanup failures.
     }
 
-    if (!hasMarker) {
-      try {
-        const keysToRemove: string[] = [];
-        for (let i = 0; i < window.localStorage.length; i += 1) {
-          const key = window.localStorage.key(i);
-          if (!key) continue;
-          if (!LOCAL_STORAGE_PRESERVE_KEYS.has(key)) {
-            keysToRemove.push(key);
-          }
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i += 1) {
+        const key = window.sessionStorage.key(i);
+        if (!key) continue;
+        if (!SESSION_STORAGE_PRESERVE_KEYS.has(key)) {
+          keysToRemove.push(key);
         }
-
-        for (const key of keysToRemove) {
-          window.localStorage.removeItem(key);
-        }
-      } catch {
-        // Ignore storage cleanup failures.
       }
 
-      try {
-        // Keep the Dexie connection open and clear data in-place to avoid
-        // transient DatabaseClosedError for active live queries.
-        await Promise.all([
-          db.houses.clear(),
-          db.houseConfigs.clear(),
-          db.deliveryLogs.clear(),
-          db.bills.clear(),
-          db.users.clear(),
-          db.syncQueue.clear(),
-          db.queryCache.clear(),
-        ]);
-      } catch {
-        // Ignore IndexedDB cleanup failures.
+      for (const key of keysToRemove) {
+        window.sessionStorage.removeItem(key);
       }
+    } catch {
+      // Ignore storage cleanup failures.
+    }
 
-      try {
-        window.sessionStorage.setItem(markerKey, '1');
-      } catch {
-        // Ignore storage marker failures.
-      }
+    try {
+      // Keep the Dexie connection open and clear data in-place to avoid
+      // transient DatabaseClosedError for active live queries.
+      await Promise.all([
+        db.houses.clear(),
+        db.houseConfigs.clear(),
+        db.deliveryLogs.clear(),
+        db.bills.clear(),
+        db.users.clear(),
+        db.syncQueue.clear(),
+        db.queryCache.clear(),
+      ]);
+    } catch {
+      // Ignore IndexedDB cleanup failures.
     }
   })();
 
