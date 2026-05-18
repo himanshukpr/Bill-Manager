@@ -601,6 +601,19 @@ export default function DeliveryPage() {
         setCompletedHouses(nextCompleted)
     }, [auth, selectedShift, selectedDate])
 
+    const handlePanelViewChange = useCallback(
+        (nextView: 'delivery' | 'allocated-houses') => {
+            setPanelView(nextView)
+
+            if (nextView !== 'allocated-houses') return
+
+            setSelectedDateProductTotals([])
+            setAllocatedHouseProducts({})
+            void loadSelectedDateDeliveredSummary()
+        },
+        [loadSelectedDateDeliveredSummary],
+    )
+
     useEffect(() => {
         if (!auth || !selectedShift) return
 
@@ -1334,7 +1347,7 @@ export default function DeliveryPage() {
                         <Button
                             variant="outline"
                             className="gap-2"
-                            onClick={() => setPanelView('delivery')}
+                            onClick={() => handlePanelViewChange('delivery')}
                         >
                             <Rows3 className="h-4 w-4" /> Switch to Delivery View
                         </Button>
@@ -1700,7 +1713,7 @@ export default function DeliveryPage() {
                                             variant="outline"
                                             size="icon"
                                             className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
-                                            onClick={() => setPanelView((view) => (view === 'delivery' ? 'allocated-houses' : 'delivery'))}
+                                            onClick={() => handlePanelViewChange(panelView === 'delivery' ? 'allocated-houses' : 'delivery')}
                                             aria-label="Switch view"
                                             title="Switch view"
                                         >
