@@ -248,23 +248,45 @@ export default function SupplierHousesPage() {
     const filteredMorningPlan = useMemo(() => {
         if (!searchQuery.trim()) return morningPlan
         const query = searchQuery.toLowerCase()
-        return morningPlan.filter((config) => {
+        
+        const exactMatches: typeof morningPlan = []
+        const partialMatches: typeof morningPlan = []
+
+        morningPlan.forEach((config) => {
             const house = allHouses.find((h) => h.id === config.houseId)
-            const houseNo = house?.houseNo?.toString() ?? config.houseId.toString()
-            const area = house?.area?.toLowerCase() ?? ''
-            return houseNo.toLowerCase().includes(query) || area.includes(query)
+            const houseNo = (house?.houseNo?.toString() ?? config.houseId.toString()).toLowerCase()
+            const area = (house?.area ?? '').toLowerCase()
+
+            if (houseNo === query || area === query) {
+                exactMatches.push(config)
+            } else if (houseNo.includes(query) || area.includes(query)) {
+                partialMatches.push(config)
+            }
         })
+
+        return [...exactMatches, ...partialMatches]
     }, [morningPlan, allHouses, searchQuery])
 
     const filteredEveningPlan = useMemo(() => {
         if (!searchQuery.trim()) return eveningPlan
         const query = searchQuery.toLowerCase()
-        return eveningPlan.filter((config) => {
+        
+        const exactMatches: typeof eveningPlan = []
+        const partialMatches: typeof eveningPlan = []
+
+        eveningPlan.forEach((config) => {
             const house = allHouses.find((h) => h.id === config.houseId)
-            const houseNo = house?.houseNo?.toString() ?? config.houseId.toString()
-            const area = house?.area?.toLowerCase() ?? ''
-            return houseNo.toLowerCase().includes(query) || area.includes(query)
+            const houseNo = (house?.houseNo?.toString() ?? config.houseId.toString()).toLowerCase()
+            const area = (house?.area ?? '').toLowerCase()
+
+            if (houseNo === query || area === query) {
+                exactMatches.push(config)
+            } else if (houseNo.includes(query) || area.includes(query)) {
+                partialMatches.push(config)
+            }
         })
+
+        return [...exactMatches, ...partialMatches]
     }, [eveningPlan, allHouses, searchQuery])
 
     function handleDragEnd(section: 'morning' | 'evening', event: DragEndEvent) {

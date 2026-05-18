@@ -330,31 +330,48 @@ export default function ReceiptsPage() {
                   onChange={e => { setFormHouseQuery(e.target.value); setFormHouseSelected(false); }} className="pl-9" />
                 {formHouseQuery.trim() !== '' && !formHouseSelected && (
                   <div className="absolute left-0 right-0 mt-1 z-20 rounded-md border border-border bg-card max-h-64 overflow-y-auto">
-                    {(houses.filter(h => (
-                      h.houseNo.toLowerCase().includes(formHouseQuery.toLowerCase()) ||
-                      (h.area ?? '').toLowerCase().includes(formHouseQuery.toLowerCase())
-                    )).slice(0, 8)).map(h => (
-                      <button type="button" key={h.id} className="w-full text-left px-3 py-2 hover:bg-muted/30 border-b border-border/30 last:border-0"
-                        onClick={() => {
-                          handleHouseSelect(h.id, h.houseNo, h.area ?? '', h.phoneNo ?? '')
-                        }}>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{h.houseNo}</span>
-                          {h.area && <span className="text-muted-foreground text-xs">— {h.area}</span>}
-                          {h.balance && (
-                            <span className="ml-auto text-amber-600 dark:text-amber-400 text-xs font-semibold">
-                              ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
-                            </span>
+                    {(() => {
+                      const q = formHouseQuery.trim().toLowerCase()
+                      const exactMatches: typeof houses = []
+                      const partialMatches: typeof houses = []
+
+                      houses.forEach((h) => {
+                        const houseNo = h.houseNo.toLowerCase()
+                        const area = (h.area ?? '').toLowerCase()
+
+                        if (houseNo === q || area === q) {
+                          exactMatches.push(h)
+                        } else if (houseNo.includes(q) || area.includes(q)) {
+                          partialMatches.push(h)
+                        }
+                      })
+
+                      const filtered = [...exactMatches, ...partialMatches].slice(0, 8)
+
+                      return (
+                        <>
+                          {filtered.map(h => (
+                            <button type="button" key={h.id} className="w-full text-left px-3 py-2 hover:bg-muted/30 border-b border-border/30 last:border-0"
+                              onClick={() => {
+                                handleHouseSelect(h.id, h.houseNo, h.area ?? '', h.phoneNo ?? '')
+                              }}>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{h.houseNo}</span>
+                                {h.area && <span className="text-muted-foreground text-xs">— {h.area}</span>}
+                                {h.balance && (
+                                  <span className="ml-auto text-amber-600 dark:text-amber-400 text-xs font-semibold">
+                                    ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                          {filtered.length === 0 && (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">No matching houses</div>
                           )}
-                        </div>
-                      </button>
-                    ))}
-                    {(houses.filter(h => (
-                      h.houseNo.toLowerCase().includes(formHouseQuery.toLowerCase()) ||
-                      (h.area ?? '').toLowerCase().includes(formHouseQuery.toLowerCase())
-                    )).length === 0) && (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">No matching houses</div>
-                      )}
+                        </>
+                      )
+                    })()}
                   </div>
                 )}
               </div>

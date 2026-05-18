@@ -153,9 +153,24 @@ export default function BillsPage() {
     const q = genHouseSearch.trim().toLowerCase()
     if (!q) return houses.slice().sort((a, b) => a.houseNo.localeCompare(b.houseNo))
 
-    return houses
-      .filter((h) => h.houseNo.toLowerCase().includes(q) || (h.area || '').toLowerCase().includes(q))
-      .sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    const exactMatches: typeof houses = []
+    const partialMatches: typeof houses = []
+
+    houses.forEach((h) => {
+      const houseNo = h.houseNo.toLowerCase()
+      const area = (h.area || '').toLowerCase()
+
+      if (houseNo === q || area === q) {
+        exactMatches.push(h)
+      } else if (houseNo.includes(q) || area.includes(q)) {
+        partialMatches.push(h)
+      }
+    })
+
+    exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    return [...exactMatches, ...partialMatches]
   }, [houses, genHouseSearch])
 
   const selectedGenHouse = useMemo(() => houses.find((h) => String(h.id) === genHouseId), [houses, genHouseId])
@@ -189,16 +204,41 @@ export default function BillsPage() {
     return () => { cancelled = true }
   }, [genHouseId])
 
-  const filtered = bills
-    .filter(b =>
-      b.house?.houseNo.toLowerCase().includes(search.toLowerCase()) ||
-      b.house?.area?.toLowerCase().includes(search.toLowerCase())
-    )
-    .sort((a, b) => {
-      // Unpaid bills first (isClosed = false), paid bills at bottom (isClosed = true)
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = bills
+      .filter(b => !q || b.house?.houseNo.toLowerCase().includes(q) || b.house?.area?.toLowerCase().includes(q))
+
+    if (!q) {
+      return filtered.sort((a, b) => {
+        // Unpaid bills first (isClosed = false), paid bills at bottom (isClosed = true)
+        if (a.isClosed === b.isClosed) return 0
+        return a.isClosed ? 1 : -1
+      })
+    }
+
+    const exactMatches: typeof bills = []
+    const partialMatches: typeof bills = []
+
+    filtered.forEach((b) => {
+      const houseNo = b.house?.houseNo.toLowerCase() || ''
+      const area = (b.house?.area || '').toLowerCase()
+      const q_lower = q.toLowerCase()
+
+      if (houseNo === q_lower || area === q_lower) {
+        exactMatches.push(b)
+      } else if (houseNo.includes(q_lower) || area.includes(q_lower)) {
+        partialMatches.push(b)
+      }
+    })
+
+    const sorted = [...exactMatches, ...partialMatches].sort((a, b) => {
       if (a.isClosed === b.isClosed) return 0
       return a.isClosed ? 1 : -1
     })
+
+    return sorted
+  }, [bills, search])
 
   function openGenerate() {
     setGenerateMode('single')
