@@ -477,8 +477,143 @@ export default function HousesPage() {
       doc.text(`Area: ${summaryHouse.area}`, 14, 29)
     }
 
+    const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+    const monthLabels = monthKeys.map((monthKey) => {
+      const [year, month] = monthKey.split('-').map(Number)
+      return `${MONTH_NAMES[month]} ${year}`
+    })
+
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const left = 14
+    const right = 14
+    const headerBottomY = summaryHouse.area ? 29 : 23
+    const monthlyTitleY = headerBottomY + 10
+    const top = monthlyTitleY + 6
+    const bottom = 14
+    const tableWidth = pageWidth - left - right
+    const productColWidth = monthLabels.length > 0 ? Math.max(58, Math.min(76, tableWidth * 0.36)) : tableWidth
+    const monthColWidth = monthLabels.length > 0 ? (tableWidth - productColWidth) / monthLabels.length : 0
+    const headerHeight = 11
+    const rowHeight = 10
+    const paddingX = 2.5
+    const lineHeight = 4.2
+
+    const toLines = (text: string, width: number): string[] => {
+      const lines = doc.splitTextToSize(text, Math.max(8, width - (paddingX * 2)))
+      return Array.isArray(lines) ? lines : [String(lines)]
+    }
+
+    const drawCell = (
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      text: string | string[],
+      align: 'left' | 'right' = 'left',
+      bold = false,
+      fillColor: [number, number, number] = [255, 255, 255],
+      textColor: [number, number, number] = [17, 24, 39],
+    ) => {
+      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
+      doc.setDrawColor(210, 214, 220)
+      doc.rect(x, y, width, height, 'FD')
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setTextColor(textColor[0], textColor[1], textColor[2])
+      const lines = Array.isArray(text) ? text : toLines(text, width)
+      const contentHeight = lines.length * lineHeight
+      const textY = y + Math.max(2, (height - contentHeight) / 2) + (lineHeight - 1)
+      const textX = align === 'right' ? x + width - paddingX : x + paddingX
+      doc.text(lines, textX, textY, { align })
+    }
+
+    let currentY = top
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(13)
+    doc.setTextColor(17, 24, 39)
+    doc.text('Monthly Product Summary', 14, monthlyTitleY)
+
+    drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+    monthLabels.forEach((label, index) => {
+      const x = left + productColWidth + (index * monthColWidth)
+      drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+    })
+
+    currentY += headerHeight
+
+    if (monthlyProductSummary.length === 0) {
+      drawCell(left, currentY, tableWidth, rowHeight, 'No product data available', 'left', false)
+      currentY += rowHeight
+    } else {
+      monthlyProductSummary.forEach((row) => {
+        if (currentY > pageHeight - bottom - rowHeight) {
+          doc.addPage()
+          currentY = top
+          drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+          monthLabels.forEach((label, index) => {
+            const x = left + productColWidth + (index * monthColWidth)
+            drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+          })
+          currentY += headerHeight
+        }
+
+        const productTotal = summaryTotals.productTotals.find((item) => item.product === row.product)
+        const rowValues = monthKeys.map((monthKey) => {
+          const [year, month] = monthKey.split('-').map(Number)
+          const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
+          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+        })
+
+        const productLines = toLines(row.product, productColWidth)
+        const valueLines = rowValues.map((value) => toLines(value, monthColWidth))
+        const maxLines = Math.max(productLines.length, ...valueLines.map((lines) => lines.length))
+        const cellHeight = Math.max(rowHeight, (maxLines * lineHeight) + 4)
+
+        drawCell(left, currentY, productColWidth, cellHeight, productLines, 'left')
+        valueLines.forEach((value, index) => {
+          const x = left + productColWidth + (index * monthColWidth)
+          drawCell(x, currentY, monthColWidth, cellHeight, value, 'right')
+        })
+        currentY += cellHeight
+      })
+
+      if (currentY > pageHeight - bottom - rowHeight) {
+        doc.addPage()
+        currentY = top
+        drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+        monthLabels.forEach((label, index) => {
+          const x = left + productColWidth + (index * monthColWidth)
+          drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+        })
+        currentY += headerHeight
+      }
+
+      drawCell(left, currentY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
+      monthLabels.forEach((_, index) => {
+        const x = left + productColWidth + (index * monthColWidth)
+        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+      })
+      currentY += rowHeight
+    }
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(17, 24, 39)
+    doc.text(`Total Amount: Rs ${summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 14, currentY + 8)
+
+    let deliveriesTitleY = currentY + 16
+    if (deliveriesTitleY > pageHeight - 20) {
+      doc.addPage()
+      deliveriesTitleY = 16
+    }
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(13)
+    doc.setTextColor(17, 24, 39)
+    doc.text('Daily Deliveries', 14, deliveriesTitleY)
+
     autoTable(doc, {
-      startY: summaryHouse.area ? 34 : 30,
+      startY: deliveriesTitleY + 6,
       head: [['Date', 'Products']],
       body: summaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
       styles: {
@@ -502,7 +637,7 @@ export default function HousesPage() {
     })
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
-  }, [summaryHouse, summaryPeriod, summaryRows])
+  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {
