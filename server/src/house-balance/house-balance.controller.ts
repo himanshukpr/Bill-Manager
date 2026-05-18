@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { HouseBalanceService } from './house-balance.service';
 import { RecordPaymentDto, UpdatePreviousBalanceDto } from './dto/payment.dto';
+import { ClosePeriodDto } from './dto/close-period.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -35,6 +36,11 @@ export class HouseBalanceController {
   @Post('payment')
   recordPayment(@Body() dto: RecordPaymentDto) {
     return this.service.recordPayment(dto);
+  }
+
+  @Post('close-period')
+  closePeriod(@Body() dto: ClosePeriodDto) {
+    return this.service.closePeriod(dto);
   }
 
   @Patch(':houseId')

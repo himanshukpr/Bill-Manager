@@ -43,6 +43,9 @@ export default function ReceiptsPage() {
   const [formSelectedBillIds, setFormSelectedBillIds] = useState<number[]>([])
   const [formPaymentMode, setFormPaymentMode] = useState<'all' | 'selected'>('all')
   const [formDiscount, setFormDiscount] = useState('')
+  const [formClosePeriod, setFormClosePeriod] = useState(false)
+  const [formFromDate, setFormFromDate] = useState<string>('')
+  const [formToDate, setFormToDate] = useState<string>('')
 
   // Auto-tick bills based on amount and mode
   useEffect(() => {
@@ -171,13 +174,24 @@ export default function ReceiptsPage() {
     if (!formHouseId || !formAmount) { toast.error('House and Amount are required'); return }
     setSaving(true)
     try {
-      await balanceApi.record({
-        houseId: parseInt(formHouseId),
-        amount: parseFloat(formAmount),
-        note: formNote || undefined,
-        billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
-        discount: formDiscount ? parseFloat(formDiscount) : undefined,
-      })
+      if (formClosePeriod) {
+        // Close specified period by marking logs as closed and recording a payment
+        await balanceApi.closePeriod({
+          houseId: parseInt(formHouseId),
+          fromDate: formFromDate,
+          toDate: formToDate,
+          amount: parseFloat(formAmount),
+          note: formNote || undefined,
+        })
+      } else {
+        await balanceApi.record({
+          houseId: parseInt(formHouseId),
+          amount: parseFloat(formAmount),
+          note: formNote || undefined,
+          billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
+          discount: formDiscount ? parseFloat(formDiscount) : undefined,
+        })
+      }
       toast.success('Payment recorded successfully')
       setDialogOpen(false)
       setFormHouseId('')
@@ -188,6 +202,9 @@ export default function ReceiptsPage() {
       setFormHouseSelected(false)
       setFormHouseQuery('')
       setFormDiscount('')
+      setFormClosePeriod(false)
+      setFormFromDate('')
+      setFormToDate('')
       load()
     } catch (e: any) {
       toast.error(e.message)
@@ -473,7 +490,27 @@ export default function ReceiptsPage() {
               </>
             )}
 
-            <div className="space-y-1.5">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Checkbox checked={formClosePeriod} onCheckedChange={(v) => setFormClosePeriod(Boolean(v))} />
+                    <Label className="text-sm">Close specific period (mark deliveries as paid)</Label>
+                  </div>
+                  {formClosePeriod && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>From Date</Label>
+                        <Input type="date" value={formFromDate} onChange={(e) => setFormFromDate(e.target.value)} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Upto Date</Label>
+                        <Input type="date" value={formToDate} onChange={(e) => setFormToDate(e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+
+                <div className="space-y-1.5">
               <Label htmlFor="receipt-note">Note (Optional)</Label>
               <Textarea id="receipt-note" placeholder="e.g. Cash received on 1st April" value={formNote}
                 onChange={e => setFormNote(e.target.value)} rows={2} />

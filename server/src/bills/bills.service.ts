@@ -101,6 +101,7 @@ export class BillsService {
     const deliveryLogs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId: dto.houseId,
+        billGenerated: false,
         deliveredAt: {
           gte: periodStart,
           lte: periodEnd,
@@ -108,6 +109,9 @@ export class BillsService {
       },
       orderBy: { deliveredAt: 'asc' },
     });
+    // Exclude logs that are already marked as billed/closed
+    // (note: some code paths relied on billGenerated; ensure we only include un-billed logs)
+    // Filter applied above by adding billGenerated: false
 
     if (deliveryLogs.length === 0) {
       throw new BadRequestException(
@@ -374,6 +378,7 @@ export class BillsService {
     const deliveryLogs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId,
+        billGenerated: false,
         deliveredAt: {
           gte: periodStart,
           lte: periodEnd,
