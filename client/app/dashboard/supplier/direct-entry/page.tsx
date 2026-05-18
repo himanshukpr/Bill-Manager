@@ -180,7 +180,7 @@ export default function SupplierDirectEntryPage() {
     useEffect(() => {
         let active = true
 
-                                                // Removed cached delivery date update
+        const load = async () => {
             try {
                 setLoading(true)
                 const [houseData, rateData, logData] = await Promise.all([
