@@ -1223,6 +1223,25 @@ export const balanceApi = {
 
     return { queued: true };
   },
+  closePeriod: async (data: { houseId: number; fromDate: string; toDate: string; amount?: number; note?: string }) => {
+    if (isOnline()) {
+      const res = await apiPost('/house-balance/close-period', data);
+      if (isBrowser()) {
+        // Invalidate caches that may be affected
+        await invalidateCache('/bills');
+        await invalidateCache('/delivery-logs');
+        await invalidateCache('/house-balance');
+      }
+      return res;
+    }
+
+    if (isBrowser()) {
+      void syncEngine.enqueue('/house-balance/close-period', 'POST', data);
+      return { queued: true };
+    }
+
+    return { queued: true };
+  },
 };
 
 // ─── Bills ────────────────────────────────────────────────────────────────────

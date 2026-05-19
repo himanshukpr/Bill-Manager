@@ -365,6 +365,30 @@ function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefi
   return configs.find((config) => parseDailyAlerts(config.dailyAlerts).length > 0) ?? configs[0]
 }
 
+function getFilteredHouses(houses: House[], query: string): House[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return houses.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+  const exactMatches: typeof houses = []
+  const partialMatches: typeof houses = []
+
+  houses.forEach((house) => {
+    const houseNo = house.houseNo.toLowerCase()
+    const area = (house.area || '').toLowerCase()
+
+    if (houseNo === q || area === q) {
+      exactMatches.push(house)
+    } else if (houseNo.includes(q) || area.includes(q)) {
+      partialMatches.push(house)
+    }
+  })
+
+  exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+  partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+  return [...exactMatches, ...partialMatches]
+}
+
 export default function HousesPage() {
   const cachedHouses = useLiveQuery(() => db.houses.toArray())
   const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
@@ -372,10 +396,9 @@ export default function HousesPage() {
   const suppliers = useMemo(() => cachedSuppliers ?? [], [cachedSuppliers])
   const [hydrated, setHydrated] = useState(false)
   const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>('all')
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all')
-  const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('activated')
+  const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('all')
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -447,13 +470,6 @@ export default function HousesPage() {
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
   }, [editDeliveryForm.items])
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(search)
-    }, 200)
-    return () => clearTimeout(handler)
-  }, [search])
 
   const handleExportSummaryPdf = useCallback(() => {
     if (!summaryHouse) return
@@ -659,9 +675,8 @@ export default function HousesPage() {
   }, [refreshCachedData])
 
   const filtered = useMemo(() => {
-    const query = debouncedSearch.trim().toLowerCase()
-
-    return houses.filter((house) => {
+    const query = search.trim()
+    const filtered = houses.filter((house) => {
       const shift = getHouseShift(house)
       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
@@ -670,48 +685,38 @@ export default function HousesPage() {
 
       if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
 
-      if (!query) return true
-
-      return (
-        house.houseNo.toLowerCase().includes(query) ||
-        (house.area || '').toLowerCase().includes(query) ||
-        (house.phoneNo || '').includes(query)
-      )
+      return true
     })
-  }, [houses, debouncedSearch, shiftFilter, paymentFilter, houseStatusFilter])
+
+    return getFilteredHouses(filtered, query)
+  }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
 
   const searchSuggestions = useMemo(() => {
-    const query = search.trim().toLowerCase()
+    const query = search.trim()
     if (!query) return []
 
-    return houses
-      .filter((house) => {
-        const shift = getHouseShift(house)
-        if (shiftFilter !== 'all' && shift !== shiftFilter) return false
+    const filtered = houses.filter((house) => {
+      const shift = getHouseShift(house)
+      if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
-        const paymentStatus = getHousePaymentStatus(house)
-        if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
+      const paymentStatus = getHousePaymentStatus(house)
+      if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
 
-        if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
+      if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
 
-        return (
-          house.houseNo.toLowerCase().includes(query) ||
-          (house.area || '').toLowerCase().includes(query) ||
-          (house.phoneNo || '').includes(query)
-        )
-      })
-      .slice(0, 6)
+      return true
+    })
+
+    return getFilteredHouses(filtered, query).slice(0, 6)
   }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
 
   const handleSearchSelect = useCallback((value: string) => {
     setSearch(value)
-    setDebouncedSearch(value)
     setIsSearchOpen(false)
   }, [])
 
   const clearSearch = useCallback(() => {
     setSearch('')
-    setDebouncedSearch('')
   }, [])
 
   const selectedConfigHouse = houses.find(h => h.id === Number.parseInt(configForm.houseId, 10))

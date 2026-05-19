@@ -175,7 +175,8 @@ export default function AdminHouseConfigPage() {
 
   const filteredHouses = useMemo(() => {
     if (!houses) return []
-    return houses.filter(house => {
+    
+    const housesByActiveStatus = houses.filter(house => {
       const draft = drafts[house.id]
       if (!draft) return false
       
@@ -187,21 +188,31 @@ export default function AdminHouseConfigPage() {
             return false
         }
       }
-
-      const searchText = debouncedSearch.trim().toLowerCase()
-      if (searchText) {
-        const supplier = draft.supplierId ? supplierById.get(draft.supplierId) : undefined
-        const matchesSearch = house.houseNo.toLowerCase().includes(searchText) ||
-          (house.area || '').toLowerCase().includes(searchText) ||
-          house.phoneNo.includes(searchText) ||
-          (draft.shift || '').toLowerCase().includes(searchText) ||
-          (supplier?.username || '').toLowerCase().includes(searchText)
-        
-        if (!matchesSearch) return false
-      }
       return true
     })
-  }, [houses, drafts, supplierById, debouncedSearch, shiftFilter, supplierFilter])
+
+    const q = debouncedSearch.trim().toLowerCase()
+    if (!q) return housesByActiveStatus.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    const exactMatches: typeof houses = []
+    const partialMatches: typeof houses = []
+
+    housesByActiveStatus.forEach((house) => {
+      const houseNo = house.houseNo.toLowerCase()
+      const area = (house.area || '').toLowerCase()
+
+      if (houseNo === q || area === q) {
+        exactMatches.push(house)
+      } else if (houseNo.includes(q) || area.includes(q)) {
+        partialMatches.push(house)
+      }
+    })
+
+    exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    return [...exactMatches, ...partialMatches]
+  }, [houses, drafts, debouncedSearch, shiftFilter, supplierFilter])
 
   const searchSuggestions = useMemo(() => {
     if (!houses) return []

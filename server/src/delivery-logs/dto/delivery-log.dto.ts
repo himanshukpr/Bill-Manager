@@ -54,6 +54,10 @@ export class CreateDeliveryLogDto {
     billGenerated?: boolean;
 
     @IsOptional()
+    @IsBoolean()
+    isClosed?: boolean;
+
+    @IsOptional()
     @IsDateString()
     deliveredAt?: string;
 }
@@ -72,4 +76,8 @@ export class UpdateDeliveryLogDto {
     @IsOptional()
     @IsBoolean()
     billGenerated?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    isClosed?: boolean;
 }
