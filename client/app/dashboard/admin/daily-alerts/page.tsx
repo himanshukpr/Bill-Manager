@@ -287,12 +287,24 @@ export default function AdminDailyAlertsPage() {
     const q = addHouseSearch.trim().toLowerCase()
     if (!q) return [...housesWithoutAlerts].sort((a, b) => a.houseNo.localeCompare(b.houseNo))
 
-    return housesWithoutAlerts
-      .filter((house) =>
-        house.houseNo.toLowerCase().includes(q) ||
-        (house.area || '').toLowerCase().includes(q),
-      )
-      .sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    const exactMatches: typeof housesWithoutAlerts = []
+    const partialMatches: typeof housesWithoutAlerts = []
+
+    housesWithoutAlerts.forEach((house) => {
+      const houseNo = house.houseNo.toLowerCase()
+      const area = (house.area || '').toLowerCase()
+
+      if (houseNo === q || area === q) {
+        exactMatches.push(house)
+      } else if (houseNo.includes(q) || area.includes(q)) {
+        partialMatches.push(house)
+      }
+    })
+
+    exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+    partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+    return [...exactMatches, ...partialMatches]
   }, [addHouseSearch, housesWithoutAlerts, selectedAddHouseId])
 
   const selectedAddHouse = useMemo(() => {

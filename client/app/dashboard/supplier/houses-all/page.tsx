@@ -341,6 +341,30 @@ type HouseStatusFilter = 'activated' | 'deactivated' | 'all'
 type HouseToggleAction = 'deactivate' | 'reactivate' | 'delete'
 type ToggleDialogMode = 'deactivate-confirm' | 'inactive-choice' | null
 
+function getFilteredHouses(houses: House[], query: string): House[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return houses.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+  const exactMatches: typeof houses = []
+  const partialMatches: typeof houses = []
+
+  houses.forEach((house) => {
+    const houseNo = house.houseNo.toLowerCase()
+    const area = (house.area || '').toLowerCase()
+
+    if (houseNo === q || area === q) {
+      exactMatches.push(house)
+    } else if (houseNo.includes(q) || area.includes(q)) {
+      partialMatches.push(house)
+    }
+  })
+
+  exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+  partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+
+  return [...exactMatches, ...partialMatches]
+}
+
 function getHouseShift(house: House): 'morning' | 'evening' {
   return house.configs?.[0]?.shift ?? 'evening'
 }
@@ -656,9 +680,8 @@ export default function HousesPage() {
   }, [refreshCachedData])
 
   const filtered = useMemo(() => {
-    const query = debouncedSearch.trim().toLowerCase()
-
-    return (houses || []).filter((house) => {
+    const query = debouncedSearch.trim()
+    const filtered = (houses || []).filter((house) => {
       const shift = getHouseShift(house)
       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
@@ -667,37 +690,29 @@ export default function HousesPage() {
 
       if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
 
-      if (!query) return true
-
-      return (
-        house.houseNo.toLowerCase().includes(query) ||
-        (house.area || '').toLowerCase().includes(query) ||
-        (house.phoneNo || '').includes(query)
-      )
+      return true
     })
+
+    return getFilteredHouses(filtered, query)
   }, [houses, debouncedSearch, shiftFilter, paymentFilter, houseStatusFilter])
 
   const searchSuggestions = useMemo(() => {
-    const query = search.trim().toLowerCase()
+    const query = search.trim()
     if (!query) return []
 
-    return (houses || [])
-      .filter((house) => {
-        const shift = getHouseShift(house)
-        if (shiftFilter !== 'all' && shift !== shiftFilter) return false
+    const filtered = (houses || []).filter((house) => {
+      const shift = getHouseShift(house)
+      if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
-        const paymentStatus = getHousePaymentStatus(house)
-        if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
+      const paymentStatus = getHousePaymentStatus(house)
+      if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
 
-        if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
+      if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
 
-        return (
-          house.houseNo.toLowerCase().includes(query) ||
-          (house.area || '').toLowerCase().includes(query) ||
-          (house.phoneNo || '').includes(query)
-        )
-      })
-      .slice(0, 6)
+      return true
+    })
+
+    return getFilteredHouses(filtered, query).slice(0, 6)
   }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
 
   const handleSearchSelect = useCallback((value: string) => {
