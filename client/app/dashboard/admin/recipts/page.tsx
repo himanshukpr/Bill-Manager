@@ -51,6 +51,8 @@ export default function ReceiptsPage() {
     currentBalance: number
     total: number
     logCount: number
+    isAlreadyClosed: boolean
+    alreadyClosedMessage: string | null
     loading: boolean
   } | null>(null)
   const [periodDeliveryLogs, setPeriodDeliveryLogs] = useState<DeliveryLog[]>([])
@@ -96,7 +98,7 @@ export default function ReceiptsPage() {
       }
 
       try {
-        setPeriodSummary(prev => prev ? { ...prev, loading: true } : { previousBalance: 0, currentBalance: 0, total: 0, logCount: 0, loading: true })
+        setPeriodSummary(prev => prev ? { ...prev, loading: true } : { previousBalance: 0, currentBalance: 0, total: 0, logCount: 0, isAlreadyClosed: false, alreadyClosedMessage: null, loading: true })
         setLoadingDeliveryLogs(true)
         
         // Fetch period summary
@@ -109,6 +111,8 @@ export default function ReceiptsPage() {
           currentBalance: summary.grandTotal,
           total: summary.totalAmount,
           logCount: summary.logCount,
+          isAlreadyClosed: summary.isAlreadyClosed,
+          alreadyClosedMessage: summary.alreadyClosedMessage,
           loading: false,
         })
 
@@ -239,6 +243,11 @@ export default function ReceiptsPage() {
     setSaving(true)
     try {
       if (formClosePeriod) {
+        if (periodSummary?.isAlreadyClosed) {
+          toast.error(periodSummary.alreadyClosedMessage ?? 'This period is already closed.')
+          return
+        }
+
         // Close specified period by marking logs as closed and recording a payment
         await balanceApi.closePeriod({
           houseId: parseInt(formHouseId),
@@ -276,6 +285,8 @@ export default function ReceiptsPage() {
       setSaving(false)
     }
   }
+
+  const closePeriodBlocked = formClosePeriod && Boolean(periodSummary?.isAlreadyClosed)
 
   return (
     <div className="space-y-6">
@@ -594,6 +605,11 @@ export default function ReceiptsPage() {
                       {/* Balance Summary for Period */}
                       {periodSummary && !periodSummary.loading ? (
                         <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-3 space-y-2">
+                          {periodSummary.isAlreadyClosed && (
+                            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                              {periodSummary.alreadyClosedMessage ?? 'This period is already closed.'}
+                            </div>
+                          )}
                           <div className="grid grid-cols-1 gap-1 sm:grid-cols-3">
                             <div className="space-y-0">
                               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
@@ -656,7 +672,7 @@ export default function ReceiptsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleRecord} disabled={saving}>
+            <Button onClick={handleRecord} disabled={saving || closePeriodBlocked}>
               {saving ? 'Recording...' : 'Record Payment'}
             </Button>
           </DialogFooter>

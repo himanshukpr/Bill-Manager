@@ -455,6 +455,19 @@ export type GenerateAllBillsResult = {
   skipped: Array<{ houseId: number; houseNo: string; reason: string }>;
 };
 
+export type BillPreview = {
+  totalAmount: number;
+  previousBalance: number;
+  grandTotal: number;
+  logCount: number;
+  existingBillId: number | null;
+  lastNote: string | null;
+  isAlreadyClosed: boolean;
+  alreadyClosedMessage: string | null;
+  isDurationAlreadyCreated: boolean;
+  durationAlreadyCreatedMessage: string | null;
+};
+
 export type User = {
   uuid: string;
   username: string;
@@ -1113,6 +1126,53 @@ export const balanceApi = {
 
     return { queued: true };
   },
+  updateCurrent: async (houseId: number, currentBalance: number) => {
+    // Prevent updating balance for temporary houses
+    if (houseId < 0) return null;
+
+    const payload = { currentBalance };
+
+    if (isBrowser()) {
+      const existingHouse = await db.houses.get(houseId);
+      if (existingHouse) {
+        const next = {
+          ...existingHouse,
+          balance: {
+            ...(existingHouse.balance ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId,
+            currentBalance: String(currentBalance),
+          },
+        };
+
+        await db.houses.put(next);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${houseId}`,
+          (cached) => {
+            if (!Array.isArray(cached)) return cached;
+            return cached.map((house) => (house.id === houseId ? next : house));
+          },
+        );
+
+        await updateCachedQueries<HouseBalance>(
+          (cacheKey) => cacheKey === `GET:/house-balance/${houseId}`,
+          (cached) => ({
+            ...(cached ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId,
+            currentBalance: String(currentBalance),
+          }),
+        );
+      }
+
+      void syncEngine.enqueue(`/house-balance/${houseId}/current`, 'PATCH', payload);
+      return { queued: true };
+    }
+
+    if (isOnline()) {
+      return apiPatch<HouseBalance>(`/house-balance/${houseId}/current`, payload);
+    }
+
+    return { queued: true };
+  },
   record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number }) => {
     const applyLocalPaymentUpdate = async (payment?: PaymentHistory, balance?: HouseBalance) => {
       if (!isBrowser()) return;
@@ -1272,9 +1332,20 @@ export const billsApi = {
   preview: (houseId: number, period: { fromDate: string; toDate: string }) => {
     // Prevent querying bill preview for temporary houses
     if (houseId < 0) {
-      return Promise.resolve({ totalAmount: 0, previousBalance: 0, grandTotal: 0, logCount: 0, existingBillId: null, lastNote: null });
+      return Promise.resolve({
+        totalAmount: 0,
+        previousBalance: 0,
+        grandTotal: 0,
+        logCount: 0,
+        existingBillId: null,
+        lastNote: null,
+        isAlreadyClosed: false,
+        alreadyClosedMessage: null,
+        isDurationAlreadyCreated: false,
+        durationAlreadyCreatedMessage: null,
+      });
     }
-    return apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
+    return apiGet<BillPreview>(
       `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
     );
   },

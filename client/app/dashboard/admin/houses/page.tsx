@@ -1027,9 +1027,7 @@ export default function HousesPage() {
       if (amountDifference !== 0) {
         try {
           const currentBalance = await balanceApi.get(summaryHouse.id)
-          const currentPreviousBalance = parseFloat(currentBalance.previousBalance) || 0
-          const newPreviousBalance = currentPreviousBalance + amountDifference
-          await balanceApi.updatePrevious(summaryHouse.id, newPreviousBalance)
+          await balanceApi.updateCurrent(summaryHouse.id, parseFloat(currentBalance.currentBalance) || 0)
         } catch (error: unknown) {
           console.error('Failed to update balance:', error)
           toast.warning('Balance update failed — delivery saved but balance unchanged')

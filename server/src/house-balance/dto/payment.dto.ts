@@ -32,3 +32,9 @@ export class UpdatePreviousBalanceDto {
   @IsNumber()
   previousBalance: number;
 }
+
+export class UpdateCurrentBalanceDto {
+  @Type(() => Number)
+  @IsNumber()
+  currentBalance: number;
+}
