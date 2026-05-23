@@ -761,12 +761,12 @@ export default function ReceiptsPage() {
 
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <div className="space-y-1.5 sm:col-span-1">
-                    <Label>Area</Label>
-                    <div className="h-10 flex items-center px-3 rounded-md border border-border bg-card text-sm text-foreground">{formArea || '—'}</div>
+                    <p className="text-sm text-foreground">Area</p>
+                    <p className="text-lg font-semibold text-foreground">{formArea || '—'}</p>
                   </div>
                   <div className="space-y-1.5 sm:col-span-1">
-                    <Label>Phone</Label>
-                    <div className="h-10 flex items-center px-3 rounded-md border border-border bg-card text-sm text-foreground">{formPhone || '—'}</div>
+                    <p className="text-sm text-foreground">Phone</p>
+                    <p className="text-lg font-semibold text-foreground">{formPhone || '—'}</p>
                   </div>
                   <div className="space-y-1.5 sm:col-span-1">
                     <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
