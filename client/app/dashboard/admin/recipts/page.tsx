@@ -680,7 +680,27 @@ export default function ReceiptsPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input placeholder="Search house no or area..." value={formHouseQuery}
-                  onChange={e => { setFormHouseQuery(e.target.value); setFormHouseSelected(false); }} className="pl-9" />
+                  onChange={e => { setFormHouseQuery(e.target.value); setFormHouseSelected(false); }} className="pl-9 pr-10" />
+                {formHouseSelected && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                    title="Summary"
+                    aria-label="Open house summary"
+                    onClick={() => {
+                      const selected = houses.find((h) => String(h.id) === formHouseId)
+                      if (!selected) {
+                        toast.error('Please select a house first')
+                        return
+                      }
+                      void openSummary(selected)
+                    }}
+                  >
+                    <Rows3 className="h-4 w-4" />
+                  </Button>
+                )}
                 {formHouseQuery.trim() !== '' && !formHouseSelected && (
                   <div className="absolute left-0 right-0 mt-1 z-20 rounded-md border border-border bg-card max-h-64 overflow-y-auto">
                     {(() => {
@@ -732,33 +752,6 @@ export default function ReceiptsPage() {
 
             {formHouseSelected && (
               <>
-                <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold">House {formHouseQuery}</p>
-                      {formArea ? <p className="text-xs text-muted-foreground">{formArea}</p> : null}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      title="Summary"
-                      aria-label="Open house summary"
-                      onClick={() => {
-                        const selected = houses.find((h) => String(h.id) === formHouseId)
-                        if (!selected) {
-                          toast.error('Please select a house first')
-                          return
-                        }
-                        void openSummary(selected)
-                      }}
-                    >
-                      <Rows3 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <div className="space-y-1.5 sm:col-span-1">
                     <p className="text-sm text-foreground">Area</p>
