@@ -268,6 +268,10 @@ export default function DeliveryPage() {
         index: null,
         offset: 0,
     })
+    const swipedDeliveryItemRef = useRef<{ index: number | null; offset: number }>({
+        index: null,
+        offset: 0,
+    })
 
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
     const deliveryItemSwipeStartRef = useRef<{ x: number; y: number; index: number } | null>(null)
@@ -1096,11 +1100,115 @@ export default function DeliveryPage() {
     }
 
     const removeDeliveryItem = (idx: number) => {
+        const itemToRemove = deliveryItems[idx]
+        const removedProductName = itemToRemove?.milkType.trim() ?? ''
+        const itemsAfterDelete = deliveryItems.filter((_, i) => i !== idx)
+
+        if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
+            // Update local state immediately
+            setCurrentHouseLogs([])
+            setCompletedHouses((prev) => {
+                const next = new Set(prev)
+                next.delete(currentHouse.id)
+                return next
+            })
+            setHouseLogsCache((prev) => {
+                return {
+                    ...prev,
+                    [currentHouse.id]: [],
+                }
+            })
+            setLoadedHouseLogIds((prev) => {
+                const next = new Set(prev)
+                next.add(currentHouse.id)
+                return next
+            })
+            setAllocatedHouseProducts((prev) => {
+                const next = { ...prev }
+                delete next[currentHouse.id]
+                return next
+            })
+            setSelectedDateProductTotals((prev) => {
+                const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                for (const log of currentHouseLogs) {
+                    for (const item of log.items) {
+                        const name = item.milkType.trim()
+                        if (!name) continue
+                        const current = map.get(name) ?? 0
+                        const remaining = current - Number(item.qty || 0)
+                        if (remaining <= 0) map.delete(name)
+                        else map.set(name, remaining)
+                    }
+                }
+                return Array.from(map.entries())
+                    .map(([productName, qty]) => ({ productName, qty }))
+                    .sort((a, b) => b.qty - a.qty)
+            })
+
+            // Fire deletes in background
+            currentHouseLogs.forEach((log) => deliveryLogsApi.delete(log.id))
+        } else if (removedProductName && currentHouseLogs.length > 0) {
+            const removedQty = currentHouseLogs.reduce((sum, log) => {
+                return sum + log.items.reduce((itemSum, item) => {
+                    if (item.milkType.trim() !== removedProductName) return itemSum
+                    return itemSum + Number(item.qty || 0)
+                }, 0)
+            }, 0)
+
+            const nextHouseLogs = currentHouseLogs
+                .map((log) => ({
+                    ...log,
+                    items: log.items.filter((item) => item.milkType.trim() !== removedProductName),
+                }))
+                .filter((log) => log.items.length > 0)
+
+            setCurrentHouseLogs(nextHouseLogs)
+            setHouseLogsCache((prev) => ({
+                ...prev,
+                [currentHouse.id]: nextHouseLogs,
+            }))
+            setAllocatedHouseProducts((prev) => {
+                const next = { ...prev }
+                if (nextHouseLogs.length === 0) {
+                    delete next[currentHouse.id]
+                } else {
+                    const grouped = new Map<string, number>()
+                    for (const log of nextHouseLogs) {
+                        for (const item of log.items) {
+                            const name = item.milkType.trim()
+                            if (!name) continue
+                            grouped.set(name, (grouped.get(name) ?? 0) + Number(item.qty || 0))
+                        }
+                    }
+
+                    next[currentHouse.id] = Array.from(grouped.entries())
+                        .filter(([, qty]) => qty > 0)
+                        .map(([name, qty]) => `${name} ${qty}L`)
+                        .join(', ')
+                }
+
+                return next
+            })
+            setSelectedDateProductTotals((prev) => {
+                const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                const current = map.get(removedProductName) ?? 0
+                const remaining = current - removedQty
+                if (remaining <= 0) map.delete(removedProductName)
+                else map.set(removedProductName, remaining)
+
+                return Array.from(map.entries())
+                    .filter(([, qty]) => qty > 0)
+                    .map(([productName, qty]) => ({ productName, qty }))
+                    .sort((a, b) => b.qty - a.qty)
+            })
+        }
+
         setDeliveryItems((prev) => {
             if (prev.length <= 1) return [{ ...emptyDeliveryItem }]
             return prev.filter((_, i) => i !== idx)
         })
         setSwipedDeliveryItem({ index: null, offset: 0 })
+        swipedDeliveryItemRef.current = { index: null, offset: 0 }
         setHasUnsavedChanges(true)
         setSaveStatus('idle')
     }
@@ -1110,6 +1218,7 @@ export default function DeliveryPage() {
         if (!touch) return
 
         setSwipedDeliveryItem((current) => (current.index === index ? current : { index: null, offset: 0 }))
+        swipedDeliveryItemRef.current = { index: null, offset: 0 }
         deliveryItemSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, index }
     }
 
@@ -1126,66 +1235,26 @@ export default function DeliveryPage() {
         if (deltaY > Math.abs(deltaX)) return
         if (deltaX >= 0) {
             setSwipedDeliveryItem({ index: null, offset: 0 })
+            swipedDeliveryItemRef.current = { index: null, offset: 0 }
             return
         }
 
         const nextOffset = Math.max(deltaX, -64)
         setSwipedDeliveryItem({ index, offset: nextOffset })
+        swipedDeliveryItemRef.current = { index, offset: nextOffset }
     }
 
     const handleDeliveryItemTouchEnd = async (index: number) => {
         const start = deliveryItemSwipeStartRef.current
         if (!start || start.index !== index) return
 
-        const shouldDelete = swipedDeliveryItem.index === index && swipedDeliveryItem.offset <= -56
+        const activeSwipe = swipedDeliveryItemRef.current
+        const shouldDelete = activeSwipe.index === index && activeSwipe.offset <= -56
         if (shouldDelete) {
-            const itemsAfterDelete = deliveryItems.filter((_, i) => i !== index)
-            if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
-                // Update local state immediately
-                setCurrentHouseLogs([])
-                setCompletedHouses((prev) => {
-                    const next = new Set(prev)
-                    next.delete(currentHouse.id)
-                    return next
-                })
-                setHouseLogsCache((prev) => {
-                    const next = { ...prev }
-                    delete next[currentHouse.id]
-                    return next
-                })
-                setLoadedHouseLogIds((prev) => {
-                    const next = new Set(prev)
-                    next.delete(currentHouse.id)
-                    return next
-                })
-                setAllocatedHouseProducts((prev) => {
-                    const next = { ...prev }
-                    delete next[currentHouse.id]
-                    return next
-                })
-                setSelectedDateProductTotals((prev) => {
-                    const map = new Map(prev.map((p) => [p.productName, p.qty]))
-                    for (const log of currentHouseLogs) {
-                        for (const item of log.items) {
-                            const name = item.milkType.trim()
-                            if (!name) continue
-                            const current = map.get(name) ?? 0
-                            const remaining = current - Number(item.qty || 0)
-                            if (remaining <= 0) map.delete(name)
-                            else map.set(name, remaining)
-                        }
-                    }
-                    return Array.from(map.entries())
-                        .map(([productName, qty]) => ({ productName, qty }))
-                        .sort((a, b) => b.qty - a.qty)
-                })
-
-                // Fire deletes in background
-                currentHouseLogs.forEach((log) => deliveryLogsApi.delete(log.id))
-            }
             removeDeliveryItem(index)
         } else {
             setSwipedDeliveryItem({ index: null, offset: 0 })
+            swipedDeliveryItemRef.current = { index: null, offset: 0 }
         }
         deliveryItemSwipeStartRef.current = null
     }
