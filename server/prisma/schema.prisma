@@ -3,11 +3,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
 }
 
 model User {
-  uuid          String         @id @default(uuid()) @db.Uuid
+  uuid          String         @id @default(uuid()) 
   username      String         @unique
   email         String         @unique
   password      String
@@ -47,7 +47,7 @@ model House {
 model HouseConfig {
   id          Int      @id @default(autoincrement())
   shift       Shift
-  supplierId  String?  @map("supplier_id") @db.Uuid
+  supplierId  String?  @map("supplier_id") 
   position    Int      @default(0)
   dailyAlerts String?  @map("daily_alerts")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -128,7 +128,7 @@ model ProductRate {
 
 model DeliveryLog {
   id             Int      @id @default(autoincrement())
-  supplierId     String?  @map("supplier_id") @db.Uuid
+  supplierId     String?  @map("supplier_id") 
   shift          Shift
   items          Json
   totalAmount    Decimal  @map("total_amount") @db.Decimal(10, 2)
@@ -149,13 +149,13 @@ model DeliveryLog {
 
 model DeliveryPlan {
   id              Int      @id @default(autoincrement())
-  supplier_id     String   @map("supplier_id") @db.Uuid
+  supplier_id     String   @map("supplier_id") 
   product_name    String   @map("product_name")
   quantity_per_go Decimal  @map("quantity_per_go") @db.Decimal(10, 2)
   number_of_goes  Int      @map("number_of_goes")
   total_quantity  Decimal  @map("total_quantity") @db.Decimal(10, 2)
-  created_at      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updated_at      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  created_at      DateTime @default(now()) @map("created_at") 
+  updated_at      DateTime @default(now()) @map("updated_at") 
   users           User     @relation(fields: [supplier_id], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([supplier_id, created_at])
