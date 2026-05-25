@@ -1161,18 +1161,32 @@ export default function DeliveryPage() {
                 }))
                 .filter((log) => log.items.length > 0)
 
-            setCurrentHouseLogs(nextHouseLogs)
+            const persistChanges = currentHouseLogs.map(async (log) => {
+                const nextItems = log.items.filter((item) => item.milkType.trim() !== removedProductName)
+
+                if (nextItems.length === 0) {
+                    await deliveryLogsApi.delete(log.id)
+                    return null
+                }
+
+                return deliveryLogsApi.update(log.id, { items: nextItems as any })
+            })
+
+            const savedLogs = (await Promise.all(persistChanges)).filter(Boolean) as DeliveryLog[]
+            const resolvedNextLogs = savedLogs.length > 0 ? savedLogs : nextHouseLogs
+
+            setCurrentHouseLogs(resolvedNextLogs)
             setHouseLogsCache((prev) => ({
                 ...prev,
-                [currentHouse.id]: nextHouseLogs,
+                [currentHouse.id]: resolvedNextLogs,
             }))
             setAllocatedHouseProducts((prev) => {
                 const next = { ...prev }
-                if (nextHouseLogs.length === 0) {
+                if (resolvedNextLogs.length === 0) {
                     delete next[currentHouse.id]
                 } else {
                     const grouped = new Map<string, number>()
-                    for (const log of nextHouseLogs) {
+                    for (const log of resolvedNextLogs) {
                         for (const item of log.items) {
                             const name = item.milkType.trim()
                             if (!name) continue
