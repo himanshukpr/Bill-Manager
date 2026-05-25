@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check } from 'lucide-react'
-import { billsApi, housesApi, type Bill, type House, type BillItem } from '@/lib/api'
+import { billsApi, housesApi, type Bill, type House, type BillItem, type BillPreview } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -88,7 +88,7 @@ export default function BillsPage() {
   const [genNote, setGenNote] = useState('')
 
   // Preview State
-  const [previewData, setPreviewData] = useState<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null } | null>(null)
+  const [previewData, setPreviewData] = useState<BillPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const hasLoadedOnceRef = useRef(false)
 
@@ -96,7 +96,8 @@ export default function BillsPage() {
     saving ||
     previewLoading ||
     !isValidRange(genFromDate, genToDate) ||
-    (generateMode === 'single' && !genHouseId)
+    (generateMode === 'single' && !genHouseId) ||
+    Boolean(previewData?.isAlreadyClosed || previewData?.isDurationAlreadyCreated)
 
   const load = useCallback(async () => {
     try {
@@ -254,13 +255,29 @@ export default function BillsPage() {
     if (generateMode === 'single') {
       if (!genHouseId) { toast.error('Please select a house'); return }
       if (!isValidRange(genFromDate, genToDate)) { toast.error('Please choose a valid from and upto date range'); return }
+    } else if (!isValidRange(genFromDate, genToDate)) {
+      toast.error('Please choose a valid from and upto date range')
+      return
+    }
+
+    if (generateMode === 'single') {
+      if (previewData?.isDurationAlreadyCreated) {
+        toast.error(
+          previewData.durationAlreadyCreatedMessage ??
+            'This duration bill is already created. Please create the next duration bill separately.',
+        )
+        return
+      }
+
+      if (previewData?.isAlreadyClosed) {
+        toast.error(previewData.alreadyClosedMessage ?? 'This period is already closed.')
+        return
+      }
+
       if (!previewData || previewData.totalAmount <= 0) {
         toast.error('No delivery logs found for this period to generate a bill')
         return
       }
-    } else if (!isValidRange(genFromDate, genToDate)) {
-      toast.error('Please choose a valid from and upto date range')
-      return
     }
 
     setSaving(true)
@@ -547,6 +564,16 @@ export default function BillsPage() {
                     </div>
                   ) : previewData ? (
                     <>
+                      {previewData.isDurationAlreadyCreated && (
+                        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                          {previewData.durationAlreadyCreatedMessage ?? 'This duration bill is already created. Please create the next duration bill separately.'}
+                        </div>
+                      )}
+                      {previewData.isAlreadyClosed && (
+                        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                          {previewData.alreadyClosedMessage ?? 'This period is already closed.'}
+                        </div>
+                      )}
                       {/* no overwrite warning — bills are now appended instead of overwritten */}
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-muted-foreground">Period</span>

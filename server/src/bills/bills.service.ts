@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,46 @@ import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 @Injectable()
 export class BillsService {
   constructor(private prisma: PrismaService) {}
+
+  private async getExistingBillForPeriod(houseId: number, periodStart: Date, periodEnd: Date) {
+    const bills = await this.prisma.bill.findMany({
+      where: { houseId },
+      select: { id: true, fromDate: true, toDate: true, month: true, year: true },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+
+    return bills.find((bill) => {
+      const billStart = bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
+      const billEnd = bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
+
+      return billStart <= periodEnd && billEnd >= periodStart;
+    }) ?? null;
+  }
+
+  async getPeriodClosureState(houseId: number, periodStart: Date, periodEnd: Date) {
+    const [matchingBill, deliveryLogs] = await Promise.all([
+      this.getExistingBillForPeriod(houseId, periodStart, periodEnd),
+      this.prisma.deliveryLog.findMany({
+        where: {
+          houseId,
+          deliveredAt: {
+            gte: periodStart,
+            lte: periodEnd,
+          },
+        },
+        select: { billGenerated: true },
+      }),
+    ]);
+
+    const isClosedByLogs = deliveryLogs.length > 0 && deliveryLogs.every((log) => log.billGenerated);
+    const isAlreadyClosed = Boolean(matchingBill || isClosedByLogs);
+
+    return {
+      isAlreadyClosed,
+      alreadyClosedMessage: isAlreadyClosed ? 'This period is already closed.' : null,
+      matchingBillId: matchingBill?.id ?? null,
+    };
+  }
 
   private async getLatestHouseNote(houseId: number): Promise<string | null> {
     const lastBill = await this.prisma.bill.findFirst({
@@ -90,6 +131,18 @@ export class BillsService {
       periodEnd = resolved.periodEnd;
       month = resolved.month;
       year = resolved.year;
+    }
+
+    const existingBill = await this.getExistingBillForPeriod(dto.houseId, periodStart, periodEnd);
+    if (existingBill) {
+      throw new ConflictException(
+        'This duration bill is already created. Please create the next duration bill separately.',
+      );
+    }
+
+    const closureState = await this.getPeriodClosureState(dto.houseId, periodStart, periodEnd);
+    if (closureState.isAlreadyClosed) {
+      throw new ConflictException(closureState.alreadyClosedMessage ?? 'This period is already closed.');
     }
 
     const balance = await this.prisma.houseBalance.findUnique({
@@ -361,13 +414,10 @@ export class BillsService {
   }
 
   async preview(houseId: number, period: { date?: string; fromDate?: string; toDate?: string }) {
-    const { periodStart, periodEnd, month, year } = this.resolvePeriod(period);
+    const { periodStart, periodEnd } = this.resolvePeriod(period);
 
-    const existingBill = await this.prisma.bill.findFirst({
-      where: { houseId, month, year },
-      select: { id: true },
-      orderBy: { generatedDate: 'desc' },
-    });
+    const existingBill = await this.getExistingBillForPeriod(houseId, periodStart, periodEnd);
+    const closureState = await this.getPeriodClosureState(houseId, periodStart, periodEnd);
 
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId },
@@ -398,8 +448,14 @@ export class BillsService {
       previousBalance,
       grandTotal: totalAmount + previousBalance,
       logCount: deliveryLogs.length,
-      existingBillId: existingBill?.id ?? null,
+      existingBillId: existingBill?.id ?? closureState.matchingBillId,
       lastNote: await this.getLatestHouseNote(houseId),
+      isAlreadyClosed: closureState.isAlreadyClosed,
+      alreadyClosedMessage: closureState.alreadyClosedMessage,
+      isDurationAlreadyCreated: Boolean(existingBill),
+      durationAlreadyCreatedMessage: existingBill
+        ? 'This duration bill is already created. Please create the next duration bill separately.'
+        : null,
     };
   }
 

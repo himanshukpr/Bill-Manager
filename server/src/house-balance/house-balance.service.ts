@@ -99,6 +99,20 @@ export class HouseBalanceService {
     });
   }
 
+  async updateCurrentBalance(houseId: number, currentBalance: number) {
+    const balance = await this.prisma.houseBalance.findUnique({
+      where: { houseId },
+      select: { id: true },
+    });
+
+    if (!balance) throw new NotFoundException(`Balance for house #${houseId} not found`);
+
+    return this.prisma.houseBalance.update({
+      where: { houseId },
+      data: { currentBalance },
+    });
+  }
+
   // Close a date range by marking delivery logs in the range as billed/closed
   async closePeriod(dto: ClosePeriodDto) {
     const { houseId, fromDate, toDate, note } = dto;
@@ -107,6 +121,11 @@ export class HouseBalanceService {
     const periodEnd = new Date(toDate);
     periodStart.setHours(0, 0, 0, 0);
     periodEnd.setHours(23, 59, 59, 999);
+
+    const closureState = await this.billsService.getPeriodClosureState(houseId, periodStart, periodEnd);
+    if (closureState.isAlreadyClosed) {
+      throw new BadRequestException(closureState.alreadyClosedMessage ?? 'This period is already closed.');
+    }
 
     const logs = await this.prisma.deliveryLog.findMany({
       where: {

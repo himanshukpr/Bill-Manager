@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { HouseBalanceService } from './house-balance.service';
-import { RecordPaymentDto, UpdatePreviousBalanceDto } from './dto/payment.dto';
+import { RecordPaymentDto, UpdatePreviousBalanceDto, UpdateCurrentBalanceDto } from './dto/payment.dto';
 import { ClosePeriodDto } from './dto/close-period.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
@@ -49,5 +49,13 @@ export class HouseBalanceController {
     @Body() dto: UpdatePreviousBalanceDto,
   ) {
     return this.service.updatePreviousBalance(houseId, dto.previousBalance);
+  }
+
+  @Patch(':houseId/current')
+  updateCurrentBalance(
+    @Param('houseId', ParseIntPipe) houseId: number,
+    @Body() dto: UpdateCurrentBalanceDto,
+  ) {
+    return this.service.updateCurrentBalance(houseId, dto.currentBalance);
   }
 }

@@ -268,6 +268,10 @@ export default function DeliveryPage() {
         index: null,
         offset: 0,
     })
+    const swipedDeliveryItemRef = useRef<{ index: number | null; offset: number }>({
+        index: null,
+        offset: 0,
+    })
 
     const navSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
     const deliveryItemSwipeStartRef = useRef<{ x: number; y: number; index: number } | null>(null)
@@ -830,8 +834,7 @@ export default function DeliveryPage() {
 
         setDeliveryItems([{ ...emptyDeliveryItem }])
 
-        // Fire deletes in background
-        toDelete.forEach((log) => deliveryLogsApi.delete(log.id))
+        await Promise.all(toDelete.map((log) => deliveryLogsApi.delete(log.id)))
 
         toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
         setClearTodayDialogOpen(false)
@@ -1095,12 +1098,130 @@ export default function DeliveryPage() {
         setSaveStatus('idle')
     }
 
-    const removeDeliveryItem = (idx: number) => {
+    const removeDeliveryItem = async (idx: number) => {
+        const itemToRemove = deliveryItems[idx]
+        const removedProductName = itemToRemove?.milkType.trim() ?? ''
+        const itemsAfterDelete = deliveryItems.filter((_, i) => i !== idx)
+
+        if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
+            // Update local state immediately
+            setCurrentHouseLogs([])
+            setCompletedHouses((prev) => {
+                const next = new Set(prev)
+                next.delete(currentHouse.id)
+                return next
+            })
+            setHouseLogsCache((prev) => {
+                return {
+                    ...prev,
+                    [currentHouse.id]: [],
+                }
+            })
+            setLoadedHouseLogIds((prev) => {
+                const next = new Set(prev)
+                next.add(currentHouse.id)
+                return next
+            })
+            setAllocatedHouseProducts((prev) => {
+                const next = { ...prev }
+                delete next[currentHouse.id]
+                return next
+            })
+            setSelectedDateProductTotals((prev) => {
+                const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                for (const log of currentHouseLogs) {
+                    for (const item of log.items) {
+                        const name = item.milkType.trim()
+                        if (!name) continue
+                        const current = map.get(name) ?? 0
+                        const remaining = current - Number(item.qty || 0)
+                        if (remaining <= 0) map.delete(name)
+                        else map.set(name, remaining)
+                    }
+                }
+                return Array.from(map.entries())
+                    .map(([productName, qty]) => ({ productName, qty }))
+                    .sort((a, b) => b.qty - a.qty)
+            })
+
+            // Remove the matching logs from the server before continuing.
+            await Promise.all(currentHouseLogs.map((log) => deliveryLogsApi.delete(log.id)))
+        } else if (removedProductName && currentHouseLogs.length > 0) {
+            const removedQty = currentHouseLogs.reduce((sum, log) => {
+                return sum + log.items.reduce((itemSum, item) => {
+                    if (item.milkType.trim() !== removedProductName) return itemSum
+                    return itemSum + Number(item.qty || 0)
+                }, 0)
+            }, 0)
+
+            const nextHouseLogs = currentHouseLogs
+                .map((log) => ({
+                    ...log,
+                    items: log.items.filter((item) => item.milkType.trim() !== removedProductName),
+                }))
+                .filter((log) => log.items.length > 0)
+
+            const persistChanges = currentHouseLogs.map(async (log) => {
+                const nextItems = log.items.filter((item) => item.milkType.trim() !== removedProductName)
+
+                if (nextItems.length === 0) {
+                    await deliveryLogsApi.delete(log.id)
+                    return null
+                }
+
+                return deliveryLogsApi.update(log.id, { items: nextItems as any })
+            })
+
+            const savedLogs = (await Promise.all(persistChanges)).filter(Boolean) as DeliveryLog[]
+            const resolvedNextLogs = savedLogs.length > 0 ? savedLogs : nextHouseLogs
+
+            setCurrentHouseLogs(resolvedNextLogs)
+            setHouseLogsCache((prev) => ({
+                ...prev,
+                [currentHouse.id]: resolvedNextLogs,
+            }))
+            setAllocatedHouseProducts((prev) => {
+                const next = { ...prev }
+                if (resolvedNextLogs.length === 0) {
+                    delete next[currentHouse.id]
+                } else {
+                    const grouped = new Map<string, number>()
+                    for (const log of resolvedNextLogs) {
+                        for (const item of log.items) {
+                            const name = item.milkType.trim()
+                            if (!name) continue
+                            grouped.set(name, (grouped.get(name) ?? 0) + Number(item.qty || 0))
+                        }
+                    }
+
+                    next[currentHouse.id] = Array.from(grouped.entries())
+                        .filter(([, qty]) => qty > 0)
+                        .map(([name, qty]) => `${name} ${qty}L`)
+                        .join(', ')
+                }
+
+                return next
+            })
+            setSelectedDateProductTotals((prev) => {
+                const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                const current = map.get(removedProductName) ?? 0
+                const remaining = current - removedQty
+                if (remaining <= 0) map.delete(removedProductName)
+                else map.set(removedProductName, remaining)
+
+                return Array.from(map.entries())
+                    .filter(([, qty]) => qty > 0)
+                    .map(([productName, qty]) => ({ productName, qty }))
+                    .sort((a, b) => b.qty - a.qty)
+            })
+        }
+
         setDeliveryItems((prev) => {
             if (prev.length <= 1) return [{ ...emptyDeliveryItem }]
             return prev.filter((_, i) => i !== idx)
         })
         setSwipedDeliveryItem({ index: null, offset: 0 })
+        swipedDeliveryItemRef.current = { index: null, offset: 0 }
         setHasUnsavedChanges(true)
         setSaveStatus('idle')
     }
@@ -1110,6 +1231,7 @@ export default function DeliveryPage() {
         if (!touch) return
 
         setSwipedDeliveryItem((current) => (current.index === index ? current : { index: null, offset: 0 }))
+        swipedDeliveryItemRef.current = { index: null, offset: 0 }
         deliveryItemSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, index }
     }
 
@@ -1126,66 +1248,26 @@ export default function DeliveryPage() {
         if (deltaY > Math.abs(deltaX)) return
         if (deltaX >= 0) {
             setSwipedDeliveryItem({ index: null, offset: 0 })
+            swipedDeliveryItemRef.current = { index: null, offset: 0 }
             return
         }
 
         const nextOffset = Math.max(deltaX, -64)
         setSwipedDeliveryItem({ index, offset: nextOffset })
+        swipedDeliveryItemRef.current = { index, offset: nextOffset }
     }
 
     const handleDeliveryItemTouchEnd = async (index: number) => {
         const start = deliveryItemSwipeStartRef.current
         if (!start || start.index !== index) return
 
-        const shouldDelete = swipedDeliveryItem.index === index && swipedDeliveryItem.offset <= -56
+        const activeSwipe = swipedDeliveryItemRef.current
+        const shouldDelete = activeSwipe.index === index && activeSwipe.offset <= -56
         if (shouldDelete) {
-            const itemsAfterDelete = deliveryItems.filter((_, i) => i !== index)
-            if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
-                // Update local state immediately
-                setCurrentHouseLogs([])
-                setCompletedHouses((prev) => {
-                    const next = new Set(prev)
-                    next.delete(currentHouse.id)
-                    return next
-                })
-                setHouseLogsCache((prev) => {
-                    const next = { ...prev }
-                    delete next[currentHouse.id]
-                    return next
-                })
-                setLoadedHouseLogIds((prev) => {
-                    const next = new Set(prev)
-                    next.delete(currentHouse.id)
-                    return next
-                })
-                setAllocatedHouseProducts((prev) => {
-                    const next = { ...prev }
-                    delete next[currentHouse.id]
-                    return next
-                })
-                setSelectedDateProductTotals((prev) => {
-                    const map = new Map(prev.map((p) => [p.productName, p.qty]))
-                    for (const log of currentHouseLogs) {
-                        for (const item of log.items) {
-                            const name = item.milkType.trim()
-                            if (!name) continue
-                            const current = map.get(name) ?? 0
-                            const remaining = current - Number(item.qty || 0)
-                            if (remaining <= 0) map.delete(name)
-                            else map.set(name, remaining)
-                        }
-                    }
-                    return Array.from(map.entries())
-                        .map(([productName, qty]) => ({ productName, qty }))
-                        .sort((a, b) => b.qty - a.qty)
-                })
-
-                // Fire deletes in background
-                currentHouseLogs.forEach((log) => deliveryLogsApi.delete(log.id))
-            }
-            removeDeliveryItem(index)
+            await removeDeliveryItem(index)
         } else {
             setSwipedDeliveryItem({ index: null, offset: 0 })
+            swipedDeliveryItemRef.current = { index: null, offset: 0 }
         }
         deliveryItemSwipeStartRef.current = null
     }
@@ -1230,15 +1312,16 @@ export default function DeliveryPage() {
             const primaryLog = currentHouseLogs[0]
             const duplicateIds = currentHouseLogs.slice(1).map((l) => l.id)
 
-            const optimisticLog = { ...primaryLog, items: payloadItems } as DeliveryLog
-            setCurrentHouseLogs([optimisticLog])
-            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [optimisticLog] }))
+            const updatedLog = await deliveryLogsApi.update(primaryLog.id, { items: payloadItems as any })
+            if (duplicateIds.length > 0) {
+                await Promise.all(duplicateIds.map((id) => deliveryLogsApi.delete(id)))
+            }
+
+            setCurrentHouseLogs([updatedLog])
+            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [updatedLog] }))
             setHasUnsavedChanges(false)
             setSaveStatus('saved')
             setLastSavedAt(timeLabel)
-
-            deliveryLogsApi.update(primaryLog.id, { items: payloadItems as any })
-            duplicateIds.forEach((id) => deliveryLogsApi.delete(id))
 
             updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)
             toast.success(`${currentHouse.houseNo} delivery updated!`)
@@ -1248,27 +1331,15 @@ export default function DeliveryPage() {
             setSaveStatus('saved')
             setLastSavedAt(timeLabel)
 
-            deliveryLogsApi.create({
+            const created = await deliveryLogsApi.create({
                 houseId: currentHouse.id,
                 shift: selectedShift,
                 items: payloadItems,
                 deliveredAt: buildDeliveredAtForDate(selectedDate),
             })
 
-            const optimisticLog: DeliveryLog = {
-                id: -Math.floor(Math.random() * 100000),
-                houseId: currentHouse.id,
-                shift: selectedShift,
-                items: payloadItems,
-                totalAmount: String(payloadItems.reduce((s, i) => s + i.amount, 0)),
-                openingBalance: '0',
-                closingBalance: '0',
-                billGenerated: false,
-                deliveredAt: buildDeliveredAtForDate(selectedDate),
-                createdAt: now.toISOString(),
-            }
-            setCurrentHouseLogs([optimisticLog])
-            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [optimisticLog] }))
+            setCurrentHouseLogs([created.log])
+            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [created.log] }))
             setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
 
             updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)

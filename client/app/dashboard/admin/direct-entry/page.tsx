@@ -410,9 +410,9 @@ export default function DeliveryEntryPage() {
       if (diff !== 0) {
         try {
           const balance = await balanceApi.get(editingLog.houseId)
-          await balanceApi.updatePrevious(
+          await balanceApi.updateCurrent(
             editingLog.houseId,
-            (parseFloat(balance.previousBalance) || 0) + diff,
+            parseFloat(balance.currentBalance) || 0,
           )
         } catch (err) {
           console.warn('Balance update failed:', err)
@@ -447,9 +447,9 @@ export default function DeliveryEntryPage() {
       if (amount > 0) {
         try {
           const balance = await balanceApi.get(deletingLog.houseId)
-          await balanceApi.updatePrevious(
+          await balanceApi.updateCurrent(
             deletingLog.houseId,
-            (parseFloat(balance.previousBalance) || 0) - amount,
+            parseFloat(balance.currentBalance) || 0,
           )
         } catch (err) {
           console.warn('Balance update failed:', err)

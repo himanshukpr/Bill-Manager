@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown } from 'lucide-react'
-import { balanceApi, housesApi, billsApi, deliveryLogsApi, type PaymentHistory, type House, type Bill, type DeliveryLog } from '@/lib/api'
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight } from 'lucide-react'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, type PaymentHistory, type House, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -20,6 +22,165 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+type HouseDeliverySummaryRow = {
+  dateKey: string
+  dayLabel: string
+  productsLabel: string
+  hasDelivery: boolean
+  logId?: number
+  log?: DeliveryLog
+  allLogs?: DeliveryLog[]
+}
+
+type MonthlyProductSummary = {
+  product: string
+  months: { month: number; year: number; quantity: number }[]
+  totalQuantity: number
+}
+
+function normalizeMilkType(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function getLocalDateKey(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getLogPeriod(logs: DeliveryLog[]): { year: number; month: number } {
+  const latest = logs
+    .map((log) => new Date(log.deliveredAt))
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((left, right) => right.getTime() - left.getTime())[0]
+
+  if (!latest) {
+    const now = new Date()
+    return { year: now.getFullYear(), month: now.getMonth() }
+  }
+
+  return {
+    year: latest.getFullYear(),
+    month: latest.getMonth(),
+  }
+}
+
+function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: number): HouseDeliverySummaryRow[] {
+  const byDate = new Map<string, HouseDeliverySummaryRow>()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+  for (const log of logs) {
+    const deliveredAt = new Date(log.deliveredAt)
+    if (deliveredAt.getFullYear() !== year || deliveredAt.getMonth() !== month) continue
+
+    const dateKey = getLocalDateKey(deliveredAt)
+    const existing = byDate.get(dateKey) ?? {
+      dateKey,
+      dayLabel: deliveredAt.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }),
+      productsLabel: '',
+      hasDelivery: false,
+      logId: undefined,
+      log: undefined,
+      allLogs: [],
+    }
+
+    existing.hasDelivery = true
+    existing.allLogs = [...(existing.allLogs ?? []), log]
+    if (!existing.logId) {
+      existing.logId = log.id
+      existing.log = log
+    }
+
+    const productParts = (log.items ?? []).map((item) => {
+      const qty = Number(item.qty ?? 0)
+      if (!qty) return null
+      const milkType = normalizeMilkType(item.milkType)
+      return `${milkType} ${qty.toLocaleString('en-IN')}L`
+    }).filter((part): part is string => Boolean(part))
+
+    const productText = productParts.join(', ')
+    existing.productsLabel = existing.productsLabel
+      ? `${existing.productsLabel}, ${productText}`
+      : productText || '-'
+
+    byDate.set(dateKey, existing)
+  }
+
+  const rows: HouseDeliverySummaryRow[] = []
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month, day)
+    const dateKey = getLocalDateKey(date)
+    const row = byDate.get(dateKey)
+
+    rows.push(
+      row ?? {
+        dateKey,
+        dayLabel: date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
+        productsLabel: '-',
+        hasDelivery: false,
+        logId: undefined,
+        log: undefined,
+        allLogs: [],
+      },
+    )
+  }
+
+  return rows
+}
+
+function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: number): MonthlyProductSummary[] {
+  const productMap = new Map<string, number>()
+
+  for (const log of logs) {
+    if (log.billGenerated) continue
+
+    const deliveredAt = new Date(log.deliveredAt)
+    const logYear = deliveredAt.getFullYear()
+    const logMonth = deliveredAt.getMonth()
+    if (logYear !== year || logMonth !== month) continue
+
+    for (const item of log.items ?? []) {
+      const product = normalizeMilkType(item.milkType)
+      const qty = Number(item.qty ?? 0)
+      if (!product || qty <= 0) continue
+      productMap.set(product, (productMap.get(product) ?? 0) + qty)
+    }
+  }
+
+  const summary: MonthlyProductSummary[] = Array.from(productMap.entries()).map(([product, quantity]) => {
+    return {
+      product,
+      months: [{ month, year, quantity }],
+      totalQuantity: quantity,
+    }
+  })
+
+  return summary.sort((a, b) => b.totalQuantity - a.totalQuantity)
+}
+
+function isValidMonth(year: number, month: number): boolean {
+  return month >= 0 && month <= 11 && year > 0
+}
+
+function getPreviousMonth(year: number, month: number): { year: number; month: number } {
+  if (month === 0) return { year: year - 1, month: 11 }
+  return { year, month: month - 1 }
+}
+
+function getNextMonth(year: number, month: number): { year: number; month: number } {
+  if (month === 11) return { year: year + 1, month: 0 }
+  return { year, month: month + 1 }
+}
 
 export default function ReceiptsPage() {
   const [payments, setPayments] = useState<PaymentHistory[]>([])
@@ -51,11 +212,59 @@ export default function ReceiptsPage() {
     currentBalance: number
     total: number
     logCount: number
+    isAlreadyClosed: boolean
+    alreadyClosedMessage: string | null
     loading: boolean
   } | null>(null)
   const [periodDeliveryLogs, setPeriodDeliveryLogs] = useState<DeliveryLog[]>([])
   const [loadingDeliveryLogs, setLoadingDeliveryLogs] = useState(false)
   const [showDeliveryLogsModal, setShowDeliveryLogsModal] = useState(false)
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
+  const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryBills, setSummaryBills] = useState<Bill[]>([])
+  const [productRates, setProductRates] = useState<ProductRate[]>([])
+  const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
+    const now = new Date()
+    return { year: now.getFullYear(), month: now.getMonth() }
+  })
+
+  const summaryRows = useMemo(() => {
+    if (!summaryHouse) return []
+    return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const monthlyProductSummary = useMemo(() => {
+    if (!summaryHouse) return []
+    return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const summaryTotals = useMemo(() => {
+    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
+    const monthLogs = summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
+    })
+    const productMap = new Map<string, { qty: number; amount: number }>()
+    let grandTotal = 0
+    for (const log of monthLogs) {
+      grandTotal += Number(log.totalAmount ?? 0)
+      for (const item of log.items ?? []) {
+        const product = normalizeMilkType(item.milkType)
+        const qty = Number(item.qty ?? 0)
+        const amount = Number(item.amount ?? 0)
+        if (product && qty > 0) {
+          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
+          productMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+        }
+      }
+    }
+    return {
+      productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+      grandTotal,
+    }
+  }, [summaryHouse, summaryLogs, summaryPeriod])
 
   // Auto-tick bills based on amount and mode
   useEffect(() => {
@@ -96,7 +305,7 @@ export default function ReceiptsPage() {
       }
 
       try {
-        setPeriodSummary(prev => prev ? { ...prev, loading: true } : { previousBalance: 0, currentBalance: 0, total: 0, logCount: 0, loading: true })
+        setPeriodSummary(prev => prev ? { ...prev, loading: true } : { previousBalance: 0, currentBalance: 0, total: 0, logCount: 0, isAlreadyClosed: false, alreadyClosedMessage: null, loading: true })
         setLoadingDeliveryLogs(true)
         
         // Fetch period summary
@@ -109,6 +318,8 @@ export default function ReceiptsPage() {
           currentBalance: summary.grandTotal,
           total: summary.totalAmount,
           logCount: summary.logCount,
+          isAlreadyClosed: summary.isAlreadyClosed,
+          alreadyClosedMessage: summary.alreadyClosedMessage,
           loading: false,
         })
 
@@ -234,11 +445,81 @@ export default function ReceiptsPage() {
 
   const totalReceived = payments.reduce((sum, p) => sum + Number(p.amount), 0)
 
+  async function openSummary(house: House) {
+    setSummaryHouse(house)
+    setSummaryLogs([])
+    setSummaryBills([])
+    setSummaryOpen(true)
+    setSummaryLoading(true)
+
+    try {
+      const [logs, bills, rates] = await Promise.all([
+        deliveryLogsApi.list({ houseId: house.id }),
+        billsApi.list({ houseId: house.id }),
+        productRatesApi.list(),
+      ])
+      setSummaryLogs(logs)
+      setSummaryBills(bills)
+      setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
+      setSummaryPeriod(getLogPeriod(logs))
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to load summary')
+    } finally {
+      setSummaryLoading(false)
+    }
+  }
+
+  async function handleChangeSummaryPeriod(newPeriod: { year: number; month: number }) {
+    if (!summaryHouse || !isValidMonth(newPeriod.year, newPeriod.month)) return
+    setSummaryPeriod(newPeriod)
+  }
+
+  const handleExportSummaryPdf = useCallback(() => {
+    if (!summaryHouse) return
+    if (summaryRows.length === 0) {
+      toast.error('No summary data available to export')
+      return
+    }
+
+    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+    const title = `House ${summaryHouse.houseNo} Delivery Summary`
+    const periodLabel = `${MONTH_NAMES[summaryPeriod.month]} ${summaryPeriod.year}`
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(16)
+    doc.text(title, 14, 16)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`Period: ${periodLabel}`, 14, 23)
+    if (summaryHouse.area) doc.text(`Area: ${summaryHouse.area}`, 14, 29)
+
+    autoTable(doc, {
+      startY: 38,
+      head: [['Date', 'Products', 'Amount']],
+      body: summaryRows.map((row) => [
+        row.dayLabel,
+        row.productsLabel,
+        row.hasDelivery
+          ? `₹${(summaryLogs.find(l => l.id === row.logId)?.totalAmount ?? 0).toLocaleString('en-IN')}`
+          : '-',
+      ]),
+      margin: { left: 14, right: 14 },
+      styles: { fontSize: 9 },
+    })
+
+    doc.save(`House_${summaryHouse.houseNo}_Summary_${periodLabel.replace(' ', '_')}.pdf`)
+  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod])
+
   async function handleRecord() {
     if (!formHouseId || !formAmount) { toast.error('House and Amount are required'); return }
     setSaving(true)
     try {
       if (formClosePeriod) {
+        if (periodSummary?.isAlreadyClosed) {
+          toast.error(periodSummary.alreadyClosedMessage ?? 'This period is already closed.')
+          return
+        }
+
         // Close specified period by marking logs as closed and recording a payment
         await balanceApi.closePeriod({
           houseId: parseInt(formHouseId),
@@ -276,6 +557,8 @@ export default function ReceiptsPage() {
       setSaving(false)
     }
   }
+
+  const closePeriodBlocked = formClosePeriod && Boolean(periodSummary?.isAlreadyClosed)
 
   return (
     <div className="space-y-6">
@@ -408,7 +691,27 @@ export default function ReceiptsPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input placeholder="Search house no or area..." value={formHouseQuery}
-                  onChange={e => { setFormHouseQuery(e.target.value); setFormHouseSelected(false); }} className="pl-9" />
+                  onChange={e => { setFormHouseQuery(e.target.value); setFormHouseSelected(false); }} className="pl-9 pr-10" />
+                {formHouseSelected && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                    title="Summary"
+                    aria-label="Open house summary"
+                    onClick={() => {
+                      const selected = houses.find((h) => String(h.id) === formHouseId)
+                      if (!selected) {
+                        toast.error('Please select a house first')
+                        return
+                      }
+                      void openSummary(selected)
+                    }}
+                  >
+                    <Rows3 className="h-4 w-4" />
+                  </Button>
+                )}
                 {formHouseQuery.trim() !== '' && !formHouseSelected && (
                   <div className="absolute left-0 right-0 mt-1 z-20 rounded-md border border-border bg-card max-h-64 overflow-y-auto">
                     {(() => {
@@ -462,12 +765,12 @@ export default function ReceiptsPage() {
               <>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <div className="space-y-1.5 sm:col-span-1">
-                    <Label>Area</Label>
-                    <div className="h-10 flex items-center px-3 rounded-md border border-border bg-card text-sm text-foreground">{formArea || '—'}</div>
+                    <p className="text-sm text-foreground">Area</p>
+                    <p className="text-lg font-semibold text-foreground">{formArea || '—'}</p>
                   </div>
                   <div className="space-y-1.5 sm:col-span-1">
-                    <Label>Phone</Label>
-                    <div className="h-10 flex items-center px-3 rounded-md border border-border bg-card text-sm text-foreground">{formPhone || '—'}</div>
+                    <p className="text-sm text-foreground">Phone</p>
+                    <p className="text-lg font-semibold text-foreground">{formPhone || '—'}</p>
                   </div>
                   <div className="space-y-1.5 sm:col-span-1">
                     <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
@@ -594,6 +897,11 @@ export default function ReceiptsPage() {
                       {/* Balance Summary for Period */}
                       {periodSummary && !periodSummary.loading ? (
                         <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-3 space-y-2">
+                          {periodSummary.isAlreadyClosed && (
+                            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                              {periodSummary.alreadyClosedMessage ?? 'This period is already closed.'}
+                            </div>
+                          )}
                           <div className="grid grid-cols-1 gap-1 sm:grid-cols-3">
                             <div className="space-y-0">
                               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
@@ -656,7 +964,7 @@ export default function ReceiptsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleRecord} disabled={saving}>
+            <Button onClick={handleRecord} disabled={saving || closePeriodBlocked}>
               {saving ? 'Recording...' : 'Record Payment'}
             </Button>
           </DialogFooter>
@@ -713,6 +1021,152 @@ export default function ReceiptsPage() {
               </div>
             ))}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={summaryOpen} onOpenChange={(open) => {
+        setSummaryOpen(open)
+        if (!open) {
+          setSummaryHouse(null)
+          setSummaryLogs([])
+        }
+      }}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          {summaryHouse && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Rows3 className="h-5 w-5 text-primary" />
+                  House {summaryHouse.houseNo} Delivery Summary
+                </DialogTitle>
+                <DialogDescription>
+                  {summaryHouse.area ? `Area: ${summaryHouse.area}` : 'House summary'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex items-center justify-center gap-2 border-b border-border pb-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleChangeSummaryPeriod(getPreviousMonth(summaryPeriod.year, summaryPeriod.month))}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="min-w-48 text-center text-sm font-medium">
+                  {MONTH_NAMES[summaryPeriod.month]} {summaryPeriod.year}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleChangeSummaryPeriod(getNextMonth(summaryPeriod.year, summaryPeriod.month))}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-6 py-2">
+                <div>
+                  <h3 className="mb-3 text-sm font-semibold">Monthly Product Summary</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : monthlyProductSummary.length === 0 ? (
+                      <div className="flex min-h-32 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <Rows3 className="h-8 w-8 opacity-30" />
+                        <p className="text-sm">No product data available</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold">Product</th>
+                              <th className="px-4 py-3 text-right font-semibold">Quantity</th>
+                              <th className="px-4 py-3 text-right font-semibold">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyProductSummary.map((row, idx) => {
+                              const productTotal = summaryTotals.productTotals.find(p => p.product === row.product)
+                              return (
+                                <tr key={row.product} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                  <td className="px-4 py-3 font-medium">{row.product}</td>
+                                  <td className="px-4 py-3 text-right">{row.totalQuantity.toLocaleString('en-IN')}L</td>
+                                  <td className="px-4 py-3 text-right font-semibold">₹{(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                </tr>
+                              )
+                            })}
+                            <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3">Total</td>
+                              <td className="px-4 py-3 text-right">
+                                {summaryTotals.productTotals.reduce((sum, row) => sum + row.quantity, 0).toLocaleString('en-IN')}L
+                              </td>
+                              <td className="px-4 py-3 text-right">₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-3 text-sm font-semibold">Daily Deliveries</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : summaryRows.length === 0 ? (
+                      <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <Rows3 className="h-10 w-10 opacity-30" />
+                        <p className="font-medium">No delivery summary available</p>
+                        <p className="text-sm">This house has no delivery logs for the selected month.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold">Date</th>
+                              <th className="px-4 py-3 text-left font-semibold">Products</th>
+                              <th className="px-4 py-3 text-right font-semibold">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {summaryRows.map((row, idx) => (
+                              <tr key={row.dateKey} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium">{row.dayLabel}</td>
+                                <td className="px-4 py-3">
+                                  {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold">
+                                  {row.hasDelivery ? `₹${(summaryLogs.find(l => l.id === row.logId)?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || summaryRows.length === 0}>
+                  Export PDF
+                </Button>
+                <Button onClick={() => setSummaryOpen(false)}>Close</Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

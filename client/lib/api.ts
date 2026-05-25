@@ -181,9 +181,18 @@ async function invalidateCache(path: string): Promise<void> {
 
   const resource = getResource(path);
   const prefixes = CACHE_INVALIDATION[resource] ?? [`/${resource}`];
-  await Promise.all(
-    prefixes.map((prefix) => db.queryCache.where('key').startsWith(`GET:${prefix}`).delete()),
-  );
+  const activeRefreshes: Array<Promise<void>> = [];
+
+  for (const prefix of prefixes) {
+    await db.queryCache.where('key').startsWith(`GET:${prefix}`).delete();
+
+    for (const [cacheKey, query] of activeGetQueries.entries()) {
+      if (!cacheKey.startsWith(`GET:${prefix}`) && !query.path.startsWith(prefix)) continue;
+      activeRefreshes.push(revalidateGet<unknown>(query.path, cacheKey, query.onData));
+    }
+  }
+
+  await Promise.all(activeRefreshes);
 }
 
 async function updateCachedQueries<T>(
@@ -380,6 +389,7 @@ export type HouseConfig = {
   supplierId?: string;
   position: number;
   dailyAlerts?: string;
+  updatedAt?: string;
   house?: House;
   supplier?: { uuid: string; username: string };
 };
@@ -400,6 +410,32 @@ function normalizeHouseRecord<T extends { configs?: unknown }>(house: T): Omit<T
 
 function normalizeHouseCollection<T extends { configs?: unknown }>(houses: T[]): Array<Omit<T, 'configs'> & { configs?: HouseConfig[] }> {
   return houses.map((house) => normalizeHouseRecord(house));
+}
+
+function mergeHouseConfigCaches(existing: HouseConfig[], incoming: HouseConfig[]): HouseConfig[] {
+  const merged = new Map<number, HouseConfig>()
+
+  for (const config of existing) {
+    merged.set(config.houseId, config)
+  }
+
+  for (const config of incoming) {
+    const previous = merged.get(config.houseId)
+
+    if (!previous) {
+      merged.set(config.houseId, config)
+      continue
+    }
+
+    const previousUpdatedAt = previous.updatedAt ? Date.parse(previous.updatedAt) : Number.NEGATIVE_INFINITY
+    const incomingUpdatedAt = config.updatedAt ? Date.parse(config.updatedAt) : Number.NEGATIVE_INFINITY
+
+    if (incomingUpdatedAt >= previousUpdatedAt) {
+      merged.set(config.houseId, config)
+    }
+  }
+
+  return Array.from(merged.values())
 }
 
 export type HouseBalance = {
@@ -453,6 +489,19 @@ export type GenerateAllBillsResult = {
   skippedCount: number;
   generated: Array<{ houseId: number; houseNo: string; billId: number }>;
   skipped: Array<{ houseId: number; houseNo: string; reason: string }>;
+};
+
+export type BillPreview = {
+  totalAmount: number;
+  previousBalance: number;
+  grandTotal: number;
+  logCount: number;
+  existingBillId: number | null;
+  lastNote: string | null;
+  isAlreadyClosed: boolean;
+  alreadyClosedMessage: string | null;
+  isDurationAlreadyCreated: boolean;
+  durationAlreadyCreatedMessage: string | null;
 };
 
 export type User = {
@@ -583,11 +632,11 @@ export const housesApi = {
       // Don't await - let it happen in background
       (async () => {
         try {
-            const res = normalizeHouseRecord(await apiPost<House>('/houses', data));
+          const res = normalizeHouseRecord(await apiPost<House>('/houses', data));
           if (isBrowser()) {
             // Replace temp ID with real ID
             await db.houses.delete(tempId);
-              await db.houses.put(res);
+            await db.houses.put(res);
 
             // Update all caches to replace temp with real house
             await updateCachedQueries<House[]>(
@@ -787,7 +836,12 @@ export const houseConfigApi = {
     }
 
     const data = await requestGet<HouseConfig[]>(path);
-    if (isBrowser()) writeHouseConfigSessionCache(data);
+    if (isBrowser()) {
+      const cached = readHouseConfigSessionCache();
+      const merged = mergeHouseConfigCaches(cached, data)
+      writeHouseConfigSessionCache(merged);
+      return supplierId ? merged.filter((item) => item.supplierId === supplierId) : merged;
+    }
     return data;
   },
   listForHouse: async (houseId: number) => {
@@ -805,7 +859,12 @@ export const houseConfigApi = {
     }
 
     const data = await requestGet<HouseConfig[]>(path);
-    if (isBrowser()) writeHouseConfigSessionCache(data);
+    if (isBrowser()) {
+      const cached = readHouseConfigSessionCache();
+      const merged = mergeHouseConfigCaches(cached, data)
+      writeHouseConfigSessionCache(merged);
+      return merged.filter((item) => item.houseId === houseId);
+    }
     return data;
   },
   create: async (data: Partial<HouseConfig>) => {
@@ -824,21 +883,22 @@ export const houseConfigApi = {
     }
 
     if (isBrowser()) {
-      const result = isOnline()
-        ? await apiPost<HouseConfig>('/house-config', data)
-        : ({ id: -Math.floor(Math.random() * 100000), ...data } as unknown as HouseConfig);
-
+      const optimistic = ({
+        id: -Math.floor(Math.random() * 100000),
+        updatedAt: new Date().toISOString(),
+        ...data,
+      } as unknown as HouseConfig);
       const cached = readHouseConfigSessionCache();
       writeHouseConfigSessionCache(
-        [...cached.filter((item) => item.id !== result.id && item.houseId !== result.houseId), result],
+        [...cached.filter((item) => item.id !== optimistic.id && item.houseId !== optimistic.houseId), optimistic],
       );
 
-      if (typeof result.houseId === 'number') {
-        const existingHouse = await db.houses.get(result.houseId);
+      if (typeof optimistic.houseId === 'number') {
+        const existingHouse = await db.houses.get(optimistic.houseId);
         if (existingHouse) {
           await db.houses.put({
             ...existingHouse,
-            configs: [result],
+            configs: [optimistic],
           });
         }
       }
@@ -847,7 +907,7 @@ export const houseConfigApi = {
         (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
         (cached) => {
           if (!Array.isArray(cached)) return cached;
-          return [...cached.filter((item) => item.id !== result.id && item.houseId !== result.houseId), result];
+          return [...cached.filter((item) => item.id !== optimistic.id && item.houseId !== optimistic.houseId), optimistic];
         },
       );
 
@@ -856,16 +916,57 @@ export const houseConfigApi = {
         (cached) => {
           if (!Array.isArray(cached)) return cached;
           return cached.map((house) =>
-            house.id === result.houseId ? { ...house, configs: [result] } : house,
+            house.id === optimistic.houseId ? { ...house, configs: [optimistic] } : house,
           );
         },
       );
 
-      if (!isOnline()) {
+      if (isOnline()) {
+        (async () => {
+          try {
+            const result = await apiPost<HouseConfig>('/house-config', data);
+
+            const nextCached = readHouseConfigSessionCache();
+            writeHouseConfigSessionCache(
+              nextCached.map((item) => (item.id === optimistic.id ? result : item)),
+            );
+
+            if (typeof result.houseId === 'number') {
+              const existingHouse = await db.houses.get(result.houseId);
+              if (existingHouse) {
+                await db.houses.put({
+                  ...existingHouse,
+                  configs: [result],
+                });
+              }
+            }
+
+            await updateCachedQueries<HouseConfig[]>(
+              (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+              (cached) => {
+                if (!Array.isArray(cached)) return cached;
+                return cached.map((item) => (item.id === optimistic.id ? result : item));
+              },
+            );
+
+            await updateCachedQueries<House[]>(
+              (cacheKey) => cacheKey === 'GET:/houses',
+              (cached) => {
+                if (!Array.isArray(cached)) return cached;
+                return cached.map((house) =>
+                  house.id === result.houseId ? { ...house, configs: [result] } : house,
+                );
+              },
+            );
+          } catch {
+            void syncEngine.enqueue('/house-config', 'POST', data);
+          }
+        })();
+      } else {
         void syncEngine.enqueue('/house-config', 'POST', data);
       }
 
-      return result;
+      return optimistic;
     }
 
     return apiPost<HouseConfig>('/house-config', data);
@@ -883,7 +984,7 @@ export const houseConfigApi = {
 
     if (isBrowser()) {
       const cached = readHouseConfigSessionCache();
-      const next = cached.map((item) => (item.id === id ? { ...item, ...data } : item));
+      const next = cached.map((item) => (item.id === id ? { ...item, ...data, updatedAt: new Date().toISOString() } : item));
       writeHouseConfigSessionCache(next);
 
       const updated = next.find((item) => item.id === id);
@@ -916,41 +1017,47 @@ export const houseConfigApi = {
       );
 
       if (isOnline()) {
-        const result = await apiPatch<HouseConfig>(`/house-config/${id}`, data);
+        (async () => {
+          try {
+            const result = await apiPatch<HouseConfig>(`/house-config/${id}`, data);
 
-        writeHouseConfigSessionCache(
-          cached.map((item) => (item.id === id ? result : item)),
-        );
-
-        if (typeof result.houseId === 'number') {
-          const existingHouse = await db.houses.get(result.houseId);
-          if (existingHouse) {
-            await db.houses.put({
-              ...existingHouse,
-              configs: [result],
-            });
-          }
-        }
-
-        await updateCachedQueries<HouseConfig[]>(
-          (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
-          (cached) => {
-            if (!Array.isArray(cached)) return cached;
-            return cached.map((item) => (item.id === id ? result : item));
-          },
-        );
-
-        await updateCachedQueries<House[]>(
-          (cacheKey) => cacheKey === 'GET:/houses',
-          (cached) => {
-            if (!Array.isArray(cached)) return cached;
-            return cached.map((house) =>
-              house.id === result.houseId ? { ...house, configs: [result] } : house,
+            writeHouseConfigSessionCache(
+              mergeHouseConfigCaches(readHouseConfigSessionCache(), [result]),
             );
-          },
-        );
 
-        return result;
+            if (typeof result.houseId === 'number') {
+              const existingHouse = await db.houses.get(result.houseId);
+              if (existingHouse) {
+                await db.houses.put({
+                  ...existingHouse,
+                  configs: [result],
+                });
+              }
+            }
+
+            await updateCachedQueries<HouseConfig[]>(
+              (cacheKey) => cacheKey === 'GET:/house-config' || cacheKey.startsWith('GET:/house-config?'),
+              (cached) => {
+                if (!Array.isArray(cached)) return cached;
+                return cached.map((item) => (item.id === id ? result : item));
+              },
+            );
+
+            await updateCachedQueries<House[]>(
+              (cacheKey) => cacheKey === 'GET:/houses',
+              (cached) => {
+                if (!Array.isArray(cached)) return cached;
+                return cached.map((house) =>
+                  house.id === result.houseId ? { ...house, configs: [result] } : house,
+                );
+              },
+            );
+          } catch {
+            void syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
+          }
+        })();
+
+        return updated ? ({ ...updated, ...data } as HouseConfig) : data;
       }
 
       void syncEngine.enqueue(`/house-config/${id}`, 'PATCH', data);
@@ -1109,6 +1216,53 @@ export const balanceApi = {
 
     if (isOnline()) {
       return apiPatch<HouseBalance>(`/house-balance/${houseId}`, payload);
+    }
+
+    return { queued: true };
+  },
+  updateCurrent: async (houseId: number, currentBalance: number) => {
+    // Prevent updating balance for temporary houses
+    if (houseId < 0) return null;
+
+    const payload = { currentBalance };
+
+    if (isBrowser()) {
+      const existingHouse = await db.houses.get(houseId);
+      if (existingHouse) {
+        const next = {
+          ...existingHouse,
+          balance: {
+            ...(existingHouse.balance ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId,
+            currentBalance: String(currentBalance),
+          },
+        };
+
+        await db.houses.put(next);
+        await updateCachedQueries<House[]>(
+          (cacheKey) => cacheKey === 'GET:/houses' || cacheKey === `GET:/houses/${houseId}`,
+          (cached) => {
+            if (!Array.isArray(cached)) return cached;
+            return cached.map((house) => (house.id === houseId ? next : house));
+          },
+        );
+
+        await updateCachedQueries<HouseBalance>(
+          (cacheKey) => cacheKey === `GET:/house-balance/${houseId}`,
+          (cached) => ({
+            ...(cached ?? { id: 0, houseId, currentBalance: '0', previousBalance: '0' }),
+            houseId,
+            currentBalance: String(currentBalance),
+          }),
+        );
+      }
+
+      void syncEngine.enqueue(`/house-balance/${houseId}/current`, 'PATCH', payload);
+      return { queued: true };
+    }
+
+    if (isOnline()) {
+      return apiPatch<HouseBalance>(`/house-balance/${houseId}/current`, payload);
     }
 
     return { queued: true };
@@ -1272,9 +1426,20 @@ export const billsApi = {
   preview: (houseId: number, period: { fromDate: string; toDate: string }) => {
     // Prevent querying bill preview for temporary houses
     if (houseId < 0) {
-      return Promise.resolve({ totalAmount: 0, previousBalance: 0, grandTotal: 0, logCount: 0, existingBillId: null, lastNote: null });
+      return Promise.resolve({
+        totalAmount: 0,
+        previousBalance: 0,
+        grandTotal: 0,
+        logCount: 0,
+        existingBillId: null,
+        lastNote: null,
+        isAlreadyClosed: false,
+        alreadyClosedMessage: null,
+        isDurationAlreadyCreated: false,
+        durationAlreadyCreatedMessage: null,
+      });
     }
-    return apiGet<{ totalAmount: number; previousBalance: number; grandTotal: number; logCount: number; existingBillId: number | null; lastNote: string | null }>(
+    return apiGet<BillPreview>(
       `/bills/preview?houseId=${houseId}&fromDate=${period.fromDate}&toDate=${period.toDate}`,
     );
   },
@@ -1484,38 +1649,38 @@ export const deliveryLogsApi = {
           return [...filtered, tempLog];
         },
       );
-    }
 
-    if (isOnline()) {
-      (async () => {
-        try {
-          const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
-          if (isBrowser()) {
-            await db.deliveryLogs.delete(tempId);
-            await db.deliveryLogs.put(res.log);
-            await updateCachedQueries<DeliveryLog[]>(
-              (key) => key.startsWith('GET:/delivery-logs'),
-              (cached) => {
-                if (!Array.isArray(cached)) return cached;
-                return cached.map((log) => (log.id === tempId ? res.log : log));
-              },
-            );
-            await invalidateCache('/house-balance');
-            await invalidateCache('/bills');
-          }
-        } catch {
-          if (isBrowser()) {
-            await db.deliveryLogs.delete(tempId);
-            await updateCachedQueries<DeliveryLog[]>(
-              (key) => key.startsWith('GET:/delivery-logs'),
-              (cached) => {
-                if (!Array.isArray(cached)) return cached;
-                return cached.filter((log) => log.id !== tempId);
-              },
-            );
-          }
+      try {
+        const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
+        if (isBrowser()) {
+          await db.deliveryLogs.delete(tempId);
+          await db.deliveryLogs.put(res.log);
+          await updateCachedQueries<DeliveryLog[]>(
+            (key) => key.startsWith('GET:/delivery-logs'),
+            (cached) => {
+              if (!Array.isArray(cached)) return cached;
+              return cached.map((log) => (log.id === tempId ? res.log : log));
+            },
+          );
+          await invalidateCache('/house-balance');
+          await invalidateCache('/bills');
         }
-      })();
+
+        return res;
+      } catch {
+        if (isBrowser()) {
+          await db.deliveryLogs.delete(tempId);
+          await updateCachedQueries<DeliveryLog[]>(
+            (key) => key.startsWith('GET:/delivery-logs'),
+            (cached) => {
+              if (!Array.isArray(cached)) return cached;
+              return cached.filter((log) => log.id !== tempId);
+            },
+          );
+        }
+
+        void syncEngine.enqueue('/delivery-logs', 'POST', data);
+      }
     } else {
       void syncEngine.enqueue('/delivery-logs', 'POST', data);
     }
@@ -1530,42 +1695,61 @@ export const deliveryLogsApi = {
       billGenerated?: boolean;
     },
   ) => {
+    let optimistic: DeliveryLog | null = null;
+
     if (isBrowser()) {
       const existing = await db.deliveryLogs.get(id);
       if (existing) {
-        const optimistic = { ...existing, ...data } as DeliveryLog;
-        await db.deliveryLogs.put(optimistic);
+        const nextItems = data.items ?? existing.items;
+        const nextTotalAmount = nextItems.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+        const optimisticLog = {
+          ...existing,
+          ...data,
+          items: nextItems,
+          totalAmount: String(nextTotalAmount),
+          closingBalance: String(Number(existing.openingBalance ?? 0) + nextTotalAmount),
+        } as DeliveryLog;
+        optimistic = optimisticLog;
+
+        await db.deliveryLogs.put(optimisticLog);
         await updateCachedQueries<DeliveryLog[]>(
           (key) => key.startsWith('GET:/delivery-logs'),
           (cached) => {
             if (!Array.isArray(cached)) return cached;
-            return cached.map((log) => (log.id === id ? optimistic : log));
+            return cached.map((log) => (log.id === id ? optimisticLog : log));
           },
         );
       }
     }
 
     if (isOnline()) {
-      (async () => {
-        try {
-          const res = await apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data);
-          if (isBrowser()) {
-            await db.deliveryLogs.put(res);
-            await invalidateCache('/delivery-logs');
-            await invalidateCache('/house-balance');
-          }
-        } catch {
-          void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
+      try {
+        const res = await apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data);
+        if (isBrowser()) {
+          await db.deliveryLogs.put(res);
+          await updateCachedQueries<DeliveryLog[]>(
+            (key) => key.startsWith('GET:/delivery-logs'),
+            (cached) => {
+              if (!Array.isArray(cached)) return cached;
+              return cached.map((log) => (log.id === id ? res : log));
+            },
+          );
+          await invalidateCache('/house-balance');
         }
-      })();
-      return { id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog;
+
+        return res;
+      } catch {
+        void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
+      }
+
+      return optimistic ?? ({ id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog);
     }
 
     if (isBrowser()) {
       void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
     }
 
-    return { id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog;
+    return optimistic ?? ({ id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog);
   },
   delete: async (id: number) => {
     if (isBrowser()) {
@@ -1580,17 +1764,15 @@ export const deliveryLogsApi = {
     }
 
     if (isOnline()) {
-      (async () => {
-        try {
-          await apiDelete(`/delivery-logs/${id}`);
-          if (isBrowser()) {
-            await invalidateCache('/delivery-logs');
-            await invalidateCache('/house-balance');
-          }
-        } catch {
-          void syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
+      try {
+        await apiDelete(`/delivery-logs/${id}`);
+        if (isBrowser()) {
+          await invalidateCache('/delivery-logs');
+          await invalidateCache('/house-balance');
         }
-      })();
+      } catch {
+        void syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
+      }
       return null;
     }
 
