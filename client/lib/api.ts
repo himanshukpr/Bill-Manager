@@ -632,11 +632,11 @@ export const housesApi = {
       // Don't await - let it happen in background
       (async () => {
         try {
-            const res = normalizeHouseRecord(await apiPost<House>('/houses', data));
+          const res = normalizeHouseRecord(await apiPost<House>('/houses', data));
           if (isBrowser()) {
             // Replace temp ID with real ID
             await db.houses.delete(tempId);
-              await db.houses.put(res);
+            await db.houses.put(res);
 
             // Update all caches to replace temp with real house
             await updateCachedQueries<House[]>(
@@ -1649,38 +1649,38 @@ export const deliveryLogsApi = {
           return [...filtered, tempLog];
         },
       );
-    }
 
-    if (isOnline()) {
-      (async () => {
-        try {
-          const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
-          if (isBrowser()) {
-            await db.deliveryLogs.delete(tempId);
-            await db.deliveryLogs.put(res.log);
-            await updateCachedQueries<DeliveryLog[]>(
-              (key) => key.startsWith('GET:/delivery-logs'),
-              (cached) => {
-                if (!Array.isArray(cached)) return cached;
-                return cached.map((log) => (log.id === tempId ? res.log : log));
-              },
-            );
-            await invalidateCache('/house-balance');
-            await invalidateCache('/bills');
-          }
-        } catch {
-          if (isBrowser()) {
-            await db.deliveryLogs.delete(tempId);
-            await updateCachedQueries<DeliveryLog[]>(
-              (key) => key.startsWith('GET:/delivery-logs'),
-              (cached) => {
-                if (!Array.isArray(cached)) return cached;
-                return cached.filter((log) => log.id !== tempId);
-              },
-            );
-          }
+      try {
+        const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
+        if (isBrowser()) {
+          await db.deliveryLogs.delete(tempId);
+          await db.deliveryLogs.put(res.log);
+          await updateCachedQueries<DeliveryLog[]>(
+            (key) => key.startsWith('GET:/delivery-logs'),
+            (cached) => {
+              if (!Array.isArray(cached)) return cached;
+              return cached.map((log) => (log.id === tempId ? res.log : log));
+            },
+          );
+          await invalidateCache('/house-balance');
+          await invalidateCache('/bills');
         }
-      })();
+
+        return res;
+      } catch {
+        if (isBrowser()) {
+          await db.deliveryLogs.delete(tempId);
+          await updateCachedQueries<DeliveryLog[]>(
+            (key) => key.startsWith('GET:/delivery-logs'),
+            (cached) => {
+              if (!Array.isArray(cached)) return cached;
+              return cached.filter((log) => log.id !== tempId);
+            },
+          );
+        }
+
+        void syncEngine.enqueue('/delivery-logs', 'POST', data);
+      }
     } else {
       void syncEngine.enqueue('/delivery-logs', 'POST', data);
     }
@@ -1723,25 +1723,25 @@ export const deliveryLogsApi = {
     }
 
     if (isOnline()) {
-      (async () => {
-        try {
-          const res = await apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data);
-          if (isBrowser()) {
-            await db.deliveryLogs.put(res);
-            const normalized = res;
-            await updateCachedQueries<DeliveryLog[]>(
-              (key) => key.startsWith('GET:/delivery-logs'),
-              (cached) => {
-                if (!Array.isArray(cached)) return cached;
-                return cached.map((log) => (log.id === id ? normalized : log));
-              },
-            );
-            await invalidateCache('/house-balance');
-          }
-        } catch {
-          void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
+      try {
+        const res = await apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data);
+        if (isBrowser()) {
+          await db.deliveryLogs.put(res);
+          await updateCachedQueries<DeliveryLog[]>(
+            (key) => key.startsWith('GET:/delivery-logs'),
+            (cached) => {
+              if (!Array.isArray(cached)) return cached;
+              return cached.map((log) => (log.id === id ? res : log));
+            },
+          );
+          await invalidateCache('/house-balance');
         }
-      })();
+
+        return res;
+      } catch {
+        void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
+      }
+
       return optimistic ?? ({ id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog);
     }
 
@@ -1764,17 +1764,15 @@ export const deliveryLogsApi = {
     }
 
     if (isOnline()) {
-      (async () => {
-        try {
-          await apiDelete(`/delivery-logs/${id}`);
-          if (isBrowser()) {
-            await invalidateCache('/delivery-logs');
-            await invalidateCache('/house-balance');
-          }
-        } catch {
-          void syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
+      try {
+        await apiDelete(`/delivery-logs/${id}`);
+        if (isBrowser()) {
+          await invalidateCache('/delivery-logs');
+          await invalidateCache('/house-balance');
         }
-      })();
+      } catch {
+        void syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
+      }
       return null;
     }
 
