@@ -13,9 +13,14 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: '*',
+    origin: [
+      'https://bill-manager-pi.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:5173',
+      process.env.CORS_ORIGIN,
+    ].filter(Boolean),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    credentials: false,
+    credentials: true,
     allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With', 'Origin'],
   });
 
