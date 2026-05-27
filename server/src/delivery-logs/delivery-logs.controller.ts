@@ -25,6 +25,8 @@ export class DeliveryLogsController {
     findAll(
         @Query('houseId') houseId?: string,
         @Query('shift') shift?: string,
+        @Query('fromDate') fromDate?: string,
+        @Query('toDate') toDate?: string,
         @Request() req?: any,
     ) {
         const parsedShift = shift === 'morning' || shift === 'evening' ? (shift as Shift) : undefined;
@@ -33,6 +35,8 @@ export class DeliveryLogsController {
             {
                 houseId: houseId ? parseInt(houseId) : undefined,
                 shift: parsedShift,
+                fromDate,
+                toDate,
             },
             req?.user,
         );

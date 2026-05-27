@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check } from 'lucide-react'
-import { billsApi, housesApi, type Bill, type House, type BillItem, type BillPreview } from '@/lib/api'
+import jsPDF from 'jspdf'
+import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download } from 'lucide-react'
+import { billsApi, deliveryLogsApi, housesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -30,6 +31,12 @@ const MONTH_NAMES = [
 
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i)
+const PDF_PAGE_MARGIN = 10
+const PDF_COLUMNS = 2
+const PDF_ROWS = 3
+const PDF_CARD_GAP_X = 4
+const PDF_CARD_GAP_Y = 4
+const PDF_TABLE_ROWS = 10
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
@@ -42,6 +49,16 @@ function getMonthStart(value: Date = new Date()): string {
   const date = new Date(value)
   date.setDate(1)
   return formatLocalDate(date)
+}
+
+function getMonthRange(month: number, year: number) {
+  const fromDate = formatLocalDate(new Date(year, month - 1, 1))
+  const toDate = formatLocalDate(new Date(year, month, 0))
+  return { fromDate, toDate }
+}
+
+function getMonthLabel(month: number, year: number) {
+  return `${MONTH_NAMES[month]} ${year}`
 }
 
 function isValidRange(fromDate: string, toDate: string): boolean {
@@ -67,13 +84,121 @@ function parseDateFieldToString(value: string): string {
   return formatLocalDate(date)
 }
 
+function formatPlainAmount(value: number): string {
+  return Number.isFinite(value) ? value.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '0'
+}
+
+function formatQtyLabel(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}L`
+}
+
+function formatBillDate(value?: string): string {
+  if (!value) return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function normalizeBillItems(items: BillItem[]): BillItem[] {
+  const next = items.slice(0, PDF_TABLE_ROWS)
+  while (next.length < PDF_TABLE_ROWS) {
+    next.push({ name: '', qty: 0, rate: 0, amount: 0 })
+  }
+  return next
+}
+
+function buildItemsFromDeliveryLogs(logs: DeliveryLog[]): BillItem[] {
+  const itemSummary = new Map<string, BillItem>()
+
+  for (const log of logs) {
+    const logItems = Array.isArray(log.items) ? log.items : []
+    for (const rawItem of logItems) {
+      const milkType = String(rawItem?.milkType ?? 'milk').trim()
+      const normalizedType = milkType.toLowerCase()
+      const qty = Number(rawItem?.qty ?? 0)
+      const rate = Number(rawItem?.rate ?? 0)
+      const amount = Number(rawItem?.amount ?? qty * rate)
+      if (qty <= 0 || rate <= 0 || amount <= 0) continue
+
+      const key = `${normalizedType}:${rate}`
+      const existingItem = itemSummary.get(key)
+      if (!existingItem) {
+        itemSummary.set(key, {
+          name: `${normalizedType.charAt(0).toUpperCase()}${normalizedType.slice(1)} Milk`,
+          qty,
+          rate,
+          amount,
+        })
+      } else {
+        existingItem.qty += qty
+        existingItem.amount += amount
+      }
+    }
+  }
+
+  const totalAmount = logs.reduce((sum, log) => sum + Number(log.totalAmount ?? 0), 0)
+  const billItems = Array.from(itemSummary.values())
+
+  if (billItems.length === 0 && totalAmount > 0) {
+    billItems.push({
+      name: 'Delivery Total',
+      qty: 1,
+      rate: totalAmount,
+      amount: totalAmount,
+    })
+  }
+
+  return billItems
+}
+
+function createSyntheticBillFromLogs(house: House, month: number, year: number, logs: DeliveryLog[]): Bill & { house: NonNullable<Bill['house']> } {
+  const totalAmount = logs.reduce((sum, log) => sum + Number(log.totalAmount ?? 0), 0)
+  const previousBalance = Number(house.balance?.previousBalance ?? 0)
+  const monthRange = getMonthRange(month, year)
+  return {
+    id: -house.id,
+    houseId: house.id,
+    month,
+    year,
+    fromDate: monthRange.fromDate,
+    toDate: monthRange.toDate,
+    totalAmount: String(totalAmount),
+    items: buildItemsFromDeliveryLogs(logs),
+    previousBalance: String(previousBalance),
+    generatedDate: monthRange.toDate,
+    isClosed: false,
+    outstandingAmount: String(totalAmount),
+    note: undefined,
+    house: {
+      id: house.id,
+      houseNo: house.houseNo,
+      area: house.area,
+      phoneNo: house.phoneNo ?? undefined,
+    },
+  }
+}
+
+function getHouseBalanceSummary(house?: Partial<House> | null) {
+  const currentBalance = Number(house?.balance?.currentBalance ?? 0)
+  const previousBalance = Number(house?.balance?.previousBalance ?? 0)
+  const totalBalance = currentBalance + previousBalance
+
+  return { currentBalance, previousBalance, totalBalance }
+}
+
 export default function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([])
   const [houses, setHouses] = useState<House[]>([])
   const [loading, setLoading] = useState(true)
+  const [exportingBalancePdf, setExportingBalancePdf] = useState(false)
+  const [printBills, setPrintBills] = useState<Array<Bill & { house: NonNullable<Bill['house']> }>>([])
+  const [printLoading, setPrintLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [filterMonth, setFilterMonth] = useState<string>('')
   const [filterYear, setFilterYear] = useState<string>(String(CURRENT_YEAR))
+  const [printMonth, setPrintMonth] = useState<string>(String(new Date().getMonth() + 1))
+  const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
   const [generateOpen, setGenerateOpen] = useState(false)
   const [viewBill, setViewBill] = useState<Bill | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
@@ -114,8 +239,8 @@ export default function BillsPage() {
       setBills(billsData)
       setHouses(housesData)
       hasLoadedOnceRef.current = true
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load bills')
     } finally {
       setLoading(false)
     }
@@ -141,7 +266,7 @@ export default function BillsPage() {
         })
         setPreviewData(data)
         setGenNote(data.lastNote ?? '')
-      } catch (e: any) {
+      } catch {
         setPreviewData(null)
       } finally {
         setPreviewLoading(false)
@@ -175,6 +300,281 @@ export default function BillsPage() {
   }, [houses, genHouseSearch])
 
   const selectedGenHouse = useMemo(() => houses.find((h) => String(h.id) === genHouseId), [houses, genHouseId])
+
+  const printRange = useMemo(() => getMonthRange(parseInt(printMonth) || new Date().getMonth() + 1, parseInt(printYear) || CURRENT_YEAR), [printMonth, printYear])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadPrintBills = async () => {
+      if (!printMonth || !printYear) {
+        setPrintBills([])
+        return
+      }
+
+      setPrintLoading(true)
+      try {
+        const selectedMonth = parseInt(printMonth)
+        const selectedYear = parseInt(printYear)
+        const [monthBills, monthLogs] = await Promise.all([
+          billsApi.list({ month: selectedMonth, year: selectedYear }),
+          deliveryLogsApi.list({ fromDate: printRange.fromDate, toDate: printRange.toDate }),
+        ])
+
+        const housesById = new Map(houses.map((house) => [house.id, house]))
+        const billsByHouseId = new Map<number, Bill & { house: NonNullable<Bill['house']> }>()
+        const logsByHouseId = new Map<number, DeliveryLog[]>()
+
+        for (const log of monthLogs) {
+          const bucket = logsByHouseId.get(log.houseId) ?? []
+          bucket.push(log)
+          logsByHouseId.set(log.houseId, bucket)
+        }
+
+        for (const bill of monthBills) {
+          const house = bill.house ?? housesById.get(bill.houseId)
+          if (!house) continue
+
+          const { currentBalance, previousBalance } = getHouseBalanceSummary(house)
+          const billPreviousBalance = Number(bill.previousBalance ?? 0)
+          const billOutstanding = Number(bill.outstandingAmount ?? 0)
+          const shouldPrint = currentBalance !== 0 || previousBalance !== 0 || billPreviousBalance !== 0 || billOutstanding !== 0
+          if (!shouldPrint) continue
+
+          const existing = billsByHouseId.get(bill.houseId)
+          const nextBillDate = new Date(bill.generatedDate).getTime()
+          const existingBillDate = existing ? new Date(existing.generatedDate).getTime() : Number.NEGATIVE_INFINITY
+
+          if (!existing || nextBillDate >= existingBillDate) {
+            billsByHouseId.set(bill.houseId, { ...bill, house })
+          }
+        }
+
+        for (const house of houses) {
+          const { currentBalance, previousBalance } = getHouseBalanceSummary(house)
+          const billExists = billsByHouseId.has(house.id)
+          const hasBalance = currentBalance !== 0 || previousBalance !== 0
+          if (!hasBalance) continue
+          if (billExists) continue
+
+          const synthetic = createSyntheticBillFromLogs(house, selectedMonth, selectedYear, logsByHouseId.get(house.id) ?? [])
+          billsByHouseId.set(house.id, synthetic)
+        }
+
+        const next = Array.from(billsByHouseId.values()).sort((left, right) =>
+          (left.house?.houseNo ?? '').localeCompare(right.house?.houseNo ?? '', undefined, { numeric: true, sensitivity: 'base' }),
+        )
+
+        if (!cancelled) {
+          setPrintBills(next)
+        }
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setPrintBills([])
+          toast.error(error instanceof Error ? error.message : 'Failed to prepare print bills')
+        }
+      } finally {
+        if (!cancelled) {
+          setPrintLoading(false)
+        }
+      }
+    }
+
+    loadPrintBills()
+
+    return () => {
+      cancelled = true
+    }
+  }, [houses, printMonth, printRange.fromDate, printRange.toDate, printYear])
+
+  const handleExportBalancePdf = useCallback(async () => {
+    if (exportingBalancePdf) return
+
+    if (printBills.length === 0) {
+      toast.error('No house bills with balance were found to print for the selected month')
+      return
+    }
+
+    setExportingBalancePdf(true)
+
+    try {
+      const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const usableWidth = pageWidth - (PDF_PAGE_MARGIN * 2)
+      const usableHeight = pageHeight - (PDF_PAGE_MARGIN * 2)
+      const cardWidth = (usableWidth - PDF_CARD_GAP_X) / 2
+      const cardHeight = (usableHeight - (PDF_CARD_GAP_Y * 2)) / 3
+      const innerWidth = cardWidth - 2
+      const leftColWidth = 10
+      const particularsWidth = 34
+      const qtyWidth = 16
+      const rateWidth = 16
+      const amtWidth = 16
+      const contentWidth = leftColWidth + particularsWidth + qtyWidth + rateWidth + amtWidth
+      const contentLeftPad = (innerWidth - contentWidth) / 2
+      const headerTextY = 4.5
+      const titleY = 11.5
+      const toY = 18.5
+      const tableTop = 23.5
+      const tableHeaderHeight = 6.6
+      const rowHeight = 4.65
+      const firstDataRowY = tableTop + tableHeaderHeight
+      const footerStartY = firstDataRowY + (PDF_TABLE_ROWS * rowHeight) + 0.6
+
+      const textColor: [number, number, number] = [20, 20, 20]
+      const borderColor: [number, number, number] = [0, 0, 0]
+      const mutedColor: [number, number, number] = [35, 35, 35]
+
+      const drawCell = (
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        text: string | string[],
+        align: 'left' | 'center' | 'right' = 'left',
+        options?: { bold?: boolean; italic?: boolean; size?: number; fill?: boolean },
+      ) => {
+        const bold = options?.bold ?? false
+        const italic = options?.italic ?? false
+        const size = options?.size ?? 6.5
+        const fill = options?.fill ?? false
+        const paddingX = 1.35
+        if (fill) {
+          doc.setFillColor(255, 255, 255)
+          doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2])
+          doc.rect(x, y, width, height, 'FD')
+        } else {
+          doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2])
+          doc.rect(x, y, width, height)
+        }
+        doc.setFont('helvetica', bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : 'normal')
+        doc.setFontSize(size)
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
+        const textValue = Array.isArray(text) ? text : [text]
+        const textX = align === 'right' ? x + width - paddingX : align === 'center' ? x + width / 2 : x + paddingX
+
+        if (textValue.length > 1) {
+          const lineHeight = size * 0.3528 * 1.06
+          const textBlockHeight = textValue.length * lineHeight
+          const textY = y + ((height - textBlockHeight) / 2) + lineHeight
+          doc.text(textValue, textX, textY, { align, baseline: 'top', lineHeightFactor: 1.06 })
+          return
+        }
+
+        doc.text(textValue[0] ?? '', textX, y + (height / 2), { align, baseline: 'middle' })
+      }
+
+      const drawBillCard = (bill: Bill & { house: NonNullable<Bill['house']> }, indexInPage: number) => {
+        const column = indexInPage % PDF_COLUMNS
+        const row = Math.floor(indexInPage / PDF_COLUMNS)
+        const x = PDF_PAGE_MARGIN + (column * (cardWidth + PDF_CARD_GAP_X))
+        const y = PDF_PAGE_MARGIN + (row * (cardHeight + PDF_CARD_GAP_Y))
+
+        doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2])
+        doc.setLineWidth(0.3)
+        doc.rect(x, y, cardWidth, cardHeight)
+
+        const innerX = x + 1
+        const innerY = y + 1
+        const innerRight = x + cardWidth - 1
+        const rowX = innerX + contentLeftPad
+
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(5.7)
+        doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2])
+        doc.text(`Bill of Month: ${MONTH_NAMES[bill.month]}`, rowX, innerY + headerTextY)
+        doc.text(`Date: ${formatBillDate(bill.generatedDate || bill.toDate)}`, innerRight - 1.6, innerY + headerTextY, { align: 'right' })
+
+        doc.setFont('helvetica', 'bolditalic')
+        doc.setFontSize(9.3)
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
+        doc.text('DAIRY', x + cardWidth / 2, innerY + titleY, { align: 'center' })
+
+        doc.setFont('helvetica', 'bolditalic')
+        doc.setFontSize(6.5)
+        doc.text(`To: ${bill.house?.houseNo ?? ''}`, rowX, innerY + toY)
+
+        const tableX = rowX
+        const headerY = innerY + tableTop
+        const colWidths = [leftColWidth, particularsWidth, qtyWidth, rateWidth, amtWidth]
+        const colXs = colWidths.reduce<number[]>((acc, width, index) => {
+          acc.push(index === 0 ? tableX : acc[index - 1] + colWidths[index - 1])
+          return acc
+        }, [])
+
+        const headerLabels = ['SR.\nNO.', 'PARTICULAR', 'QTY', 'RATE', 'AMT']
+        headerLabels.forEach((label, index) => {
+          drawCell(colXs[index], headerY, colWidths[index], tableHeaderHeight, label, 'center', { bold: true, size: 5.8, fill: true })
+        })
+
+        const items = normalizeBillItems(bill.items ?? [])
+        items.forEach((item, index) => {
+          const rowY = firstDataRowY + (index * rowHeight)
+          const values = [
+            String(index + 1),
+            item.name ? item.name.toUpperCase() : '',
+            formatQtyLabel(Number(item.qty ?? 0)),
+            Number(item.rate ?? 0) ? formatPlainAmount(Number(item.rate ?? 0)) : '',
+            Number(item.amount ?? 0) ? formatPlainAmount(Number(item.amount ?? 0)) : '',
+          ]
+          values.forEach((value, columnIndex) => {
+            drawCell(colXs[columnIndex], rowY, colWidths[columnIndex], rowHeight, value, columnIndex === 1 ? 'left' : 'center', {
+              size: columnIndex === 1 ? 5.6 : 5.6,
+              fill: true,
+            })
+          })
+        })
+
+        const previousBalance = Number(bill.previousBalance ?? 0)
+        const outstandingAmount = Number(bill.outstandingAmount ?? bill.totalAmount ?? 0)
+        const receipts = Math.max(0, Number(bill.totalAmount ?? 0) - outstandingAmount)
+        const balanceLabel = previousBalance < 0 ? 'ADVANCE' : 'BAL'
+        const previousLineText = `PREVIOUS BALANCE / ADVANCE : ${Math.abs(previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 0 })} ${balanceLabel}`
+
+        drawCell(tableX, footerStartY, innerWidth, 5.3, previousLineText, 'center', { italic: true, size: 5.8, fill: true })
+
+        const receiptsY = footerStartY + 5.3
+        const receiptsWidth = innerWidth * 0.68
+        const totalWidth = innerWidth - receiptsWidth
+        drawCell(tableX, receiptsY, receiptsWidth, 5.9, `THIS MONTH RECEIPTS: Rs. ${formatPlainAmount(receipts)}`, 'left', { bold: true, size: 5.7, fill: true })
+        drawCell(tableX + receiptsWidth, receiptsY, totalWidth, 5.9, '', 'center', { bold: true, size: 6.2, fill: true })
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(6.2)
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
+        doc.text('Total', tableX + receiptsWidth + 1.4, receiptsY + 3.1, { baseline: 'middle' })
+        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0)), tableX + innerWidth - 1.4, receiptsY + 3.1, { align: 'right', baseline: 'middle' })
+
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(4.8)
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
+        doc.text('DIRECT', innerX + 1.2, y + cardHeight - 1.8)
+      }
+
+      const billsPerPage = PDF_COLUMNS * PDF_ROWS
+
+      printBills.forEach((bill, index) => {
+        const pageIndex = Math.floor(index / billsPerPage)
+        const positionInPage = index % billsPerPage
+
+        if (positionInPage === 0) {
+          if (pageIndex > 0) doc.addPage()
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(6)
+          doc.text(`Page No. ${pageIndex + 1}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
+        }
+
+        drawBillCard(bill, positionInPage)
+      })
+
+      doc.save(`house-bills-${printYear}-${String(printMonth).padStart(2, '0')}.pdf`)
+      toast.success(`Printed ${printBills.length} house bill${printBills.length > 1 ? 's' : ''} for ${getMonthLabel(parseInt(printMonth), parseInt(printYear))}`)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to export balance PDF')
+    } finally {
+      setExportingBalancePdf(false)
+    }
+  }, [exportingBalancePdf, printBills, printMonth, printYear])
 
   // When a house is selected for generation, default the from date to last bill.generatedDate + 1 day
   useEffect(() => {
@@ -311,8 +711,8 @@ export default function BillsPage() {
       }
       setGenerateOpen(false)
       load()
-    } catch (e: any) {
-      const msg = String(e?.message ?? '')
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : ''
       toast.error(msg || 'Failed to generate bill')
     } finally {
       setSaving(false)
@@ -326,8 +726,8 @@ export default function BillsPage() {
       toast.success('Bill deleted')
       setDeleteId(null)
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete bill')
     }
   }
 
@@ -340,9 +740,40 @@ export default function BillsPage() {
           <h1 className="mt-1 text-2xl font-bold tracking-tight">Bills</h1>
           <p className="mt-1 text-sm text-muted-foreground">Generate and manage monthly dairy bills</p>
         </div>
-        <Button onClick={openGenerate} className="gap-2 self-start sm:self-auto">
-          <Plus className="h-4 w-4" /> Generate Bill
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Select value={printMonth} onValueChange={setPrintMonth}>
+              <SelectTrigger className="w-full sm:w-36">
+                <SelectValue placeholder="Month" />
+              </SelectTrigger>
+              <SelectContent>
+                {MONTH_NAMES.slice(1).map((monthName, index) => (
+                  <SelectItem key={monthName} value={String(index + 1)}>{monthName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={printYear} onValueChange={setPrintYear}>
+              <SelectTrigger className="w-full sm:w-28">
+                <SelectValue placeholder="Year" />
+              </SelectTrigger>
+              <SelectContent>
+                {YEARS.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            variant="outline"
+            onClick={handleExportBalancePdf}
+            disabled={exportingBalancePdf || loading || printLoading || printBills.length === 0}
+            className="gap-2 self-start sm:self-auto"
+          >
+            <Download className="h-4 w-4" />
+            {exportingBalancePdf ? 'Printing...' : printLoading ? 'Preparing...' : 'Print Month Bills'}
+          </Button>
+          <Button onClick={openGenerate} className="gap-2 self-start sm:self-auto">
+            <Plus className="h-4 w-4" /> Generate Bill
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -398,7 +829,7 @@ export default function BillsPage() {
               </thead>
               <tbody>
                 {filtered.map((b, idx) => (
-                  <tr key={b.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''} ${b.isClosed ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
+                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''} ${b.isClosed ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
                     <td className="px-4 py-3">
                       <div>
                         <p className="font-semibold">{b.house?.houseNo}</p>
@@ -656,7 +1087,7 @@ export default function BillsPage() {
                     </thead>
                     <tbody>
                       {(viewBill.items as BillItem[]).map((it, i) => (
-                        <tr key={i} className="border-t border-border/60">
+                        <tr key={`${it.name ?? 'item'}-${i}`} className="border-t border-border/60">
                           <td className="px-4 py-2.5">{it.name}</td>
                           <td className="px-4 py-2.5 text-right">{it.qty}</td>
                           <td className="px-4 py-2.5 text-right">₹{it.rate}</td>
