@@ -1,4 +1,11 @@
-import { IsInt, IsNumber, IsOptional, IsString, Min, IsArray } from 'class-validator';
+import {
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  IsArray,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RecordPaymentDto {

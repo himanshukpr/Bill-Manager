@@ -4,12 +4,13 @@ import { CreateDeliveryPlanDto } from './dto/delivery-plan.dto';
 
 @Injectable()
 export class DeliveryPlansService {
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   findAll(user?: any) {
-    const where = user?.role === 'supplier' && user?.uuid
-      ? { supplier_id: user.uuid }
-      : undefined;
+    const where =
+      user?.role === 'supplier' && user?.uuid
+        ? { supplier_id: user.uuid }
+        : undefined;
 
     return this.prisma.deliveryPlan.findMany({
       where,

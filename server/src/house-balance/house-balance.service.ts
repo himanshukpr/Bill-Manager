@@ -7,7 +7,10 @@ import { BadRequestException } from '@nestjs/common';
 
 @Injectable()
 export class HouseBalanceService {
-  constructor(private prisma: PrismaService, private billsService: BillsService) { }
+  constructor(
+    private prisma: PrismaService,
+    private billsService: BillsService,
+  ) {}
 
   async getBalance(houseId: number) {
     const balance = await this.prisma.houseBalance.findUnique({
@@ -19,7 +22,8 @@ export class HouseBalanceService {
         },
       },
     });
-    if (!balance) throw new NotFoundException(`Balance for house #${houseId} not found`);
+    if (!balance)
+      throw new NotFoundException(`Balance for house #${houseId} not found`);
     return balance;
   }
 
@@ -27,7 +31,10 @@ export class HouseBalanceService {
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId: dto.houseId },
     });
-    if (!balance) throw new NotFoundException(`Balance for house #${dto.houseId} not found`);
+    if (!balance)
+      throw new NotFoundException(
+        `Balance for house #${dto.houseId} not found`,
+      );
 
     // Calculate total amount including discount
     const totalAmount = dto.amount + (dto.discount || 0);
@@ -66,7 +73,8 @@ export class HouseBalanceService {
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId },
     });
-    if (!balance) throw new NotFoundException(`Balance for house #${houseId} not found`);
+    if (!balance)
+      throw new NotFoundException(`Balance for house #${houseId} not found`);
 
     return this.prisma.paymentHistory.findMany({
       where: { balanceRef: balance.id },
@@ -79,7 +87,9 @@ export class HouseBalanceService {
       orderBy: { createdAt: 'desc' },
       include: {
         balance: {
-          include: { house: { select: { id: true, houseNo: true, area: true } } },
+          include: {
+            house: { select: { id: true, houseNo: true, area: true } },
+          },
         },
       },
     });
@@ -91,7 +101,8 @@ export class HouseBalanceService {
       select: { id: true },
     });
 
-    if (!balance) throw new NotFoundException(`Balance for house #${houseId} not found`);
+    if (!balance)
+      throw new NotFoundException(`Balance for house #${houseId} not found`);
 
     return this.prisma.houseBalance.update({
       where: { houseId },
@@ -105,7 +116,8 @@ export class HouseBalanceService {
       select: { id: true },
     });
 
-    if (!balance) throw new NotFoundException(`Balance for house #${houseId} not found`);
+    if (!balance)
+      throw new NotFoundException(`Balance for house #${houseId} not found`);
 
     return this.prisma.houseBalance.update({
       where: { houseId },
@@ -122,9 +134,15 @@ export class HouseBalanceService {
     periodStart.setHours(0, 0, 0, 0);
     periodEnd.setHours(23, 59, 59, 999);
 
-    const closureState = await this.billsService.getPeriodClosureState(houseId, periodStart, periodEnd);
+    const closureState = await this.billsService.getPeriodClosureState(
+      houseId,
+      periodStart,
+      periodEnd,
+    );
     if (closureState.isAlreadyClosed) {
-      throw new BadRequestException(closureState.alreadyClosedMessage ?? 'This period is already closed.');
+      throw new BadRequestException(
+        closureState.alreadyClosedMessage ?? 'This period is already closed.',
+      );
     }
 
     const logs = await this.prisma.deliveryLog.findMany({
@@ -136,18 +154,26 @@ export class HouseBalanceService {
     });
 
     if (!logs || logs.length === 0) {
-      throw new BadRequestException('No delivery logs found for the selected period to close');
+      throw new BadRequestException(
+        'No delivery logs found for the selected period to close',
+      );
     }
 
-    const computedAmount = logs.reduce((s, l) => s + Number(l.totalAmount ?? 0), 0);
-    const amountToApply = typeof dto.amount === 'number' ? dto.amount : computedAmount;
+    const computedAmount = logs.reduce(
+      (s, l) => s + Number(l.totalAmount ?? 0),
+      0,
+    );
+    const amountToApply =
+      typeof dto.amount === 'number' ? dto.amount : computedAmount;
 
     const logIds = logs.map((l) => l.id);
 
     const [payment, updatedBalance] = await this.prisma.$transaction([
       this.prisma.paymentHistory.create({
         data: {
-          balanceRef: (await this.prisma.houseBalance.findUnique({ where: { houseId } }))!.id,
+          balanceRef: (await this.prisma.houseBalance.findUnique({
+            where: { houseId },
+          }))!.id,
           amount: amountToApply,
           note: note ?? `Closed period ${fromDate} - ${toDate}`,
           billIds: logIds as unknown as any,

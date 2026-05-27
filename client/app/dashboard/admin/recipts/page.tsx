@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, type PaymentHistory, type House, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
+import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, type PaymentHistory, type House, type HouseBalance, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -37,6 +37,14 @@ type MonthlyProductSummary = {
   product: string
   months: { month: number; year: number; quantity: number }[]
   totalQuantity: number
+}
+
+type PaymentSummaryRow = {
+  id: number
+  paidAt: string
+  paidAmount: number
+  remainingAmount: number
+  note?: string
 }
 
 function normalizeMilkType(value: unknown): string {
@@ -221,6 +229,7 @@ export default function ReceiptsPage() {
   const [showDeliveryLogsModal, setShowDeliveryLogsModal] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
+  const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
   const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryBills, setSummaryBills] = useState<Bill[]>([])
@@ -239,6 +248,42 @@ export default function ReceiptsPage() {
     if (!summaryHouse) return []
     return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
+    if (!summaryHouse) return []
+
+    const payments = [...(summaryBalance?.payments ?? [])].sort(
+      (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )
+
+    const baseOutstanding = Number(
+      summaryBalance?.previousBalance ??
+        summaryBalance?.currentBalance ??
+        summaryHouse.balance?.previousBalance ??
+        summaryHouse.balance?.currentBalance ??
+        0,
+    )
+
+    const totalApplied = payments.reduce(
+      (sum, payment) => sum + Number(payment.amount ?? 0) + Number(payment.discount ?? 0),
+      0,
+    )
+
+    let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
+
+    return payments.map((payment) => {
+      const paidAmount = Number(payment.amount ?? 0) + Number(payment.discount ?? 0)
+      remainingAmount = Math.max(0, remainingAmount - paidAmount)
+
+      return {
+        id: payment.id,
+        paidAt: payment.createdAt,
+        paidAmount,
+        remainingAmount,
+        note: payment.note,
+      }
+    })
+  }, [summaryBalance, summaryHouse])
 
   const summaryTotals = useMemo(() => {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
@@ -445,19 +490,43 @@ export default function ReceiptsPage() {
 
   const totalReceived = payments.reduce((sum, p) => sum + Number(p.amount), 0)
 
+  const selectedHouse = useMemo(
+    () => houses.find((house) => String(house.id) === formHouseId) ?? null,
+    [houses, formHouseId],
+  )
+
+  const formPendingAmount = useMemo(
+    () => formBills.reduce((sum, bill) => sum + (bill.pendingAmount || 0), 0),
+    [formBills],
+  )
+
+  const amountHelperAmount = useMemo(() => {
+    if (formBills.length > 0) return formPendingAmount
+    if (selectedHouse?.balance) {
+      return Number(selectedHouse.balance.previousBalance ?? selectedHouse.balance.currentBalance ?? 0)
+    }
+    return 0
+  }, [formBills.length, formPendingAmount, selectedHouse])
+
+  const amountHelperLabel = formBills.length > 0
+    ? `Use pending amount ₹${amountHelperAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+    : `Use balance ₹${amountHelperAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+
   async function openSummary(house: House) {
     setSummaryHouse(house)
+    setSummaryBalance(null)
     setSummaryLogs([])
-    setSummaryBills([])
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [logs, bills, rates] = await Promise.all([
+      const [balance, logs, bills, rates] = await Promise.all([
+        balanceApi.get(house.id),
         deliveryLogsApi.list({ houseId: house.id }),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
+      setSummaryBalance(balance)
       setSummaryLogs(logs)
       setSummaryBills(bills)
       setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
@@ -680,14 +749,13 @@ export default function ReceiptsPage() {
           setFormDiscount('')
         }
       }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] max-sm:max-h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Record Payment</DialogTitle>
-            <DialogDescription>Log a payment received from a house. This will reduce their pending balance.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label>House</Label>
+          <div className="space-y-2 py-1 max-sm:space-y-1.5">
+            <div className="space-y-1">
+              <Label className="text-xs sm:text-sm">House</Label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input placeholder="Search house no or area..." value={formHouseQuery}
@@ -763,33 +831,58 @@ export default function ReceiptsPage() {
 
             {formHouseSelected && (
               <>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <div className="space-y-1.5 sm:col-span-1">
-                    <p className="text-sm text-foreground">Area</p>
-                    <p className="text-lg font-semibold text-foreground">{formArea || '—'}</p>
+                <div className="grid grid-cols-2 gap-1 sm:gap-2 sm:grid-cols-4">
+                  <div className="space-y-0.5 sm:space-y-1">
+                    <p className="text-xs text-foreground">Area</p>
+                    <p className="break-words text-sm font-semibold text-foreground sm:text-base">
+                      {formArea || '—'}
+                    </p>
                   </div>
-                  <div className="space-y-1.5 sm:col-span-1">
-                    <p className="text-sm text-foreground">Phone</p>
-                    <p className="text-lg font-semibold text-foreground">{formPhone || '—'}</p>
+                  <div className="space-y-0.5 sm:space-y-1">
+                    <p className="text-xs text-foreground">Phone</p>
+                    <p className="break-words text-sm font-semibold text-foreground sm:text-base">
+                      {formPhone || '—'}
+                    </p>
                   </div>
-                  <div className="space-y-1.5 sm:col-span-1">
+                  <div className="col-span-2 space-y-0.5 sm:space-y-1 sm:col-span-2">
                     <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
-                    <Input id="receipt-amount" type="number" min="0.01" step="0.01" placeholder="e.g. 1500" value={formAmount}
-                      onChange={e => setFormAmount(e.target.value)} />
+                    <div className="relative">
+                      <Input
+                        id="receipt-amount"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="e.g. 1500"
+                        value={formAmount}
+                        onChange={e => setFormAmount(e.target.value)}
+                        className="pr-11"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-1 top-1/2 -translate-y-1/2"
+                        aria-label={amountHelperLabel}
+                        title={amountHelperLabel}
+                        onClick={() => setFormAmount(String(amountHelperAmount))}
+                      >
+                        <History className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Discount Section */}
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="receipt-discount">Discount (₹) <span className="text-muted-foreground text-xs">(Optional)</span></Label>
+                <div className="grid grid-cols-2 gap-1 sm:gap-2 sm:grid-cols-4">
+                  <div className="space-y-0.5 sm:space-y-1">
+                    <Label htmlFor="receipt-discount" className="text-xs sm:text-sm">Discount (₹) <span className="text-muted-foreground text-[10px] sm:text-xs">(Optional)</span></Label>
                     <Input id="receipt-discount" type="number" min="0" step="0.01" placeholder="e.g. 50" value={formDiscount}
                       onChange={e => setFormDiscount(e.target.value)} />
                   </div>
-                  <div className="space-y-1.5">
-                    <div className="pl-4 pt-2">
-                      <p className="text-sm text-foreground">Total Settlement (₹)</p>
-                      <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                  <div className="col-span-1 space-y-0.5 sm:space-y-1 sm:col-span-3">
+                    <div className="pt-1 sm:pl-4">
+                      <p className="text-xs sm:text-sm text-foreground">Total Settlement (₹)</p>
+                      <p className="text-lg sm:text-2xl font-bold text-green-600 dark:text-green-400">
                         ₹{((parseFloat(formAmount) || 0) + (parseFloat(formDiscount) || 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       </p>
                     </div>
@@ -802,9 +895,9 @@ export default function ReceiptsPage() {
                     {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
                   </div>
                 ) : formBills.length > 0 ? (
-                  <div className="space-y-2 border border-border rounded-lg p-3 bg-muted/30">
-                    <div className="flex items-center justify-between mb-2">
-                      <Label className="text-sm font-semibold">Bills to Pay</Label>
+                  <div className="space-y-1 border border-border rounded-lg p-2 bg-muted/30">
+                    <div className="flex items-center justify-between mb-1">
+                      <Label className="text-xs sm:text-sm font-semibold">Bills to Pay</Label>
                       <Select value={formPaymentMode} onValueChange={(v: any) => {
                         setFormPaymentMode(v)
                         if (v === 'all') {
@@ -823,7 +916,7 @@ export default function ReceiptsPage() {
                       </Select>
                     </div>
 
-                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                    <div className="space-y-0.5 max-h-40 overflow-y-auto">
                       {formBills.map(bill => {
                         const daysInMonth = new Date(bill.year, bill.month, 0).getDate()
                         const calculatedDateRange = `1 - ${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
@@ -831,7 +924,7 @@ export default function ReceiptsPage() {
                           ? `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                           : calculatedDateRange
                         return (
-                          <div key={bill.id} className={`flex items-center gap-2 p-2 rounded border ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
+                          <div key={bill.id} className={`flex items-center gap-1 p-1.5 rounded border text-xs ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
                             {formPaymentMode === 'selected' && (
                               <Checkbox
                                 checked={formSelectedBillIds.includes(bill.id)}
@@ -869,66 +962,66 @@ export default function ReceiptsPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="text-center py-3 text-sm text-muted-foreground">
+                  <div className="text-center py-2 text-xs text-muted-foreground">
                     No bills found for this house
                   </div>
                 )}
               </>
             )}
 
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
                     <Checkbox checked={formClosePeriod} onCheckedChange={(v) => setFormClosePeriod(Boolean(v))} />
-                    <Label className="text-sm">Close specific period (mark deliveries as paid)</Label>
+                    <Label className="text-xs sm:text-sm">Close specific period (mark deliveries as paid)</Label>
                   </div>
                   {formClosePeriod && (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label>From Date</Label>
+                    <div className="space-y-1.5">
+                      <div className="grid grid-cols-1 gap-1.5 sm:gap-2 sm:grid-cols-2">
+                        <div className="space-y-0.5 sm:space-y-1">
+                          <Label className="text-xs sm:text-sm">From Date</Label>
                           <Input type="date" value={formFromDate} onChange={(e) => setFormFromDate(e.target.value)} />
                         </div>
-                        <div className="space-y-1.5">
-                          <Label>Upto Date</Label>
+                        <div className="space-y-0.5 sm:space-y-1">
+                          <Label className="text-xs sm:text-sm">Upto Date</Label>
                           <Input type="date" value={formToDate} onChange={(e) => setFormToDate(e.target.value)} />
                         </div>
                       </div>
 
                       {/* Balance Summary for Period */}
                       {periodSummary && !periodSummary.loading ? (
-                        <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-3 space-y-2">
+                        <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-2 space-y-1">
                           {periodSummary.isAlreadyClosed && (
-                            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs sm:text-sm text-destructive">
                               {periodSummary.alreadyClosedMessage ?? 'This period is already closed.'}
                             </div>
                           )}
-                          <div className="grid grid-cols-1 gap-1 sm:grid-cols-3">
+                          <div className="grid grid-cols-1 gap-0.5 sm:gap-1 sm:grid-cols-3">
                             <div className="space-y-0">
-                              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
-                              <p className="text-sm font-bold text-blue-600 dark:text-blue-400">
+                              <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
+                              <p className="text-xs sm:text-sm font-bold text-blue-600 dark:text-blue-400">
                                 ₹{periodSummary.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </p>
                             </div>
                             <div className="space-y-0">
-                              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Period Total</p>
-                              <p className="text-sm font-bold text-amber-600 dark:text-amber-400">
+                              <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Period Total</p>
+                              <p className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">
                                 ₹{periodSummary.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </p>
-                              <p className="text-[10px] text-muted-foreground">{periodSummary.logCount} deliveries</p>
+                              <p className="text-[8px] sm:text-[10px] text-muted-foreground">{periodSummary.logCount} deliveries</p>
                             </div>
                             <div className="space-y-0">
-                              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Current Balance</p>
-                              <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                              <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Current Balance</p>
+                              <p className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
                                 ₹{periodSummary.currentBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </p>
                             </div>
                           </div>
                         </div>
                       ) : periodSummary?.loading ? (
-                        <div className="rounded-lg border border-border bg-muted/30 p-3">
-                          <div className="flex gap-3 items-center">
-                            <div className="h-3 w-3 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
-                            <p className="text-xs text-muted-foreground">Loading period summary...</p>
+                        <div className="rounded-lg border border-border bg-muted/30 p-2">
+                          <div className="flex gap-2 items-center">
+                            <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
+                            <p className="text-[10px] sm:text-xs text-muted-foreground">Loading period summary...</p>
                           </div>
                         </div>
                       ) : null}
@@ -938,16 +1031,16 @@ export default function ReceiptsPage() {
                         <Button 
                           variant="outline" 
                           size="sm"
-                          className="w-full"
+                          className="w-full text-xs"
                           onClick={() => setShowDeliveryLogsModal(true)}
                         >
                           View Delivery Logs ({periodDeliveryLogs.length})
                         </Button>
                       ) : loadingDeliveryLogs ? (
-                        <div className="rounded-lg border border-border bg-muted/30 p-3">
-                          <div className="flex gap-3 items-center justify-center">
-                            <div className="h-3 w-3 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
-                            <p className="text-xs text-muted-foreground">Loading delivery logs...</p>
+                        <div className="rounded-lg border border-border bg-muted/30 p-2">
+                          <div className="flex gap-2 items-center justify-center">
+                            <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
+                            <p className="text-[10px] sm:text-xs text-muted-foreground">Loading delivery logs...</p>
                           </div>
                         </div>
                       ) : null}
@@ -956,10 +1049,10 @@ export default function ReceiptsPage() {
 
                 </div>
 
-                <div className="space-y-1.5">
-              <Label htmlFor="receipt-note">Note (Optional)</Label>
+                <div className="space-y-0.5 sm:space-y-1">
+              <Label htmlFor="receipt-note" className="text-xs sm:text-sm">Note (Optional)</Label>
               <Textarea id="receipt-note" placeholder="e.g. Cash received on 1st April" value={formNote}
-                onChange={e => setFormNote(e.target.value)} rows={2} />
+                onChange={e => setFormNote(e.target.value)} rows={1} className="min-h-8 sm:min-h-10" />
             </div>
           </div>
           <DialogFooter>
@@ -1028,6 +1121,7 @@ export default function ReceiptsPage() {
         setSummaryOpen(open)
         if (!open) {
           setSummaryHouse(null)
+          setSummaryBalance(null)
           setSummaryLogs([])
         }
       }}>
@@ -1067,6 +1161,58 @@ export default function ReceiptsPage() {
               </div>
 
               <div className="space-y-6 py-2">
+                <div>
+                  <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : paymentSummaryRows.length === 0 ? (
+                      <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <History className="h-8 w-8 opacity-30" />
+                        <p className="text-sm">No received payments found</p>
+                        <p className="text-xs">This house has no recorded payment history yet.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Paid</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Left</th>
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Note</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {paymentSummaryRows.map((row, idx) => (
+                              <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">
+                                  {new Date(row.paidAt).toLocaleDateString('en-IN', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })}
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold text-amber-600 dark:text-amber-400">
+                                  ₹{row.remainingAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-muted-foreground">{row.note ?? '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div>
                   <h3 className="mb-3 text-sm font-semibold">Monthly Product Summary</h3>
                   <div className="rounded-xl border border-border bg-muted/30 p-4">

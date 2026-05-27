@@ -1,6 +1,12 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreateProductRateDto {
   @IsString()
@@ -20,4 +26,4 @@ export class CreateProductRateDto {
   isActive?: boolean;
 }
 
-export class UpdateProductRateDto extends PartialType(CreateProductRateDto) { }
+export class UpdateProductRateDto extends PartialType(CreateProductRateDto) {}

@@ -4,11 +4,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateProductRateDto, UpdateProductRateDto } from './dto/product-rate.dto';
+import {
+  CreateProductRateDto,
+  UpdateProductRateDto,
+} from './dto/product-rate.dto';
 
 @Injectable()
 export class ProductRatesService {
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   async findAll() {
     const count = await this.prisma.productRate.count();
@@ -48,7 +51,9 @@ export class ProductRatesService {
   }
 
   async update(id: number, dto: UpdateProductRateDto) {
-    const existing = await this.prisma.productRate.findUnique({ where: { id } });
+    const existing = await this.prisma.productRate.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException(`Product rate #${id} not found`);
     }
@@ -72,7 +77,9 @@ export class ProductRatesService {
   }
 
   async remove(id: number) {
-    const existing = await this.prisma.productRate.findUnique({ where: { id } });
+    const existing = await this.prisma.productRate.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException(`Product rate #${id} not found`);
     }

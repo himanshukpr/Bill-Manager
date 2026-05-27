@@ -1,3 +1,3 @@
-export const DEFAULT_CACHE_FRESH_MS = 5_000;
-export const GLOBAL_SYNC_INTERVAL_MS = 5_000;
-export const SYNC_DEBOUNCE_MS = 1_000;
+export const DEFAULT_CACHE_FRESH_MS = 30_000;
+export const GLOBAL_SYNC_INTERVAL_MS = 30_000;
+export const SYNC_DEBOUNCE_MS = 2_000;

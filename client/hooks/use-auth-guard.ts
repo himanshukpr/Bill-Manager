@@ -35,7 +35,7 @@ export function useAuthGuard(requiredRole: AppRole) {
       syncAuth()
     }
 
-    const intervalId = window.setInterval(syncAuth, 1000)
+    const intervalId = window.setInterval(syncAuth, 30000)
 
     window.addEventListener('storage', handleStorage)
 

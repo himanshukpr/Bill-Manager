@@ -83,17 +83,10 @@ export async function ensureClientSessionStoragePolicy(): Promise<void> {
     }
 
     try {
-      // Keep the Dexie connection open and clear data in-place to avoid
-      // transient DatabaseClosedError for active live queries.
-      await Promise.all([
-        db.houses.clear(),
-        db.houseConfigs.clear(),
-        db.deliveryLogs.clear(),
-        db.bills.clear(),
-        db.users.clear(),
-        db.syncQueue.clear(),
-        db.queryCache.clear(),
-      ]);
+      // Clean up stale query cache entries older than 1 hour,
+      // but keep the data so offline-first works across page loads.
+      const staleThreshold = Date.now() - 60 * 60 * 1000;
+      await db.queryCache.where('updatedAt').below(staleThreshold).delete();
     } catch {
       // Ignore IndexedDB cleanup failures.
     }
@@ -451,6 +444,7 @@ export type PaymentHistory = {
   id: number;
   balanceRef: number;
   amount: string;
+  discount?: number;
   note?: string;
   createdAt: string;
   billIds?: number[];

@@ -13,9 +13,11 @@ import {
 
 @Injectable()
 export class HouseConfigService {
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
-  private normalizeSingleDailyAlert(dailyAlerts?: string | null): string | undefined {
+  private normalizeSingleDailyAlert(
+    dailyAlerts?: string | null,
+  ): string | undefined {
     if (dailyAlerts === undefined || dailyAlerts === null) return undefined;
 
     const trimmed = dailyAlerts.trim();
@@ -99,7 +101,10 @@ export class HouseConfigService {
         include: { house: true },
       });
     } catch (error: any) {
-      if (error?.code === 'P2003' && String(error?.meta?.cause ?? '').includes('house_configs_house_id_fkey')) {
+      if (
+        error?.code === 'P2003' &&
+        String(error?.meta?.cause ?? '').includes('house_configs_house_id_fkey')
+      ) {
         throw new NotFoundException(`House #${dto.houseId} not found`);
       }
       throw error;
@@ -130,7 +135,11 @@ export class HouseConfigService {
 
   async reorder(dto: ReorderConfigDto, user?: any) {
     // Validate input
-    if (!dto.orderedIds || !Array.isArray(dto.orderedIds) || dto.orderedIds.length === 0) {
+    if (
+      !dto.orderedIds ||
+      !Array.isArray(dto.orderedIds) ||
+      dto.orderedIds.length === 0
+    ) {
       throw new BadRequestException('orderedIds must be a non-empty array');
     }
 
@@ -140,7 +149,9 @@ export class HouseConfigService {
     });
 
     if (configs.length !== dto.orderedIds.length) {
-      throw new BadRequestException(`Expected ${dto.orderedIds.length} configs, found ${configs.length}`);
+      throw new BadRequestException(
+        `Expected ${dto.orderedIds.length} configs, found ${configs.length}`,
+      );
     }
 
     // Supplier permissions:

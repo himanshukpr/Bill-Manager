@@ -9,14 +9,18 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { HouseBalanceService } from './house-balance.service';
-import { RecordPaymentDto, UpdatePreviousBalanceDto, UpdateCurrentBalanceDto } from './dto/payment.dto';
+import {
+  RecordPaymentDto,
+  UpdatePreviousBalanceDto,
+  UpdateCurrentBalanceDto,
+} from './dto/payment.dto';
 import { ClosePeriodDto } from './dto/close-period.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 
 @UseGuards(JwtAuthGuard)
 @Controller('house-balance')
 export class HouseBalanceController {
-  constructor(private service: HouseBalanceService) { }
+  constructor(private service: HouseBalanceService) {}
 
   @Get('payments')
   getAllPaymentHistory() {

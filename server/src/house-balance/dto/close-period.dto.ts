@@ -1,19 +1,19 @@
-import { IsInt, IsOptional, IsString } from 'class-validator'
+import { IsInt, IsOptional, IsString } from 'class-validator';
 
 export class ClosePeriodDto {
   @IsInt()
-  houseId!: number
+  houseId!: number;
 
   @IsString()
-  fromDate!: string
+  fromDate!: string;
 
   @IsString()
-  toDate!: string
+  toDate!: string;
 
   @IsOptional()
   @IsString()
-  note?: string
+  note?: string;
 
   @IsOptional()
-  amount?: number
+  amount?: number;
 }

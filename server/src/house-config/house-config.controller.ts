@@ -23,7 +23,7 @@ import { JwtAuthGuard } from '../auth/guards/auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('house-config')
 export class HouseConfigController {
-  constructor(private service: HouseConfigService) { }
+  constructor(private service: HouseConfigService) {}
 
   @Get()
   findAll(@Query('supplierId') supplierId?: string) {

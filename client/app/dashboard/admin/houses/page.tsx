@@ -4,11 +4,11 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Plus, Search, X, Phone, MapPin, Building2, Bell, CalendarDays,
-  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2
+  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2, History
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import {
@@ -58,6 +58,14 @@ type MonthlyProductSummary = {
   product: string
   months: { month: number; year: number; quantity: number }[]
   totalQuantity: number
+}
+
+type PaymentSummaryRow = {
+  id: number
+  paidAt: string
+  paidAmount: number
+  remainingAmount: number
+  note?: string
 }
 
 type DeliveryEditForm = {
@@ -413,6 +421,7 @@ export default function HousesPage() {
   const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
+  const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
   const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
   const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [summaryLoading, setSummaryLoading] = useState(false)
@@ -440,6 +449,42 @@ export default function HousesPage() {
     if (!summaryHouse) return []
     return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
+    if (!summaryHouse) return []
+
+    const payments = [...(summaryBalance?.payments ?? [])].sort(
+      (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )
+
+    const baseOutstanding = Number(
+      summaryBalance?.previousBalance ??
+      summaryBalance?.currentBalance ??
+      summaryHouse.balance?.previousBalance ??
+      summaryHouse.balance?.currentBalance ??
+      0,
+    )
+
+    const totalApplied = payments.reduce(
+      (sum, payment) => sum + Number(payment.amount ?? 0) + Number(payment.discount ?? 0),
+      0,
+    )
+
+    let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
+
+    return payments.map((payment) => {
+      const paidAmount = Number(payment.amount ?? 0) + Number(payment.discount ?? 0)
+      remainingAmount = Math.max(0, remainingAmount - paidAmount)
+
+      return {
+        id: payment.id,
+        paidAt: payment.createdAt,
+        paidAmount,
+        remainingAmount,
+        note: payment.note,
+      }
+    })
+  }, [summaryBalance, summaryHouse])
 
   const summaryTotals = useMemo(() => {
     if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
@@ -857,17 +902,20 @@ export default function HousesPage() {
 
   async function openSummary(house: House) {
     setSummaryHouse(house)
+    setSummaryBalance(null)
     setSummaryLogs([])
     setSummaryBills([])
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [logs, bills, rates] = await Promise.all([
+      const [balance, logs, bills, rates] = await Promise.all([
+        balanceApi.get(house.id),
         deliveryLogsApi.list({ houseId: house.id }),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
+      setSummaryBalance(balance)
       setSummaryLogs(logs)
       setSummaryBills(bills)
       setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
@@ -1781,6 +1829,7 @@ export default function HousesPage() {
         setSummaryOpen(open)
         if (!open) {
           setSummaryHouse(null)
+          setSummaryBalance(null)
           setSummaryLogs([])
         }
       }}>
@@ -1817,6 +1866,58 @@ export default function HousesPage() {
               </div>
 
               <div className="space-y-6 py-2">
+                <div>
+                  <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : paymentSummaryRows.length === 0 ? (
+                      <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <History className="h-8 w-8 opacity-30" />
+                        <p className="text-sm">No received payments found</p>
+                        <p className="text-xs">This house has no recorded payment history yet.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Paid</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Left</th>
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Note</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {paymentSummaryRows.map((row, idx) => (
+                              <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">
+                                  {new Date(row.paidAt).toLocaleDateString('en-IN', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })}
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold text-amber-600 dark:text-amber-400">
+                                  ₹{row.remainingAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-muted-foreground">{row.note ?? '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Monthly Summary Grid */}
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-3">Monthly Product Summary</h3>

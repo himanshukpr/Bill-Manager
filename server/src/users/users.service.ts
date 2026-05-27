@@ -48,7 +48,13 @@ export class UsersService {
     return this.prisma.user.update({
       where: { uuid },
       data: { isVerified },
-      select: { uuid: true, username: true, email: true, role: true, isVerified: true },
+      select: {
+        uuid: true,
+        username: true,
+        email: true,
+        role: true,
+        isVerified: true,
+      },
     });
   }
 
@@ -56,7 +62,13 @@ export class UsersService {
     return this.prisma.user.update({
       where: { uuid },
       data: { role },
-      select: { uuid: true, username: true, email: true, role: true, isVerified: true },
+      select: {
+        uuid: true,
+        username: true,
+        email: true,
+        role: true,
+        isVerified: true,
+      },
     });
   }
 

@@ -12,22 +12,40 @@ import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 export class BillsService {
   constructor(private prisma: PrismaService) {}
 
-  private async getExistingBillForPeriod(houseId: number, periodStart: Date, periodEnd: Date) {
+  private async getExistingBillForPeriod(
+    houseId: number,
+    periodStart: Date,
+    periodEnd: Date,
+  ) {
     const bills = await this.prisma.bill.findMany({
       where: { houseId },
-      select: { id: true, fromDate: true, toDate: true, month: true, year: true },
+      select: {
+        id: true,
+        fromDate: true,
+        toDate: true,
+        month: true,
+        year: true,
+      },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
     });
 
-    return bills.find((bill) => {
-      const billStart = bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
-      const billEnd = bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
+    return (
+      bills.find((bill) => {
+        const billStart =
+          bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
+        const billEnd =
+          bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
 
-      return billStart <= periodEnd && billEnd >= periodStart;
-    }) ?? null;
+        return billStart <= periodEnd && billEnd >= periodStart;
+      }) ?? null
+    );
   }
 
-  async getPeriodClosureState(houseId: number, periodStart: Date, periodEnd: Date) {
+  async getPeriodClosureState(
+    houseId: number,
+    periodStart: Date,
+    periodEnd: Date,
+  ) {
     const [matchingBill, deliveryLogs] = await Promise.all([
       this.getExistingBillForPeriod(houseId, periodStart, periodEnd),
       this.prisma.deliveryLog.findMany({
@@ -42,12 +60,15 @@ export class BillsService {
       }),
     ]);
 
-    const isClosedByLogs = deliveryLogs.length > 0 && deliveryLogs.every((log) => log.billGenerated);
+    const isClosedByLogs =
+      deliveryLogs.length > 0 && deliveryLogs.every((log) => log.billGenerated);
     const isAlreadyClosed = Boolean(matchingBill || isClosedByLogs);
 
     return {
       isAlreadyClosed,
-      alreadyClosedMessage: isAlreadyClosed ? 'This period is already closed.' : null,
+      alreadyClosedMessage: isAlreadyClosed
+        ? 'This period is already closed.'
+        : null,
       matchingBillId: matchingBill?.id ?? null,
     };
   }
@@ -62,7 +83,11 @@ export class BillsService {
     return lastBill?.note ?? null;
   }
 
-  private resolvePeriod(dto: { date?: string; fromDate?: string; toDate?: string }) {
+  private resolvePeriod(dto: {
+    date?: string;
+    fromDate?: string;
+    toDate?: string;
+  }) {
     const fromInput = dto.fromDate ?? dto.date;
     const toInput = dto.toDate ?? dto.date;
 
@@ -73,7 +98,10 @@ export class BillsService {
     const periodStart = new Date(fromInput);
     const periodEnd = new Date(toInput);
 
-    if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime())) {
+    if (
+      Number.isNaN(periodStart.getTime()) ||
+      Number.isNaN(periodEnd.getTime())
+    ) {
       throw new BadRequestException('Invalid billing period date');
     }
 
@@ -81,7 +109,9 @@ export class BillsService {
     periodEnd.setHours(23, 59, 59, 999);
 
     if (periodStart > periodEnd) {
-      throw new BadRequestException('From date must be before or equal to upto date');
+      throw new BadRequestException(
+        'From date must be before or equal to upto date',
+      );
     }
 
     return {
@@ -93,10 +123,10 @@ export class BillsService {
   }
 
   private async buildBillDraft(dto: GenerateBillDto) {
-    let periodStart: Date
-    let periodEnd: Date
-    let month: number
-    let year: number
+    let periodStart: Date;
+    let periodEnd: Date;
+    let month: number;
+    let year: number;
     const noteText = dto.note?.trim();
 
     // If no fromDate/date provided, attempt to use the last bill's generatedDate + 1 day
@@ -120,7 +150,9 @@ export class BillsService {
       periodEnd.setHours(23, 59, 59, 999);
 
       if (periodStart > periodEnd) {
-        throw new BadRequestException('From date must be before or equal to upto date');
+        throw new BadRequestException(
+          'From date must be before or equal to upto date',
+        );
       }
 
       month = periodEnd.getMonth() + 1;
@@ -133,16 +165,26 @@ export class BillsService {
       year = resolved.year;
     }
 
-    const existingBill = await this.getExistingBillForPeriod(dto.houseId, periodStart, periodEnd);
+    const existingBill = await this.getExistingBillForPeriod(
+      dto.houseId,
+      periodStart,
+      periodEnd,
+    );
     if (existingBill) {
       throw new ConflictException(
         'This duration bill is already created. Please create the next duration bill separately.',
       );
     }
 
-    const closureState = await this.getPeriodClosureState(dto.houseId, periodStart, periodEnd);
+    const closureState = await this.getPeriodClosureState(
+      dto.houseId,
+      periodStart,
+      periodEnd,
+    );
     if (closureState.isAlreadyClosed) {
-      throw new ConflictException(closureState.alreadyClosedMessage ?? 'This period is already closed.');
+      throw new ConflictException(
+        closureState.alreadyClosedMessage ?? 'This period is already closed.',
+      );
     }
 
     const balance = await this.prisma.houseBalance.findUnique({
@@ -181,7 +223,10 @@ export class BillsService {
       throw new BadRequestException('Cannot generate bill with zero amount');
     }
 
-    const itemSummary = new Map<string, { name: string; qty: number; rate: number; amount: number }>();
+    const itemSummary = new Map<
+      string,
+      { name: string; qty: number; rate: number; amount: number }
+    >();
     for (const log of deliveryLogs) {
       const logItems = Array.isArray(log.items) ? (log.items as any[]) : [];
       for (const rawItem of logItems) {
@@ -341,7 +386,9 @@ export class BillsService {
     });
 
     // Calculate pending amounts for each bill using FIFO
-    const paymentQueue = payments.map((p) => ({ amount: Number(p.amount) + Number((p as any).discount ?? 0) }));
+    const paymentQueue = payments.map((p) => ({
+      amount: Number(p.amount) + Number((p as any).discount ?? 0),
+    }));
     const billsWithPending = bills.map((bill) => {
       const billAmount = Number(bill.totalAmount ?? 0);
       return {
@@ -381,8 +428,13 @@ export class BillsService {
       orderBy: { id: 'asc' },
     });
 
-    const generated: Array<{ houseId: number; houseNo: string; billId: number }> = [];
-    const skipped: Array<{ houseId: number; houseNo: string; reason: string }> = [];
+    const generated: Array<{
+      houseId: number;
+      houseNo: string;
+      billId: number;
+    }> = [];
+    const skipped: Array<{ houseId: number; houseNo: string; reason: string }> =
+      [];
 
     for (const house of houses) {
       try {
@@ -393,11 +445,21 @@ export class BillsService {
           toDate: dto.toDate,
           note: dto.note,
         });
-        generated.push({ houseId: house.id, houseNo: house.houseNo, billId: bill.id });
+        generated.push({
+          houseId: house.id,
+          houseNo: house.houseNo,
+          billId: bill.id,
+        });
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : 'Unknown error while generating bill';
-        skipped.push({ houseId: house.id, houseNo: house.houseNo, reason: message });
+          error instanceof Error
+            ? error.message
+            : 'Unknown error while generating bill';
+        skipped.push({
+          houseId: house.id,
+          houseNo: house.houseNo,
+          reason: message,
+        });
       }
     }
 
@@ -413,11 +475,22 @@ export class BillsService {
     };
   }
 
-  async preview(houseId: number, period: { date?: string; fromDate?: string; toDate?: string }) {
+  async preview(
+    houseId: number,
+    period: { date?: string; fromDate?: string; toDate?: string },
+  ) {
     const { periodStart, periodEnd } = this.resolvePeriod(period);
 
-    const existingBill = await this.getExistingBillForPeriod(houseId, periodStart, periodEnd);
-    const closureState = await this.getPeriodClosureState(houseId, periodStart, periodEnd);
+    const existingBill = await this.getExistingBillForPeriod(
+      houseId,
+      periodStart,
+      periodEnd,
+    );
+    const closureState = await this.getPeriodClosureState(
+      houseId,
+      periodStart,
+      periodEnd,
+    );
 
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId },
@@ -526,7 +599,9 @@ export class BillsService {
 
   // Recompute bill closures for a house by allocating payments to oldest outstanding bills
   async recomputeClosuresForHouse(houseId: number) {
-    const balance = await this.prisma.houseBalance.findUnique({ where: { houseId } });
+    const balance = await this.prisma.houseBalance.findUnique({
+      where: { houseId },
+    });
     if (!balance) return;
 
     const payments = await this.prisma.paymentHistory.findMany({
@@ -537,11 +612,18 @@ export class BillsService {
     const bills = await this.prisma.bill.findMany({
       where: { houseId },
       orderBy: { generatedDate: 'asc' },
-      select: { id: true, totalAmount: true, generatedDate: true, isClosed: true },
+      select: {
+        id: true,
+        totalAmount: true,
+        generatedDate: true,
+        isClosed: true,
+      },
     });
 
     // Build payment queue (include any discount recorded with the payment)
-    const paymentQueue = payments.map((p) => ({ amount: Number(p.amount) + Number((p as any).discount ?? 0) }));
+    const paymentQueue = payments.map((p) => ({
+      amount: Number(p.amount) + Number((p as any).discount ?? 0),
+    }));
 
     for (const bill of bills) {
       let remaining = Number(bill.totalAmount ?? 0);
@@ -565,7 +647,10 @@ export class BillsService {
       const shouldBeClosed = outstandingAmount <= 0;
 
       // Only write to DB if something changed
-      if (bill.isClosed !== shouldBeClosed || outstandingAmount !== Number((bill as any).outstandingAmount ?? -1)) {
+      if (
+        bill.isClosed !== shouldBeClosed ||
+        outstandingAmount !== Number((bill as any).outstandingAmount ?? -1)
+      ) {
         await this.prisma.bill.update({
           where: { id: bill.id },
           data: { isClosed: shouldBeClosed, outstandingAmount },

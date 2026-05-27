@@ -27,7 +27,7 @@ export class AuthController {
 
   /**
    * POST /auth/login
-    * Body: { username, password }
+   * Body: { username, password }
    * LocalStrategy validates credentials and attaches user to request
    */
   @UseGuards(LocalAuthGuard)

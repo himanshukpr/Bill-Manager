@@ -23,18 +23,12 @@ export class UsersController {
   }
 
   @Patch(':uuid/verify')
-  verify(
-    @Param('uuid') uuid: string,
-    @Body('isVerified') isVerified: boolean,
-  ) {
+  verify(@Param('uuid') uuid: string, @Body('isVerified') isVerified: boolean) {
     return this.usersService.verify(uuid, isVerified);
   }
 
   @Patch(':uuid/role')
-  changeRole(
-    @Param('uuid') uuid: string,
-    @Body('role') role: Role,
-  ) {
+  changeRole(@Param('uuid') uuid: string, @Body('role') role: Role) {
     return this.usersService.changeRole(uuid, role);
   }
 
