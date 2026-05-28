@@ -33,10 +33,10 @@ const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i)
 const PDF_PAGE_MARGIN = 10
 const PDF_COLUMNS = 2
-const PDF_ROWS = 3
+const PDF_ROWS = 4
 const PDF_CARD_GAP_X = 4
 const PDF_CARD_GAP_Y = 4
-const PDF_TABLE_ROWS = 10
+const PDF_TABLE_ROWS = 3
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
@@ -100,12 +100,62 @@ function formatBillDate(value?: string): string {
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-function normalizeBillItems(items: BillItem[]): BillItem[] {
-  const next = items.slice(0, PDF_TABLE_ROWS)
-  while (next.length < PDF_TABLE_ROWS) {
-    next.push({ name: '', qty: 0, rate: 0, amount: 0 })
+function buildPrintableBillItems(items: BillItem[]): BillItem[] {
+  const printableItems = [
+    { name: 'Buffalo Milk', qty: 0, rate: 0, amount: 0 },
+    { name: 'Cow Milk', qty: 0, rate: 0, amount: 0 },
+    { name: 'Other', qty: 0, rate: 0, amount: 0 },
+  ]
+
+  for (const item of items) {
+    const name = String(item.name ?? '').trim().toLowerCase()
+    const qty = Number(item.qty ?? 0)
+    const rate = Number(item.rate ?? 0)
+    const amount = Number(item.amount ?? qty * rate)
+
+    if (qty <= 0 && amount <= 0) continue
+
+    const targetIndex = name.includes('buffalo') ? 0 : name.includes('cow') ? 1 : 2
+    const target = printableItems[targetIndex]
+    target.qty += qty > 0 ? qty : 0
+    target.amount += amount > 0 ? amount : 0
+
+    if (targetIndex !== 2 && rate > 0) {
+      if (target.rate <= 0) {
+        target.rate = rate
+      } else if (target.rate !== rate) {
+        target.rate = Number((target.amount / target.qty).toFixed(2))
+      }
+    }
   }
-  return next
+
+  return printableItems
+}
+
+function buildPrintableBillItemsFromLogs(logs: DeliveryLog[]): BillItem[] {
+  return buildPrintableBillItems(buildItemsFromDeliveryLogs(logs))
+}
+
+function getPrintableBillItems(
+  bill: Bill & { house: NonNullable<Bill['house']> },
+  logs: DeliveryLog[] = [],
+): BillItem[] {
+  if (logs.length > 0) {
+    const printableFromLogs = buildPrintableBillItemsFromLogs(logs)
+    if (printableFromLogs.some((item) => Number(item.amount ?? 0) > 0)) {
+      return printableFromLogs
+    }
+  }
+
+  return buildPrintableBillItems(bill.items ?? [])
+}
+
+function hasPrintableBillContent(
+  bill: Bill & { house: NonNullable<Bill['house']> },
+  logs: DeliveryLog[] = [],
+): boolean {
+  const printableItems = getPrintableBillItems(bill, logs)
+  return printableItems.some((item) => Number(item.amount ?? 0) > 0)
 }
 
 function buildItemsFromDeliveryLogs(logs: DeliveryLog[]): BillItem[] {
@@ -114,7 +164,7 @@ function buildItemsFromDeliveryLogs(logs: DeliveryLog[]): BillItem[] {
   for (const log of logs) {
     const logItems = Array.isArray(log.items) ? log.items : []
     for (const rawItem of logItems) {
-      const milkType = String(rawItem?.milkType ?? 'milk').trim()
+      const milkType = String(rawItem?.milkType ?? rawItem?.name ?? 'milk').trim()
       const normalizedType = milkType.toLowerCase()
       const qty = Number(rawItem?.qty ?? 0)
       const rate = Number(rawItem?.rate ?? 0)
@@ -335,30 +385,18 @@ export default function BillsPage() {
           const house = bill.house ?? housesById.get(bill.houseId)
           if (!house) continue
 
-          const { currentBalance, previousBalance } = getHouseBalanceSummary(house)
-          const billPreviousBalance = Number(bill.previousBalance ?? 0)
-          const billOutstanding = Number(bill.outstandingAmount ?? 0)
-          const shouldPrint = currentBalance !== 0 || previousBalance !== 0 || billPreviousBalance !== 0 || billOutstanding !== 0
-          if (!shouldPrint) continue
+          const houseLogs = logsByHouseId.get(bill.houseId) ?? []
+          if (!hasPrintableBillContent({ ...bill, house }, houseLogs)) continue
+
+          const printableItems = getPrintableBillItems({ ...bill, house }, houseLogs)
 
           const existing = billsByHouseId.get(bill.houseId)
           const nextBillDate = new Date(bill.generatedDate).getTime()
           const existingBillDate = existing ? new Date(existing.generatedDate).getTime() : Number.NEGATIVE_INFINITY
 
           if (!existing || nextBillDate >= existingBillDate) {
-            billsByHouseId.set(bill.houseId, { ...bill, house })
+            billsByHouseId.set(bill.houseId, { ...bill, house, items: printableItems })
           }
-        }
-
-        for (const house of houses) {
-          const { currentBalance, previousBalance } = getHouseBalanceSummary(house)
-          const billExists = billsByHouseId.has(house.id)
-          const hasBalance = currentBalance !== 0 || previousBalance !== 0
-          if (!hasBalance) continue
-          if (billExists) continue
-
-          const synthetic = createSyntheticBillFromLogs(house, selectedMonth, selectedYear, logsByHouseId.get(house.id) ?? [])
-          billsByHouseId.set(house.id, synthetic)
         }
 
         const next = Array.from(billsByHouseId.values()).sort((left, right) =>
@@ -404,7 +442,7 @@ export default function BillsPage() {
       const usableWidth = pageWidth - (PDF_PAGE_MARGIN * 2)
       const usableHeight = pageHeight - (PDF_PAGE_MARGIN * 2)
       const cardWidth = (usableWidth - PDF_CARD_GAP_X) / 2
-      const cardHeight = (usableHeight - (PDF_CARD_GAP_Y * 2)) / 3
+      const cardHeight = (usableHeight - (PDF_CARD_GAP_Y * (PDF_ROWS - 1))) / PDF_ROWS
       const innerWidth = cardWidth - 2
       const leftColWidth = 10
       const particularsWidth = 34
@@ -419,9 +457,6 @@ export default function BillsPage() {
       const tableTop = 23.5
       const tableHeaderHeight = 6.6
       const rowHeight = 4.65
-      const firstDataRowY = tableTop + tableHeaderHeight
-      const footerStartY = firstDataRowY + (PDF_TABLE_ROWS * rowHeight) + 0.6
-
       const textColor: [number, number, number] = [20, 20, 20]
       const borderColor: [number, number, number] = [0, 0, 0]
       const mutedColor: [number, number, number] = [35, 35, 35]
@@ -495,6 +530,9 @@ export default function BillsPage() {
         doc.setFontSize(6.5)
         doc.text(`To: ${bill.house?.houseNo ?? ''}`, rowX, innerY + toY)
 
+        const firstDataRowY = innerY + tableTop + tableHeaderHeight
+        const footerStartY = firstDataRowY + (PDF_TABLE_ROWS * rowHeight) + 0.6
+
         const tableX = rowX
         const headerY = innerY + tableTop
         const colWidths = [leftColWidth, particularsWidth, qtyWidth, rateWidth, amtWidth]
@@ -508,14 +546,14 @@ export default function BillsPage() {
           drawCell(colXs[index], headerY, colWidths[index], tableHeaderHeight, label, 'center', { bold: true, size: 5.8, fill: true })
         })
 
-        const items = normalizeBillItems(bill.items ?? [])
+        const items = buildPrintableBillItems(bill.items ?? [])
         items.forEach((item, index) => {
           const rowY = firstDataRowY + (index * rowHeight)
           const values = [
             String(index + 1),
             item.name ? item.name.toUpperCase() : '',
-            formatQtyLabel(Number(item.qty ?? 0)),
-            Number(item.rate ?? 0) ? formatPlainAmount(Number(item.rate ?? 0)) : '',
+            index === 2 ? '' : formatQtyLabel(Number(item.qty ?? 0)),
+            index === 2 ? '' : (Number(item.rate ?? 0) ? formatPlainAmount(Number(item.rate ?? 0)) : ''),
             Number(item.amount ?? 0) ? formatPlainAmount(Number(item.amount ?? 0)) : '',
           ]
           values.forEach((value, columnIndex) => {
