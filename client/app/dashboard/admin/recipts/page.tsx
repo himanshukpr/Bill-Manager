@@ -288,16 +288,29 @@ export default function ReceiptsPage() {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
   })
+  const [summaryFromDate, setSummaryFromDate] = useState<string>('')
+  const [summaryToDate, setSummaryToDate] = useState<string>('')
+
+  const filteredSummaryLogs = useMemo(() => {
+    if (!summaryFromDate || !summaryToDate) return summaryLogs
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d >= from && d <= to
+    })
+  }, [summaryLogs, summaryFromDate, summaryToDate])
 
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
-    return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+    return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
-    return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+    return buildMonthlyProductSummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, item) => sum + Number(item?.amount ?? 0), 0)
@@ -341,9 +354,22 @@ export default function ReceiptsPage() {
     })
   }, [summaryBalance, summaryHouse])
 
+  const hasDateRangeFilter = summaryFromDate !== '' && summaryToDate !== ''
+
+  const displaySummaryRows = useMemo(() => {
+    if (!hasDateRangeFilter) return summaryRows
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryRows.filter(row => {
+      const d = new Date(row.dateKey)
+      return d >= from && d <= to
+    })
+  }, [summaryRows, summaryFromDate, summaryToDate, hasDateRangeFilter])
+
   const summaryTotals = useMemo(() => {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
-    const monthLogs = summaryLogs.filter(log => {
+    const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
@@ -365,7 +391,7 @@ export default function ReceiptsPage() {
       productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal,
     }
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   // Auto-tick bills based on amount and mode
   useEffect(() => {
@@ -790,7 +816,11 @@ export default function ReceiptsPage() {
     doc.text(title, 14, 16)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
-    doc.text(`Period: ${periodLabel}`, 14, 23)
+    if (hasDateRangeFilter) {
+      doc.text(`Date Range: ${summaryFromDate} to ${summaryToDate}`, 14, 23)
+    } else {
+      doc.text(`Period: ${periodLabel}`, 14, 23)
+    }
     if (summaryHouse.area) doc.text(`Area: ${summaryHouse.area}`, 14, 29)
 
     let currentY = 38
@@ -937,12 +967,14 @@ export default function ReceiptsPage() {
 
       const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
       const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
-      drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
-      monthLabels.forEach((_, index) => {
-        const x = left + productColWidth + (index * monthColWidth)
-        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
-      })
-      currentY += rowHeight
+      if (!hasDateRangeFilter) {
+        drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
+        monthLabels.forEach((_, index) => {
+          const x = left + productColWidth + (index * monthColWidth)
+          drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
+        })
+        currentY += rowHeight
+      }
     }
 
     let deliveriesTitleY = currentY + 8
@@ -959,7 +991,7 @@ export default function ReceiptsPage() {
     autoTable(doc, {
       startY: deliveriesTitleY + 6,
       head: [['Date', 'Products']],
-      body: summaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
+      body: displaySummaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
       styles: {
         font: 'helvetica',
         fontSize: 9,
@@ -981,7 +1013,7 @@ export default function ReceiptsPage() {
     })
 
     doc.save(`House_${summaryHouse.houseNo}_Summary_${periodLabel.replace(' ', '_')}.pdf`)
-  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod, monthlyProductSummary, summaryTotals, paymentSummaryRows])
+  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
   async function handleRecord() {
     if (!formHouseId || !formAmount) { toast.error('House and Amount are required'); return }
@@ -1582,6 +1614,21 @@ export default function ReceiptsPage() {
 
               <div className="space-y-6 py-2">
                 <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex-1">
+                      <Label className="text-xs">From Date</Label>
+                      <Input type="date" value={summaryFromDate} onChange={e => setSummaryFromDate(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="flex-1">
+                      <Label className="text-xs">Upto Date</Label>
+                      <Input type="date" value={summaryToDate} onChange={e => setSummaryToDate(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    {hasDateRangeFilter && (
+                      <Button variant="ghost" size="sm" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }} className="h-8 self-end">
+                        Clear
+                      </Button>
+                    )}
+                  </div>
                   <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
                   <div className="rounded-xl border border-border bg-muted/30 p-4">
                     {summaryLoading ? (
@@ -1690,6 +1737,7 @@ export default function ReceiptsPage() {
                                     )
                                   })}
                                 </tr>
+                                {!hasDateRangeFilter && (
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3">Pending Amount</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
@@ -1702,6 +1750,7 @@ export default function ReceiptsPage() {
                                     )
                                   })}
                                 </tr>
+                                )}
                               </>
                             )}
                           </tbody>
@@ -1737,7 +1786,7 @@ export default function ReceiptsPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {summaryRows.map((row, idx) => {
+                            {displaySummaryRows.map((row, idx) => {
                               const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
                               const isPaid = Boolean(row.log?.billGenerated)
                               return (

@@ -427,6 +427,8 @@ export default function HousesPage() {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
   })
+  const [summaryFromDate, setSummaryFromDate] = useState<string>('')
+  const [summaryToDate, setSummaryToDate] = useState<string>('')
   const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
   const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
   const [editingDeliveryShifts, setEditingDeliveryShifts] = useState<string[]>([])
@@ -437,15 +439,26 @@ export default function HousesPage() {
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const loading = !hydrated && (!cachedHouses || !cachedSuppliers)
 
+  const filteredSummaryLogs = useMemo(() => {
+    if (!summaryFromDate || !summaryToDate) return summaryLogs
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d >= from && d <= to
+    })
+  }, [summaryLogs, summaryFromDate, summaryToDate])
+
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
-    return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+    return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
-    return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+    return buildMonthlyProductSummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
     if (!summaryHouse) return []
@@ -483,9 +496,22 @@ export default function HousesPage() {
     })
   }, [summaryBalance, summaryHouse])
 
+  const hasDateRangeFilter = summaryFromDate !== '' && summaryToDate !== ''
+
+  const displaySummaryRows = useMemo(() => {
+    if (!hasDateRangeFilter) return summaryRows
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryRows.filter(row => {
+      const d = new Date(row.dateKey)
+      return d >= from && d <= to
+    })
+  }, [summaryRows, summaryFromDate, summaryToDate, hasDateRangeFilter])
+
   const summaryTotals = useMemo(() => {
     if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
-    const monthLogs = summaryLogs.filter(log => {
+    const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
@@ -507,7 +533,7 @@ export default function HousesPage() {
       productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal,
     }
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
@@ -530,7 +556,11 @@ export default function HousesPage() {
     doc.text(title, 14, 16)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
-    doc.text(`Period: ${periodLabel}`, 14, 23)
+    if (hasDateRangeFilter) {
+      doc.text(`Date Range: ${summaryFromDate} to ${summaryToDate}`, 14, 23)
+    } else {
+      doc.text(`Period: ${periodLabel}`, 14, 23)
+    }
     if (summaryHouse.area) {
       doc.text(`Area: ${summaryHouse.area}`, 14, 29)
     }
@@ -682,12 +712,14 @@ export default function HousesPage() {
       // Pending Amount row
       const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
       const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
-      drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
-      monthLabels.forEach((_, index) => {
-        const x = left + productColWidth + (index * monthColWidth)
-        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
-      })
-      currentY += rowHeight
+      if (!hasDateRangeFilter) {
+        drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
+        monthLabels.forEach((_, index) => {
+          const x = left + productColWidth + (index * monthColWidth)
+          drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
+        })
+        currentY += rowHeight
+      }
     }
 
     let deliveriesTitleY = currentY + 8
@@ -704,7 +736,7 @@ export default function HousesPage() {
     autoTable(doc, {
       startY: deliveriesTitleY + 6,
       head: [['Date', 'Products']],
-      body: summaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
+      body: displaySummaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
       styles: {
         font: 'helvetica',
         fontSize: 9,
@@ -726,7 +758,7 @@ export default function HousesPage() {
     })
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
-  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows])
+  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {
@@ -1895,6 +1927,21 @@ export default function HousesPage() {
 
               <div className="space-y-6 py-2">
                 <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex-1">
+                      <Label className="text-xs">From Date</Label>
+                      <Input type="date" value={summaryFromDate} onChange={e => setSummaryFromDate(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="flex-1">
+                      <Label className="text-xs">Upto Date</Label>
+                      <Input type="date" value={summaryToDate} onChange={e => setSummaryToDate(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    {hasDateRangeFilter && (
+                      <Button variant="ghost" size="sm" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }} className="h-8 self-end">
+                        Clear
+                      </Button>
+                    )}
+                  </div>
                   <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
                   <div className="rounded-xl border border-border bg-muted/30 p-4">
                     {summaryLoading ? (
@@ -2009,6 +2056,7 @@ export default function HousesPage() {
                                     )
                                   })}
                                 </tr>
+                                {!hasDateRangeFilter && (
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3">Pending Amount</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
@@ -2021,6 +2069,7 @@ export default function HousesPage() {
                                     )
                                   })}
                                 </tr>
+                                )}
                               </>
                             )}
                           </tbody>
@@ -2056,7 +2105,7 @@ export default function HousesPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {summaryRows.map((row) => {
+                          {displaySummaryRows.map((row) => {
                             const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
                             const isPaid = Boolean(row.log?.billGenerated)
                             return (

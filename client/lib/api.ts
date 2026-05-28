@@ -1582,13 +1582,15 @@ export const productRatesApi = {
 // ─── Delivery Logs ───────────────────────────────────────────────────────────
 
 export const deliveryLogsApi = {
-  list: (params?: { houseId?: number; shift?: 'morning' | 'evening' }) => {
+  list: (params?: { houseId?: number; shift?: 'morning' | 'evening'; fromDate?: string; toDate?: string }) => {
     if (params?.houseId && params.houseId < 0) {
       return Promise.resolve([] as DeliveryLog[]);
     }
     const q = new URLSearchParams();
     if (params?.houseId) q.set('houseId', String(params.houseId));
     if (params?.shift) q.set('shift', params.shift);
+    if (params?.fromDate) q.set('fromDate', params.fromDate);
+    if (params?.toDate) q.set('toDate', params.toDate);
     return apiGet<DeliveryLog[]>(`/delivery-logs${q.toString() ? `?${q}` : ''}`, {
       onData: async (data) => {
         if (isBrowser()) await db.deliveryLogs.bulkPut(data);

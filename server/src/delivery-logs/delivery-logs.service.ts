@@ -103,17 +103,24 @@ export class DeliveryLogsService {
   }
 
   async findAll(
-    filters?: { houseId?: number; shift?: Shift },
+    filters?: { houseId?: number; shift?: Shift; fromDate?: string; toDate?: string },
     user?: UserInfo,
   ) {
     const where: {
       houseId?: number;
       shift?: Shift;
       supplierId?: string;
+      deliveredAt?: { gte?: Date; lte?: Date };
     } = {};
 
     if (filters?.houseId) where.houseId = filters.houseId;
     if (filters?.shift) where.shift = filters.shift;
+    if (filters?.fromDate || filters?.toDate) {
+      where.deliveredAt = {
+        ...(filters.fromDate ? { gte: new Date(filters.fromDate) } : {}),
+        ...(filters.toDate ? { lte: new Date(filters.toDate) } : {}),
+      };
+    }
 
     // Suppliers should only be restricted to their own logs when
     // explicitly querying for morning/evening deliveries. For
