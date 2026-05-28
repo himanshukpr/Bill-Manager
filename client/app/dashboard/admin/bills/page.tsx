@@ -206,6 +206,8 @@ function createSyntheticBillFromLogs(house: House, month: number, year: number, 
   const totalAmount = logs.reduce((sum, log) => sum + Number(log.totalAmount ?? 0), 0)
   const previousBalance = Number(house.balance?.previousBalance ?? 0)
   const monthRange = getMonthRange(month, year)
+  const supplierName = house.configs?.[0]?.supplier?.username
+  const shiftLabel = house.configs?.[0]?.shift === 'morning' ? (supplierName ?? 'MORNING') : house.configs?.[0]?.shift === 'evening' ? 'EVENING' : house.configs?.[0]?.shift === 'shop' ? 'SHOP' : ''
   return {
     id: -house.id,
     houseId: house.id,
@@ -220,6 +222,7 @@ function createSyntheticBillFromLogs(house: House, month: number, year: number, 
     isClosed: false,
     outstandingAmount: String(totalAmount),
     note: undefined,
+    _shiftLabel: shiftLabel || undefined,
     house: {
       id: house.id,
       houseNo: house.houseNo,
@@ -395,7 +398,10 @@ export default function BillsPage() {
           const existingBillDate = existing ? new Date(existing.generatedDate).getTime() : Number.NEGATIVE_INFINITY
 
           if (!existing || nextBillDate >= existingBillDate) {
-            billsByHouseId.set(bill.houseId, { ...bill, house, items: printableItems })
+            const houseConfig = housesById.get(bill.houseId)?.configs?.[0]
+            const supplierName = houseConfig?.supplier?.username
+            const shiftLabel = houseConfig?.shift === 'morning' ? (supplierName ?? 'MORNING') : houseConfig?.shift === 'evening' ? 'EVENING' : houseConfig?.shift === 'shop' ? 'SHOP' : ''
+            billsByHouseId.set(bill.houseId, { ...bill, house, items: printableItems, _shiftLabel: shiftLabel as string | undefined })
           }
         }
 
@@ -586,7 +592,7 @@ export default function BillsPage() {
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(4.8)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text('DIRECT', innerX + 1.2, y + cardHeight - 1.8)
+        doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardHeight - 1.8)
       }
 
       const billsPerPage = PDF_COLUMNS * PDF_ROWS
