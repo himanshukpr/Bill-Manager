@@ -216,10 +216,7 @@ function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: nu
   const productMap = new Map<string, number>()
 
   // Group quantities by product for the selected month only.
-  // Exclude logs that are already part of a paid bill.
   for (const log of logs) {
-    if (log.billGenerated) continue
-
     const deliveredAt = new Date(log.deliveredAt)
     const logYear = deliveredAt.getFullYear()
     const logMonth = deliveredAt.getMonth()
@@ -490,7 +487,7 @@ export default function HousesPage() {
     if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
     const monthLogs = summaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
     const productMap = new Map<string, { qty: number; amount: number }>()
     let grandTotal = 0

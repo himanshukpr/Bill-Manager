@@ -195,8 +195,6 @@ function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: nu
   const productMap = new Map<string, number>()
 
   for (const log of logs) {
-    if (log.billGenerated) continue
-
     const deliveredAt = new Date(log.deliveredAt)
     const logYear = deliveredAt.getFullYear()
     const logMonth = deliveredAt.getMonth()
@@ -347,7 +345,7 @@ export default function ReceiptsPage() {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
     const monthLogs = summaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
     const productMap = new Map<string, { qty: number; amount: number }>()
     let grandTotal = 0
