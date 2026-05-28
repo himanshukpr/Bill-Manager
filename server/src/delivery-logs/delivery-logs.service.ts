@@ -21,7 +21,7 @@ type UserInfo = {
 
 @Injectable()
 export class DeliveryLogsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async create(dto: CreateDeliveryLogDto, user: UserInfo) {
     const house = await this.prisma.house.findUnique({

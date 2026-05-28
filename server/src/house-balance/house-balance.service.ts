@@ -10,7 +10,7 @@ export class HouseBalanceService {
   constructor(
     private prisma: PrismaService,
     private billsService: BillsService,
-  ) {}
+  ) { }
 
   async getBalance(houseId: number) {
     const balance = await this.prisma.houseBalance.findUnique({
@@ -125,7 +125,7 @@ export class HouseBalanceService {
     });
   }
 
-  // Close a date range by marking delivery logs in the range as billed/closed
+  // Close a date range by generating a bill + recording payment
   async closePeriod(dto: ClosePeriodDto) {
     const { houseId, fromDate, toDate, note } = dto;
 
@@ -133,6 +133,9 @@ export class HouseBalanceService {
     const periodEnd = new Date(toDate);
     periodStart.setHours(0, 0, 0, 0);
     periodEnd.setHours(23, 59, 59, 999);
+
+    const month = periodEnd.getMonth() + 1;
+    const year = periodEnd.getFullYear();
 
     const closureState = await this.billsService.getPeriodClosureState(
       houseId,
@@ -147,9 +150,9 @@ export class HouseBalanceService {
 
     const logs = await this.prisma.deliveryLog.findMany({
       where: {
-        houseId: dto.houseId,
+        houseId,
         deliveredAt: { gte: periodStart, lte: periodEnd },
-        billGenerated: false,
+        isClosed: false,
       },
     });
 
@@ -159,21 +162,90 @@ export class HouseBalanceService {
       );
     }
 
-    const computedAmount = logs.reduce(
+    const billTotal = logs.reduce(
       (s, l) => s + Number(l.totalAmount ?? 0),
       0,
     );
     const amountToApply =
-      typeof dto.amount === 'number' ? dto.amount : computedAmount;
-
+      typeof dto.amount === 'number' ? dto.amount : billTotal;
     const logIds = logs.map((l) => l.id);
 
-    const [payment, updatedBalance] = await this.prisma.$transaction([
+    // Aggregate items from delivery logs (same logic as buildBillDraft)
+    const itemSummary = new Map<
+      string,
+      { name: string; qty: number; rate: number; amount: number }
+    >();
+    for (const log of logs) {
+      const logItems = Array.isArray(log.items)
+        ? (log.items as {
+            milkType?: string;
+            name?: string;
+            qty?: number;
+            rate?: number;
+            amount?: number;
+          }[])
+        : [];
+      for (const rawItem of logItems) {
+        const milkType = String(rawItem?.milkType ?? rawItem?.name ?? 'milk');
+        const normalizedType = milkType.toLowerCase();
+        const qty = Number(rawItem?.qty ?? 0);
+        const rate = Number(rawItem?.rate ?? 0);
+        const amount = Number(rawItem?.amount ?? qty * rate);
+        if (qty <= 0 || rate <= 0 || amount <= 0) continue;
+
+        const key = `${normalizedType}:${rate}`;
+        const existingItem = itemSummary.get(key);
+        if (!existingItem) {
+          itemSummary.set(key, {
+            name: milkType,
+            qty,
+            rate,
+            amount,
+          });
+        } else {
+          existingItem.qty += qty;
+          existingItem.amount += amount;
+        }
+      }
+    }
+    const billItems = Array.from(itemSummary.values());
+    if (billItems.length === 0) {
+      billItems.push({
+        name: 'Delivery Total',
+        qty: 1,
+        rate: billTotal,
+        amount: billTotal,
+      });
+    }
+
+    const balance = await this.prisma.houseBalance.findUnique({
+      where: { houseId },
+    });
+    if (!balance)
+      throw new NotFoundException(`House #${houseId} balance not found`);
+
+    const unpaid = Math.max(0, billTotal - amountToApply);
+    const [bill, payment, updatedBalance] = await this.prisma.$transaction([
+      this.prisma.bill.create({
+        data: {
+          houseId,
+          month,
+          year,
+          fromDate: periodStart,
+          toDate: periodEnd,
+          totalAmount: billTotal,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          items: billItems as any,
+          previousBalance: Number(balance.previousBalance),
+          generatedDate: periodEnd,
+          note: note || undefined,
+          outstandingAmount: billTotal,
+        },
+        include: { house: { select: { id: true, houseNo: true, area: true } } },
+      }),
       this.prisma.paymentHistory.create({
         data: {
-          balanceRef: (await this.prisma.houseBalance.findUnique({
-            where: { houseId },
-          }))!.id,
+          balanceRef: balance.id,
           amount: amountToApply,
           note: note ?? `Closed period ${fromDate} - ${toDate}`,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -183,12 +255,13 @@ export class HouseBalanceService {
       this.prisma.houseBalance.update({
         where: { houseId },
         data: {
-          previousBalance: { decrement: amountToApply },
+          previousBalance: { increment: billTotal - amountToApply },
+          currentBalance: { decrement: unpaid },
         },
       }),
       this.prisma.deliveryLog.updateMany({
         where: { id: { in: logIds } },
-        data: { billGenerated: true },
+        data: { billGenerated: true, isClosed: true },
       }),
     ]);
 
@@ -198,6 +271,6 @@ export class HouseBalanceService {
       // ignore
     }
 
-    return { payment, balance: updatedBalance, closedLogIds: logIds };
+    return { bill, payment, balance: updatedBalance, closedLogIds: logIds };
   }
 }

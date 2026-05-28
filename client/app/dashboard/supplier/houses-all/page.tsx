@@ -961,11 +961,11 @@ export default function HousesPage() {
         shift: shift as 'morning' | 'evening' | 'shop',
         items: [],
         billGenerated: false,
+        isClosed: false,
         totalAmount: '0',
         openingBalance: '0',
         closingBalance: '0',
         note: '',
-        supplier: { uuid: primaryConfig?.supplierId || '', username: primaryConfig?.supplier?.username || '' },
       }
       setEditingDeliveryLog(newLog)
       setEditDeliveryForm({ items: [], note: '' })
@@ -1847,20 +1847,45 @@ export default function HousesPage() {
                               )
                             })}
                             {monthlyProductSummary.length > 0 && (
-                              <tr className="border-t-2 border-border bg-muted/50 font-semibold">
-                                <td className="px-4 py-3 text-foreground">Total</td>
-                                {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                  const totalQty = monthlyProductSummary.reduce((sum, p) => {
-                                    const md = p.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
-                                    return sum + (md ? md.quantity : 0)
-                                  }, 0)
-                                  return (
-                                    <td key={monthKey} className="px-3 py-3 text-right text-foreground">
-                                      ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                    </td>
-                                  )
-                                })}
-                              </tr>
+                              <>
+                                <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                  <td className="px-4 py-3 text-foreground">Total</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const totalQty = monthlyProductSummary.reduce((sum, p) => {
+                                      const md = p.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
+                                      return sum + (md ? md.quantity : 0)
+                                    }, 0)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground">
+                                        ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                                <tr className="border-t border-border bg-muted/50 font-semibold">
+                                  <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const prevBal = Number(summaryHouse?.balance?.previousBalance ?? 0)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                        ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                                <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                  <td className="px-4 py-3 text-foreground">Grand Total</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const prevBal = Number(summaryHouse?.balance?.previousBalance ?? 0)
+                                    const grandTotal = summaryTotals.grandTotal + prevBal
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-primary">
+                                        ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              </>
                             )}
                           </tbody>
                         </table>
@@ -1896,8 +1921,8 @@ export default function HousesPage() {
                         </TableHeader>
                         <TableBody>
                           {summaryRows.map((row) => {
-                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
-                            const isPaid = Boolean(row.log?.billGenerated)
+                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated || row.log?.isClosed)
+                            const isPaid = Boolean(row.log?.billGenerated || row.log?.isClosed)
                             return (
                               <TableRow key={row.dateKey} className={isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
                                 <TableCell className={`font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</TableCell>

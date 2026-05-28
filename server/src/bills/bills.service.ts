@@ -9,7 +9,7 @@ import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 
 @Injectable()
 export class BillsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   private async getExistingBillForPeriod(
     houseId: number,
@@ -229,12 +229,12 @@ export class BillsService {
     for (const log of deliveryLogs) {
       const logItems = Array.isArray(log.items)
         ? (log.items as {
-            milkType?: string;
-            name?: string;
-            qty?: number;
-            rate?: number;
-            amount?: number;
-          }[])
+          milkType?: string;
+          name?: string;
+          qty?: number;
+          rate?: number;
+          amount?: number;
+        }[])
         : [];
       for (const rawItem of logItems) {
         const milkType = String(rawItem?.milkType ?? rawItem?.name ?? 'milk');

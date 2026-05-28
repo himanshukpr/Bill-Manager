@@ -457,7 +457,8 @@ export default function HousesPage() {
 
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
-    return buildMonthlyProductSummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+    const pendingLogs = filteredSummaryLogs.filter(log => !log.billGenerated)
+    return buildMonthlyProductSummary(pendingLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
@@ -513,7 +514,7 @@ export default function HousesPage() {
     if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
     const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
     })
     const productMap = new Map<string, { qty: number; amount: number }>()
     let grandTotal = 0
@@ -1071,11 +1072,11 @@ export default function HousesPage() {
         shift: shift as 'morning' | 'evening' | 'shop',
         items: [],
         billGenerated: false,
+        isClosed: false,
         totalAmount: '0',
         openingBalance: '0',
         closingBalance: '0',
         note: '',
-        supplier: { uuid: primaryConfig?.supplierId || '', username: primaryConfig?.supplier?.username || '' },
       }
       setEditingDeliveryLog(newLog)
       setEditDeliveryForm({
@@ -1096,9 +1097,9 @@ export default function HousesPage() {
       const oldAmount = isNewDelivery
         ? 0
         : editingDeliveryAllLogs.reduce(
-            (sum, log) => sum + (log.items ?? []).reduce((s, item) => s + (Number(item.amount) ?? 0), 0),
-            0
-          )
+          (sum, log) => sum + (log.items ?? []).reduce((s, item) => s + (Number(item.amount) ?? 0), 0),
+          0
+        )
       const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (Number(item.amount) ?? 0), 0)
       const amountDifference = newAmount - oldAmount
 
@@ -2023,7 +2024,7 @@ export default function HousesPage() {
                             </tr>
                           </thead>
                           <tbody>
-                              {monthlyProductSummary.map((row, idx) => {
+                            {monthlyProductSummary.map((row, idx) => {
                               const uniqueMonths = Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort()
                               const productTotal = summaryTotals.productTotals.find(p => p.product === row.product)
                               return (
@@ -2056,19 +2057,43 @@ export default function HousesPage() {
                                     )
                                   })}
                                 </tr>
-                                {!hasDateRangeFilter && (
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
-                                  <td className="px-4 py-3">Pending Amount</td>
+                                  <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
-                                    const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
-                                        ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                       </td>
                                     )
                                   })}
                                 </tr>
+                                <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                  <td className="px-4 py-3 text-foreground">Grand Total</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
+                                    const grandTotal = summaryTotals.grandTotal + prevBal
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-primary">
+                                        ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                                {!hasDateRangeFilter && (
+                                  <tr className="border-t border-border bg-muted/50 font-semibold">
+                                    <td className="px-4 py-3">Pending Amount</td>
+                                    {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+                                      const prevBal = Number(summaryBalance?.previousBalance ?? 0)
+                                      const pending = Math.max(0, summaryTotals.grandTotal + prevBal - totalReceived)
+                                      return (
+                                        <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                          ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        </td>
+                                      )
+                                    })}
+                                  </tr>
                                 )}
                               </>
                             )}
@@ -2106,8 +2131,8 @@ export default function HousesPage() {
                         </TableHeader>
                         <TableBody>
                           {displaySummaryRows.map((row) => {
-                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
-                            const isPaid = Boolean(row.log?.billGenerated)
+                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated || row.log?.isClosed)
+                            const isPaid = Boolean(row.log?.billGenerated || row.log?.isClosed)
                             return (
                               <TableRow key={row.dateKey} className={isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
                                 <TableCell className={`font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</TableCell>

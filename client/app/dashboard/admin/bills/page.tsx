@@ -45,6 +45,10 @@ function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
+function formatCurrency(value: number): string {
+  return `₹${value.toLocaleString('en-IN')}`
+}
+
 function getMonthStart(value: Date = new Date()): string {
   const date = new Date(value)
   date.setDate(1)
@@ -624,28 +628,28 @@ export default function BillsPage() {
   useEffect(() => {
     if (!genHouseId) return
     let cancelled = false
-    ;(async () => {
-      try {
-        const houseId = parseInt(genHouseId)
-        const billsForHouse = await billsApi.list({ houseId })
-        if (cancelled) return
-        if (billsForHouse && billsForHouse.length > 0) {
-          const latest = billsForHouse
-            .map(b => new Date(b.generatedDate))
-            .filter(d => !Number.isNaN(d.getTime()))
-            .sort((a, b) => b.getTime() - a.getTime())[0]
-          if (latest) {
-            const next = new Date(latest)
-            next.setDate(next.getDate() + 1)
-            setGenFromDate(formatLocalDate(next))
-            return
+      ; (async () => {
+        try {
+          const houseId = parseInt(genHouseId)
+          const billsForHouse = await billsApi.list({ houseId })
+          if (cancelled) return
+          if (billsForHouse && billsForHouse.length > 0) {
+            const latest = billsForHouse
+              .map(b => new Date(b.generatedDate))
+              .filter(d => !Number.isNaN(d.getTime()))
+              .sort((a, b) => b.getTime() - a.getTime())[0]
+            if (latest) {
+              const next = new Date(latest)
+              next.setDate(next.getDate() + 1)
+              setGenFromDate(formatLocalDate(next))
+              return
+            }
           }
+          setGenFromDate(getMonthStart())
+        } catch {
+          setGenFromDate(getMonthStart())
         }
-        setGenFromDate(getMonthStart())
-      } catch {
-        setGenFromDate(getMonthStart())
-      }
-    })()
+      })()
     return () => { cancelled = true }
   }, [genHouseId])
 
@@ -708,7 +712,7 @@ export default function BillsPage() {
       if (previewData?.isDurationAlreadyCreated) {
         toast.error(
           previewData.durationAlreadyCreatedMessage ??
-            'This duration bill is already created. Please create the next duration bill separately.',
+          'This duration bill is already created. Please create the next duration bill separately.',
         )
         return
       }
@@ -884,7 +888,7 @@ export default function BillsPage() {
                       <div className="flex items-center gap-1.5">
                         <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="font-medium">
-                          {b.fromDate && b.toDate 
+                          {b.fromDate && b.toDate
                             ? `${new Date(b.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(b.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                             : `${MONTH_NAMES[b.month]} ${b.year}`
                           }
@@ -1111,7 +1115,7 @@ export default function BillsPage() {
               <DialogHeader>
                 <DialogTitle>Bill — House {viewBill.house?.houseNo}</DialogTitle>
                 <DialogDescription>
-                  {viewBill.fromDate && viewBill.toDate 
+                  {viewBill.fromDate && viewBill.toDate
                     ? `${new Date(viewBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(viewBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                     : `${MONTH_NAMES[viewBill.month]} ${viewBill.year}`
                   }
@@ -1153,6 +1157,14 @@ export default function BillsPage() {
                   <div className="flex justify-between text-base font-bold border-t border-border pt-2 mt-1">
                     <span>Grand Total</span>
                     <span className="text-primary">₹{(Number(viewBill.totalAmount) + Number(viewBill.previousBalance)).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-yellow-400">
+                    <span>Pending Amount</span>
+                    <span className="font-semibold">
+                      {formatCurrency(
+                        Number(viewBill.outstandingAmount) + Number(viewBill.previousBalance)
+                      )}
+                    </span>
                   </div>
                   {viewBill.outstandingAmount != null && (
                     <div className={`flex justify-between text-sm border-t border-border pt-2 mt-1 ${viewBill.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>

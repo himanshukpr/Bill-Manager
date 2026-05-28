@@ -309,7 +309,8 @@ export default function ReceiptsPage() {
 
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
-    return buildMonthlyProductSummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+    const pendingLogs = filteredSummaryLogs.filter(log => !log.billGenerated)
+    return buildMonthlyProductSummary(pendingLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const editDeliveryTotal = useMemo(() => {
@@ -325,10 +326,10 @@ export default function ReceiptsPage() {
 
     const baseOutstanding = Number(
       summaryBalance?.previousBalance ??
-        summaryBalance?.currentBalance ??
-        summaryHouse.balance?.previousBalance ??
-        summaryHouse.balance?.currentBalance ??
-        0,
+      summaryBalance?.currentBalance ??
+      summaryHouse.balance?.previousBalance ??
+      summaryHouse.balance?.currentBalance ??
+      0,
     )
 
     const totalApplied = payments.reduce(
@@ -371,7 +372,7 @@ export default function ReceiptsPage() {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
     const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
     })
     const productMap = new Map<string, { qty: number; amount: number }>()
     let grandTotal = 0
@@ -434,7 +435,7 @@ export default function ReceiptsPage() {
       try {
         setPeriodSummary(prev => prev ? { ...prev, loading: true } : { previousBalance: 0, currentBalance: 0, total: 0, logCount: 0, isAlreadyClosed: false, alreadyClosedMessage: null, loading: true })
         setLoadingDeliveryLogs(true)
-        
+
         // Fetch period summary
         const summary = await billsApi.preview(parseInt(formHouseId), {
           fromDate: formFromDate,
@@ -455,12 +456,12 @@ export default function ReceiptsPage() {
         const fromDateObj = new Date(formFromDate)
         const toDateObj = new Date(formToDate)
         toDateObj.setHours(23, 59, 59, 999) // Include entire end date
-        
+
         const filteredLogs = allLogs.filter(log => {
           const logDate = new Date(log.deliveredAt || log.createdAt)
           return logDate >= fromDateObj && logDate <= toDateObj
         })
-        
+
         setPeriodDeliveryLogs(filteredLogs.sort((a, b) => {
           const dateA = new Date(a.deliveredAt || a.createdAt)
           const dateB = new Date(b.deliveredAt || b.createdAt)
@@ -488,7 +489,7 @@ export default function ReceiptsPage() {
       ])
       setPayments(paymentsData)
       setHouses(housesData)
-      
+
       // Cache bills for quick lookup
       const cache = new Map<number, Bill>()
       for (const bill of billsData) {
@@ -547,7 +548,7 @@ export default function ReceiptsPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getBillPeriods = async (billIds?: any): Promise<string> => {
     if (!billIds || (Array.isArray(billIds) && billIds.length === 0)) return '—'
-    
+
     const ids = Array.isArray(billIds) ? billIds : []
     if (ids.length === 0) return '—'
 
@@ -696,6 +697,7 @@ export default function ReceiptsPage() {
         shift: defaultShift,
         items: [],
         billGenerated: false,
+        isClosed: false,
         totalAmount: '0',
         openingBalance: '0',
         closingBalance: '0',
@@ -722,9 +724,9 @@ export default function ReceiptsPage() {
       const oldAmount = isNewDelivery
         ? 0
         : editingDeliveryAllLogs.reduce(
-            (sum, log) => sum + (log.items ?? []).reduce((itemSum, item) => itemSum + (Number(item.amount) ?? 0), 0),
-            0,
-          )
+          (sum, log) => sum + (log.items ?? []).reduce((itemSum, item) => itemSum + (Number(item.amount) ?? 0), 0),
+          0,
+        )
       const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (Number(item.amount) ?? 0), 0)
       const amountDifference = newAmount - oldAmount
 
@@ -1126,7 +1128,7 @@ export default function ReceiptsPage() {
                     // Get bill periods from billIds
                     const billIds = (p.billIds as number[]) || []
                     const periodsList: string[] = []
-                    
+
                     for (const billId of billIds) {
                       if (billsCache.has(billId)) {
                         const bill = billsCache.get(billId)!
@@ -1421,87 +1423,87 @@ export default function ReceiptsPage() {
               </>
             )}
 
-                <div className="space-y-1">
-                  <div className="flex items-center gap-1.5">
-                    <Checkbox checked={formClosePeriod} onCheckedChange={(v) => setFormClosePeriod(Boolean(v))} />
-                    <Label className="text-xs sm:text-sm">Close specific period (mark deliveries as paid)</Label>
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Checkbox checked={formClosePeriod} onCheckedChange={(v) => setFormClosePeriod(Boolean(v))} />
+                <Label className="text-xs sm:text-sm">Close specific period (mark deliveries as paid)</Label>
+              </div>
+              {formClosePeriod && (
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-1 gap-1.5 sm:gap-2 sm:grid-cols-2">
+                    <div className="space-y-0.5 sm:space-y-1">
+                      <Label className="text-xs sm:text-sm">From Date</Label>
+                      <Input type="date" value={formFromDate} onChange={(e) => setFormFromDate(e.target.value)} />
+                    </div>
+                    <div className="space-y-0.5 sm:space-y-1">
+                      <Label className="text-xs sm:text-sm">Upto Date</Label>
+                      <Input type="date" value={formToDate} onChange={(e) => setFormToDate(e.target.value)} />
+                    </div>
                   </div>
-                  {formClosePeriod && (
-                    <div className="space-y-1.5">
-                      <div className="grid grid-cols-1 gap-1.5 sm:gap-2 sm:grid-cols-2">
-                        <div className="space-y-0.5 sm:space-y-1">
-                          <Label className="text-xs sm:text-sm">From Date</Label>
-                          <Input type="date" value={formFromDate} onChange={(e) => setFormFromDate(e.target.value)} />
+
+                  {/* Balance Summary for Period */}
+                  {periodSummary && !periodSummary.loading ? (
+                    <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-2 space-y-1">
+                      {periodSummary.isAlreadyClosed && (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs sm:text-sm text-destructive">
+                          {periodSummary.alreadyClosedMessage ?? 'This period is already closed.'}
                         </div>
-                        <div className="space-y-0.5 sm:space-y-1">
-                          <Label className="text-xs sm:text-sm">Upto Date</Label>
-                          <Input type="date" value={formToDate} onChange={(e) => setFormToDate(e.target.value)} />
+                      )}
+                      <div className="grid grid-cols-1 gap-0.5 sm:gap-1 sm:grid-cols-3">
+                        <div className="space-y-0">
+                          <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
+                          <p className="text-xs sm:text-sm font-bold text-blue-600 dark:text-blue-400">
+                            ₹{periodSummary.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div className="space-y-0">
+                          <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Period Total</p>
+                          <p className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">
+                            ₹{periodSummary.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[8px] sm:text-[10px] text-muted-foreground">{periodSummary.logCount} deliveries</p>
+                        </div>
+                        <div className="space-y-0">
+                          <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Current Balance</p>
+                          <p className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                            ₹{periodSummary.currentBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </p>
                         </div>
                       </div>
-
-                      {/* Balance Summary for Period */}
-                      {periodSummary && !periodSummary.loading ? (
-                        <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-2 space-y-1">
-                          {periodSummary.isAlreadyClosed && (
-                            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs sm:text-sm text-destructive">
-                              {periodSummary.alreadyClosedMessage ?? 'This period is already closed.'}
-                            </div>
-                          )}
-                          <div className="grid grid-cols-1 gap-0.5 sm:gap-1 sm:grid-cols-3">
-                            <div className="space-y-0">
-                              <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
-                              <p className="text-xs sm:text-sm font-bold text-blue-600 dark:text-blue-400">
-                                ₹{periodSummary.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </p>
-                            </div>
-                            <div className="space-y-0">
-                              <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Period Total</p>
-                              <p className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">
-                                ₹{periodSummary.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </p>
-                              <p className="text-[8px] sm:text-[10px] text-muted-foreground">{periodSummary.logCount} deliveries</p>
-                            </div>
-                            <div className="space-y-0">
-                              <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Current Balance</p>
-                              <p className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                                ₹{periodSummary.currentBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ) : periodSummary?.loading ? (
-                        <div className="rounded-lg border border-border bg-muted/30 p-2">
-                          <div className="flex gap-2 items-center">
-                            <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
-                            <p className="text-[10px] sm:text-xs text-muted-foreground">Loading period summary...</p>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {/* Delivery Logs Button */}
-                      {periodDeliveryLogs.length > 0 ? (
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          className="w-full text-xs"
-                          onClick={() => setShowDeliveryLogsModal(true)}
-                        >
-                          View Delivery Logs ({periodDeliveryLogs.length})
-                        </Button>
-                      ) : loadingDeliveryLogs ? (
-                        <div className="rounded-lg border border-border bg-muted/30 p-2">
-                          <div className="flex gap-2 items-center justify-center">
-                            <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
-                            <p className="text-[10px] sm:text-xs text-muted-foreground">Loading delivery logs...</p>
-                          </div>
-                        </div>
-                      ) : null}
                     </div>
-                  )}
+                  ) : periodSummary?.loading ? (
+                    <div className="rounded-lg border border-border bg-muted/30 p-2">
+                      <div className="flex gap-2 items-center">
+                        <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
+                        <p className="text-[10px] sm:text-xs text-muted-foreground">Loading period summary...</p>
+                      </div>
+                    </div>
+                  ) : null}
 
+                  {/* Delivery Logs Button */}
+                  {periodDeliveryLogs.length > 0 ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs"
+                      onClick={() => setShowDeliveryLogsModal(true)}
+                    >
+                      View Delivery Logs ({periodDeliveryLogs.length})
+                    </Button>
+                  ) : loadingDeliveryLogs ? (
+                    <div className="rounded-lg border border-border bg-muted/30 p-2">
+                      <div className="flex gap-2 items-center justify-center">
+                        <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
+                        <p className="text-[10px] sm:text-xs text-muted-foreground">Loading delivery logs...</p>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
+              )}
 
-                <div className="space-y-0.5 sm:space-y-1">
+            </div>
+
+            <div className="space-y-0.5 sm:space-y-1">
               <Label htmlFor="receipt-note" className="text-xs sm:text-sm">Note (Optional)</Label>
               <Textarea id="receipt-note" placeholder="e.g. Cash received on 1st April" value={formNote}
                 onChange={e => setFormNote(e.target.value)} rows={1} className="min-h-8 sm:min-h-10" />
@@ -1543,7 +1545,7 @@ export default function ReceiptsPage() {
                     {log.billGenerated && <p className="text-xs text-green-600 dark:text-green-400">Billed</p>}
                   </div>
                 </div>
-                
+
                 {log.items && log.items.length > 0 && (
                   <div className="bg-muted/40 rounded p-2.5 space-y-1.5">
                     {log.items.map((item, idx) => (
@@ -1557,7 +1559,7 @@ export default function ReceiptsPage() {
                     ))}
                   </div>
                 )}
-                
+
                 {log.note && (
                   <div className="border-l-2 border-muted-foreground/30 pl-2.5">
                     <p className="text-xs text-muted-foreground italic">&quot;{log.note}&quot;</p>
@@ -1737,19 +1739,42 @@ export default function ReceiptsPage() {
                                     )
                                   })}
                                 </tr>
-                                {!hasDateRangeFilter && (
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
-                                  <td className="px-4 py-3">Pending Amount</td>
+                                  <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
-                                    const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
-                                        ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                       </td>
                                     )
                                   })}
                                 </tr>
+                                <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                  <td className="px-4 py-3 text-foreground">Grand Total</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
+                                    const grandTotal = summaryTotals.grandTotal + prevBal
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-primary">
+                                        ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                                {!hasDateRangeFilter && (
+                                  <tr className="border-t border-border bg-muted/50 font-semibold">
+                                    <td className="px-4 py-3">Pending Amount</td>
+                                    {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+                                      const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+                                      return (
+                                        <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                          ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        </td>
+                                      )
+                                    })}
+                                  </tr>
                                 )}
                               </>
                             )}
@@ -1815,7 +1840,7 @@ export default function ReceiptsPage() {
                                           title="Delete delivery"
                                           className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                                         >
-                                            <Trash2 className="h-4 w-4" />
+                                          <Trash2 className="h-4 w-4" />
                                         </Button>
                                       )}
                                     </div>

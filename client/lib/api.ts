@@ -542,6 +542,7 @@ export type DeliveryLog = {
   supplierId?: string;
   shift: 'morning' | 'evening' | 'shop';
   billGenerated: boolean;
+  isClosed: boolean;
   items: DeliveryLogItem[];
   totalAmount: string;
   openingBalance: string;
@@ -1628,6 +1629,7 @@ export const deliveryLogsApi = {
       openingBalance: '0',
       closingBalance: '0',
       billGenerated: false,
+      isClosed: false,
       note: data.note,
       deliveredAt: data.deliveredAt || now,
       createdAt: now,
