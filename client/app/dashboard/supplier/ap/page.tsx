@@ -70,8 +70,8 @@ export default function SupplierDeliveryPlanPage() {
         if (!active) return
         setRates(rateData)
         setPlans(planData)
-      } catch (error: any) {
-        toast.error(error.message || 'Failed to load delivery planner')
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load delivery planner')
       } finally {
         if (active) setLoading(false)
       }
@@ -136,8 +136,8 @@ export default function SupplierDeliveryPlanPage() {
       setPlans((current) => [...savedPlans, ...current])
       setProductLines([{ ...emptyLine }])
       toast.success('Delivery started and saved')
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to start delivery')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to start delivery')
     } finally {
       setSaving(false)
     }

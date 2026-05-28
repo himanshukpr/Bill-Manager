@@ -90,8 +90,8 @@ export default function DeliveryAnalysisPage() {
         if (!active) return
         setLogs(logData)
         setPlans(planData)
-      } catch (error: any) {
-        toast.error(error.message || 'Failed to load delivery analysis')
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load delivery analysis')
       } finally {
         if (active) setLoading(false)
       }

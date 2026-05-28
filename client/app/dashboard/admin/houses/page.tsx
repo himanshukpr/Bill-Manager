@@ -538,6 +538,34 @@ export default function HousesPage() {
       doc.text(`Area: ${summaryHouse.area}`, 14, 29)
     }
 
+    let currentY = 38
+
+    // Received Payments Table
+    if (paymentSummaryRows.length > 0) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10)
+      doc.text('Received Payments', 14, currentY)
+      currentY += 6
+
+      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      autoTable(doc, {
+        startY: currentY,
+        head: [['Date', 'Paid (₹)']],
+        body: [
+          ...paymentSummaryRows.map((row) => [
+            new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+            row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+          ]),
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+        ],
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [200, 200, 200] },
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentY = (doc as any).lastAutoTable.finalY + 8
+    }
+
     const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
     const monthLabels = monthKeys.map((monthKey) => {
       const [year, month] = monthKey.split('-').map(Number)
@@ -548,9 +576,6 @@ export default function HousesPage() {
     const pageHeight = doc.internal.pageSize.getHeight()
     const left = 14
     const right = 14
-    const headerBottomY = summaryHouse.area ? 29 : 23
-    const monthlyTitleY = headerBottomY + 10
-    const top = monthlyTitleY + 6
     const bottom = 14
     const tableWidth = pageWidth - left - right
     const productColWidth = monthLabels.length > 0 ? Math.max(58, Math.min(76, tableWidth * 0.36)) : tableWidth
@@ -588,12 +613,12 @@ export default function HousesPage() {
       doc.text(lines, textX, textY, { align })
     }
 
-    let currentY = top
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(13)
     doc.setTextColor(17, 24, 39)
-    doc.text('Monthly Product Summary', 14, monthlyTitleY)
+    doc.text('Monthly Product Summary', 14, currentY)
 
+    currentY += 6
     drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
     monthLabels.forEach((label, index) => {
       const x = left + productColWidth + (index * monthColWidth)
@@ -609,7 +634,7 @@ export default function HousesPage() {
       monthlyProductSummary.forEach((row) => {
         if (currentY > pageHeight - bottom - rowHeight) {
           doc.addPage()
-          currentY = top
+          currentY = 14
           drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
           monthLabels.forEach((label, index) => {
             const x = left + productColWidth + (index * monthColWidth)
@@ -640,7 +665,7 @@ export default function HousesPage() {
 
       if (currentY > pageHeight - bottom - rowHeight) {
         doc.addPage()
-        currentY = top
+        currentY = 14
         drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
         monthLabels.forEach((label, index) => {
           const x = left + productColWidth + (index * monthColWidth)
@@ -649,20 +674,26 @@ export default function HousesPage() {
         currentY += headerHeight
       }
 
+      // Total row
       drawCell(left, currentY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
       monthLabels.forEach((_, index) => {
         const x = left + productColWidth + (index * monthColWidth)
         drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
       })
       currentY += rowHeight
+
+      // Pending Amount row
+      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+      drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
+      monthLabels.forEach((_, index) => {
+        const x = left + productColWidth + (index * monthColWidth)
+        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
+      })
+      currentY += rowHeight
     }
 
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(10)
-    doc.setTextColor(17, 24, 39)
-    doc.text(`Total Amount: Rs ${summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 14, currentY + 8)
-
-    let deliveriesTitleY = currentY + 16
+    let deliveriesTitleY = currentY + 8
     if (deliveriesTitleY > pageHeight - 20) {
       doc.addPage()
       deliveriesTitleY = 16
@@ -698,7 +729,7 @@ export default function HousesPage() {
     })
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
-  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals])
+  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {
@@ -1408,7 +1439,7 @@ export default function HousesPage() {
               <tbody>
                 {filtered.map((h, idx) => (
                   <tr
-                    key={h.houseNo}
+                    key={h.id}
                     className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
                   >
                     <td className="px-2 py-2 sm:px-3">
@@ -1888,8 +1919,6 @@ export default function HousesPage() {
                             <tr className="border-b border-border bg-muted/50">
                               <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
                               <th className="px-4 py-3 text-right font-semibold text-foreground">Paid</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Left</th>
-                              <th className="px-4 py-3 text-left font-semibold text-foreground">Note</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1905,12 +1934,14 @@ export default function HousesPage() {
                                 <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
                                   ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                 </td>
-                                <td className="px-4 py-3 text-right font-semibold text-amber-600 dark:text-amber-400">
-                                  ₹{row.remainingAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-muted-foreground">{row.note ?? '—'}</td>
                               </tr>
                             ))}
+                            <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-foreground">Total Received</td>
+                              <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                                ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
                           </tbody>
                         </table>
                       </div>
@@ -1966,20 +1997,34 @@ export default function HousesPage() {
                               )
                             })}
                             {monthlyProductSummary.length > 0 && (
-                              <tr className="border-t-2 border-border bg-muted/50 font-semibold">
-                                <td className="px-4 py-3 text-foreground">Total</td>
-                                {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                  const totalQty = monthlyProductSummary.reduce((sum, p) => {
-                                    const md = p.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
-                                    return sum + (md ? md.quantity : 0)
-                                  }, 0)
-                                  return (
-                                    <td key={monthKey} className="px-3 py-3 text-right text-foreground">
-                                      ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                    </td>
-                                  )
-                                })}
-                              </tr>
+                              <>
+                                <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                  <td className="px-4 py-3 text-foreground">Total</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const totalQty = monthlyProductSummary.reduce((sum, p) => {
+                                      const md = p.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
+                                      return sum + (md ? md.quantity : 0)
+                                    }, 0)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground">
+                                        ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                                <tr className="border-t border-border bg-muted/50 font-semibold">
+                                  <td className="px-4 py-3">Pending Amount</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+                                    const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                        ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              </>
                             )}
                           </tbody>
                         </table>

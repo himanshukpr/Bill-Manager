@@ -127,8 +127,8 @@ export default function SupplierHousesPage() {
 
                 // Filter based on selected shift
                 filterHousesByShift(data.filter((h) => h.active), configs, session, selectedShift)
-            } catch (error: any) {
-                toast.error(error.message)
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : String(error))
             } finally {
                 if (active) setLoading(false)
             }
@@ -392,8 +392,8 @@ export default function SupplierHousesPage() {
                 setAllConfigs(configs)
                 filterHousesByShift(data.filter((h) => h.active), configs, auth, selectedShift)
             }
-        } catch (e: any) {
-            toast.error(e.message || 'Failed to save morning order')
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Failed to save morning order')
         } finally {
             setSavingMorning(false)
         }
@@ -416,8 +416,8 @@ export default function SupplierHousesPage() {
                 setAllConfigs(configs)
                 filterHousesByShift(data.filter((h) => h.active), configs, auth, selectedShift)
             }
-        } catch (e: any) {
-            toast.error(e.message || 'Failed to save evening order')
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Failed to save evening order')
         } finally {
             setSavingEvening(false)
         }

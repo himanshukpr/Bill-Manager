@@ -17,16 +17,13 @@ import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 
 export default function SupplierPage() {
     const router = useRouter()
-    const [auth, setAuth] = useState<SessionAuth | null>(null)
+    const [auth] = useState<SessionAuth | null>(() => getSessionAuth())
 
     useEffect(() => {
-        const session = getSessionAuth()
-        if (!session?.token || session.role !== 'supplier') {
+        if (!auth?.token || auth?.role !== 'supplier') {
             router.replace('/')
-            return
         }
-        setAuth(session)
-    }, [router])
+    }, [router, auth])
 
     if (!auth) {
         return <div className="min-h-screen" />

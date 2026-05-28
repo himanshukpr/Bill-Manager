@@ -194,8 +194,8 @@ export default function SupplierDirectEntryPage() {
                 setHouses(houseData.filter((h) => h.active))
                 setRates(rateData)
                 setLogs(logData)
-            } catch (error: any) {
-                toast.error(error.message || 'Failed to load delivery entry data')
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Failed to load delivery entry data')
             } finally {
                 if (active) setLoading(false)
             }
@@ -398,8 +398,8 @@ export default function SupplierDirectEntryPage() {
             setLogs((current) => [response.log, ...current])
             toast.success('Delivery entry saved successfully')
             resetForm()
-        } catch (error: any) {
-            toast.error(error.message || 'Failed to save delivery entry')
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to save delivery entry')
         } finally {
             setSaving(false)
         }

@@ -73,7 +73,7 @@ export function AdminAlertsPanel() {
       >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 text-xl pb-2 border-b">
-            <Bell className="w-5 h-5 text-amber-500" /> Today's Alerts
+            <Bell className="w-5 h-5 text-amber-500" /> Today&apos;s Alerts
           </SheetTitle>
         </SheetHeader>
         <div className="mt-6 flex flex-col gap-4">

@@ -15,23 +15,21 @@ import { Button } from "@/components/ui/button"
 
 export default function PendingVerificationPage() {
   const router = useRouter()
-  const [session, setSession] = useState<SessionAuth | null>(null)
+  const [session] = useState<SessionAuth | null>(() => getSessionAuth() || null)
   const [checking, setChecking] = useState(false)
   const [checkMsg, setCheckMsg] = useState("")
 
   useEffect(() => {
-    const s = getSessionAuth()
-    if (!s?.token) {
+    if (!session?.token) {
       router.replace("/")
       return
     }
     // If somehow already verified, skip this page
-    if (s.isVerified) {
-      router.replace(dashboardPath(s.role))
+    if (session.isVerified) {
+      router.replace(dashboardPath(session.role))
       return
     }
-    setSession(s)
-  }, [router])
+  }, [router, session])
 
   async function handleCheckAgain() {
     if (!session?.token || checking) return

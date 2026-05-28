@@ -60,6 +60,7 @@ const MAP_STYLE = {
       maxzoom: 19,
     },
   ],
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any
 
 function parseCoordinateQuery(query: string): LatLng | null {

@@ -19,8 +19,8 @@ export default function SupplierRatesPage() {
             setLoading(true)
             const data = await productRatesApi.list()
             setRates(data)
-        } catch (error: any) {
-            toast.error(error.message || 'Failed to load rate list')
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to load rate list')
         } finally {
             setLoading(false)
         }

@@ -11,6 +11,14 @@ import {
   ReorderConfigDto,
 } from './dto/house-config.dto';
 
+type UserInfo = {
+  uuid: string;
+  username?: string;
+  email?: string;
+  role: string;
+  isVerified?: boolean;
+};
+
 @Injectable()
 export class HouseConfigService {
   constructor(private prisma: PrismaService) {}
@@ -24,6 +32,7 @@ export class HouseConfigService {
     if (!trimmed) return undefined;
 
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const parsed = JSON.parse(trimmed);
       if (!Array.isArray(parsed)) return trimmed;
       if (parsed.length === 0) return JSON.stringify([]);
@@ -100,10 +109,13 @@ export class HouseConfigService {
         },
         include: { house: true },
       });
-    } catch (error: any) {
+    } catch (error) {
+      const prismaError = error as { code?: string; meta?: { cause?: string } };
       if (
-        error?.code === 'P2003' &&
-        String(error?.meta?.cause ?? '').includes('house_configs_house_id_fkey')
+        prismaError?.code === 'P2003' &&
+        String(prismaError?.meta?.cause ?? '').includes(
+          'house_configs_house_id_fkey',
+        )
       ) {
         throw new NotFoundException(`House #${dto.houseId} not found`);
       }
@@ -133,7 +145,7 @@ export class HouseConfigService {
     });
   }
 
-  async reorder(dto: ReorderConfigDto, user?: any) {
+  async reorder(dto: ReorderConfigDto, user?: UserInfo) {
     // Validate input
     if (
       !dto.orderedIds ||

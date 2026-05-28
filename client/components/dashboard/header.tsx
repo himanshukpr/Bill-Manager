@@ -3,7 +3,7 @@
 import { Menu, Moon, Sun } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { LogoutConfirmButton } from '@/components/dashboard/shared/logout-confirm-button'
 
 type HeaderProps = {
@@ -22,11 +22,6 @@ export function Header({
     searchPlaceholder = 'Search...',
 }: HeaderProps) {
     const { theme, resolvedTheme, setTheme } = useTheme()
-    const [mounted, setMounted] = useState(false)
-
-    useEffect(() => {
-        setMounted(true)
-    }, [])
 
     const toggleTheme = () => {
         const currentResolved = resolvedTheme ?? 'light'
@@ -58,7 +53,7 @@ export function Header({
 
                     {/* Theme Toggle and Logout */}
                     <div className="flex items-center gap-2">
-                        {mounted && (
+                        {resolvedTheme !== undefined && (
                             <Button
                                 variant="outline"
                                 size="icon"

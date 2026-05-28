@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck } from 'lucide-react'
-import { deliveryLogsApi } from '@/lib/api'
+import { deliveryLogsApi, type DeliveryLog, type DeliveryLogItem } from '@/lib/api'
 import Link from 'next/link'
 
 function getLocalDateKey(date: Date = new Date()): string {
@@ -21,7 +21,7 @@ function isSameLocalDate(left: Date, right: Date): boolean {
 }
 
 export default function AdminDashboardPage() {
-  const [todayLogs, setTodayLogs] = useState<any[]>([])
+  const [todayLogs, setTodayLogs] = useState<DeliveryLog[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -30,7 +30,7 @@ export default function AdminDashboardPage() {
         const logs = await deliveryLogsApi.list()
         // Filter for today's logs based on createdAt
         const today = new Date()
-        const filteredLogs = (logs as any[]).filter((log) => {
+        const filteredLogs = (logs as DeliveryLog[]).filter((log) => {
           const logDate = new Date(log.createdAt)
           return isSameLocalDate(logDate, today)
         })
@@ -137,7 +137,7 @@ export default function AdminDashboardPage() {
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
-            <h2 className="text-base font-bold">Today's Delivery Logs</h2>
+            <h2 className="text-base font-bold">Today&apos;s Delivery Logs</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">Deliveries recorded today</p>
           </div>
           <Link
@@ -176,7 +176,7 @@ export default function AdminDashboardPage() {
                       {log.deliveredAt ? new Date(log.deliveredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}
                     </td>
                     <td className="px-5 py-3 text-muted-foreground">
-                      {log.items?.map((item: any) => item.milkType).join(', ')}
+                        {log.items?.map((item: DeliveryLogItem) => item.milkType).join(', ')}
                     </td>
                     <td className="hidden sm:table-cell px-5 py-3 font-bold text-primary">
                       ₹{Number(log.totalAmount).toLocaleString('en-IN')}

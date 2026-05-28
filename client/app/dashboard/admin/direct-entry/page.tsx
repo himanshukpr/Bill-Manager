@@ -206,8 +206,8 @@ export default function DeliveryEntryPage() {
         setHouses(houseData)
         setRates(rateData)
         setLogs(logData)
-      } catch (error: any) {
-        toast.error(error.message || 'Failed to load direct entry data')
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load direct entry data')
       } finally {
         if (active) setLoading(false)
       }
@@ -428,8 +428,8 @@ export default function DeliveryEntryPage() {
       toast.success('Entry updated successfully')
       setEditingLog(null)
       setEditForm({ items: [], note: '' })
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to update entry')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update entry')
     } finally {
       setEditSaving(false)
     }
@@ -460,8 +460,8 @@ export default function DeliveryEntryPage() {
       setLogs(current => current.filter(l => l.id !== deletingLog.id))
       toast.success('Entry deleted successfully')
       setDeletingLog(null)
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete entry')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete entry')
     } finally {
       setDeleteSaving(false)
     }
@@ -491,8 +491,8 @@ export default function DeliveryEntryPage() {
       setLogs((current) => [response.log, ...current])
       toast.success('Direct entry saved successfully')
       resetForm()
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to save direct entry')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save direct entry')
     } finally {
       setSaving(false)
     }

@@ -19,6 +19,14 @@ import {
 } from './dto/delivery-log.dto';
 import { DeliveryLogsService } from './delivery-logs.service';
 
+interface RequestUser {
+  uuid: string;
+  username: string;
+  email: string;
+  role: string;
+  isVerified: boolean;
+}
+
 @UseGuards(JwtAuthGuard)
 @Controller('delivery-logs')
 export class DeliveryLogsController {
@@ -28,7 +36,7 @@ export class DeliveryLogsController {
   findAll(
     @Query('houseId') houseId?: string,
     @Query('shift') shift?: string,
-    @Request() req?: any,
+    @Request() req?: { user: RequestUser },
   ) {
     const parsedShift =
       shift === 'morning' || shift === 'evening' ? (shift as Shift) : undefined;
@@ -43,7 +51,10 @@ export class DeliveryLogsController {
   }
 
   @Post()
-  create(@Body() dto: CreateDeliveryLogDto, @Request() req: any) {
+  create(
+    @Body() dto: CreateDeliveryLogDto,
+    @Request() req: { user: RequestUser },
+  ) {
     return this.service.create(dto, req.user);
   }
 
@@ -51,13 +62,16 @@ export class DeliveryLogsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateDeliveryLogDto,
-    @Request() req: any,
+    @Request() req: { user: RequestUser },
   ) {
     return this.service.update(id, dto, req.user);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number, @Request() req: any) {
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: { user: RequestUser },
+  ) {
     return this.service.remove(id, req.user);
   }
 }

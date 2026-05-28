@@ -9,8 +9,18 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
+import { RegisterDto } from './dto/auth.dto';
 import { LocalAuthGuard, JwtAuthGuard } from './guards/auth.guard';
+
+interface AuthenticatedRequest {
+  user: {
+    uuid: string;
+    username: string;
+    email: string;
+    role: string;
+    isVerified: boolean;
+  };
+}
 
 @Controller('auth')
 export class AuthController {
@@ -33,7 +43,7 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  async login(@Request() req: any) {
+  login(@Request() req: AuthenticatedRequest) {
     return this.authService.login(req.user);
   }
 
@@ -43,7 +53,7 @@ export class AuthController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  async getProfile(@Request() req: any) {
+  async getProfile(@Request() req: AuthenticatedRequest) {
     return this.authService.getMe(req.user.uuid);
   }
 }

@@ -2,11 +2,19 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeliveryPlanDto } from './dto/delivery-plan.dto';
 
+type UserInfo = {
+  uuid: string;
+  username?: string;
+  email?: string;
+  role: string;
+  isVerified?: boolean;
+};
+
 @Injectable()
 export class DeliveryPlansService {
   constructor(private prisma: PrismaService) {}
 
-  findAll(user?: any) {
+  findAll(user?: UserInfo) {
     const where =
       user?.role === 'supplier' && user?.uuid
         ? { supplier_id: user.uuid }
@@ -21,7 +29,7 @@ export class DeliveryPlansService {
     });
   }
 
-  create(dto: CreateDeliveryPlanDto, user: any) {
+  create(dto: CreateDeliveryPlanDto, user: UserInfo) {
     if (!user?.uuid) {
       throw new BadRequestException('Invalid user context');
     }

@@ -86,8 +86,9 @@ export class HousesService {
         where: { id },
         data: { location },
       });
-    } catch (error: any) {
-      if (error.code === 'P2025') {
+    } catch (error) {
+      const prismaError = error as { code?: string };
+      if (prismaError.code === 'P2025') {
         throw new NotFoundException(`House #${id} not found`);
       }
       throw error;

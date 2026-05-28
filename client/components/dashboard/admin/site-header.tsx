@@ -3,7 +3,7 @@
 import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { SidebarTrigger } from "@/components/ui/sidebar"
@@ -20,11 +20,6 @@ interface SiteHeaderProps {
 
 export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onLogout, actions, showDate = true }: SiteHeaderProps) {
     const { theme, resolvedTheme, setTheme } = useTheme()
-    const [mounted, setMounted] = useState(false)
-
-    useEffect(() => {
-        setMounted(true)
-    }, [])
 
     const toggleTheme = () => {
         const currentResolved = resolvedTheme ?? "light"
@@ -56,7 +51,7 @@ export function SiteHeader({ title = "Dashboard", todayText, todayShortText, onL
 
             <div className="flex shrink-0 items-center gap-2 px-4 sm:gap-2 sm:px-4 lg:px-6">
                 {actions}
-                {mounted && (
+                {resolvedTheme !== undefined && (
                     <Button
                         variant="ghost"
                         size="icon"

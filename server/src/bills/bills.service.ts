@@ -4,7 +4,6 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
 
@@ -228,7 +227,15 @@ export class BillsService {
       { name: string; qty: number; rate: number; amount: number }
     >();
     for (const log of deliveryLogs) {
-      const logItems = Array.isArray(log.items) ? (log.items as any[]) : [];
+      const logItems = Array.isArray(log.items)
+        ? (log.items as {
+            milkType?: string;
+            name?: string;
+            qty?: number;
+            rate?: number;
+            amount?: number;
+          }[])
+        : [];
       for (const rawItem of logItems) {
         const milkType = String(rawItem?.milkType ?? rawItem?.name ?? 'milk');
         const normalizedType = milkType.toLowerCase();
@@ -276,7 +283,7 @@ export class BillsService {
   }
 
   async findAll(filters?: { houseId?: number; month?: number; year?: number }) {
-    const where: any = {};
+    const where: { houseId?: number; month?: number; year?: number } = {};
     if (filters?.houseId) where.houseId = filters.houseId;
     if (filters?.month) where.month = filters.month;
     if (filters?.year) where.year = filters.year;
@@ -322,6 +329,7 @@ export class BillsService {
           fromDate: periodStart,
           toDate: periodEnd,
           totalAmount,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           items: billItems as any,
           previousBalance,
           generatedDate: periodEnd,
@@ -387,7 +395,7 @@ export class BillsService {
 
     // Calculate pending amounts for each bill using FIFO
     const paymentQueue = payments.map((p) => ({
-      amount: Number(p.amount) + Number((p as any).discount ?? 0),
+      amount: Number(p.amount) + Number(p.discount ?? 0),
     }));
     const billsWithPending = bills.map((bill) => {
       const billAmount = Number(bill.totalAmount ?? 0);
@@ -617,12 +625,13 @@ export class BillsService {
         totalAmount: true,
         generatedDate: true,
         isClosed: true,
+        outstandingAmount: true,
       },
     });
 
     // Build payment queue (include any discount recorded with the payment)
     const paymentQueue = payments.map((p) => ({
-      amount: Number(p.amount) + Number((p as any).discount ?? 0),
+      amount: Number(p.amount) + Number(p.discount ?? 0),
     }));
 
     for (const bill of bills) {
@@ -649,7 +658,7 @@ export class BillsService {
       // Only write to DB if something changed
       if (
         bill.isClosed !== shouldBeClosed ||
-        outstandingAmount !== Number((bill as any).outstandingAmount ?? -1)
+        outstandingAmount !== Number(bill.outstandingAmount ?? -1)
       ) {
         await this.prisma.bill.update({
           where: { id: bill.id },

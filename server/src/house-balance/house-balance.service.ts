@@ -176,6 +176,7 @@ export class HouseBalanceService {
           }))!.id,
           amount: amountToApply,
           note: note ?? `Closed period ${fromDate} - ${toDate}`,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           billIds: logIds as unknown as any,
         },
       }),

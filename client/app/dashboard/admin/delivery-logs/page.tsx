@@ -136,8 +136,8 @@ export default function DeliveryLogsPage() {
       setLogs((prev) => prev.map((l) => (l.id === editingLog.log.id ? updated : l)))
       toast.success('Delivery log updated successfully')
       setEditingLog(null)
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to update delivery log')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update delivery log')
     } finally {
       setSaving(false)
     }
@@ -152,8 +152,8 @@ export default function DeliveryLogsPage() {
       setLogs((prev) => prev.filter((l) => l.id !== deletingLog.id))
       toast.success('Delivery log deleted successfully')
       setDeletingLog(null)
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete delivery log')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete delivery log')
     } finally {
       setSaving(false)
     }

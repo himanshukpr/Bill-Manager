@@ -5,6 +5,7 @@ export type SyncAction = {
   id?: number;
   url: string;
   method: 'POST' | 'PATCH' | 'DELETE';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body?: any;
   createdAt: number;
   attempts?: number;

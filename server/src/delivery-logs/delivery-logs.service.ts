@@ -11,13 +11,19 @@ import {
   UpdateDeliveryLogDto,
 } from './dto/delivery-log.dto';
 
+type UserInfo = {
+  uuid: string;
+  username?: string;
+  email?: string;
+  role: string;
+  isVerified?: boolean;
+};
+
 @Injectable()
 export class DeliveryLogsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: CreateDeliveryLogDto, user: any) {
-    const isShopShift = dto.shift === 'shop';
-
+  async create(dto: CreateDeliveryLogDto, user: UserInfo) {
     const house = await this.prisma.house.findUnique({
       where: { id: dto.houseId },
     });
@@ -62,14 +68,15 @@ export class DeliveryLogsService {
       houseId: dto.houseId,
       shift: dto.shift as Shift,
       billGenerated: dto.billGenerated ?? false,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       items: items as any,
       totalAmount: computedTotal,
       openingBalance,
       closingBalance,
+      ...(typeof supplierId === 'string' ? { supplierId } : {}),
+      ...(dto.note ? { note: dto.note } : {}),
+      ...(dto.deliveredAt ? { deliveredAt: new Date(dto.deliveredAt) } : {}),
     };
-    if (typeof supplierId === 'string') data.supplierId = supplierId;
-    if (dto.note) data.note = dto.note;
-    if (dto.deliveredAt) data.deliveredAt = new Date(dto.deliveredAt);
 
     const [updatedBalance, log] = await this.prisma.$transaction([
       this.prisma.houseBalance.update({
@@ -78,7 +85,9 @@ export class DeliveryLogsService {
           currentBalance: closingBalance,
         },
       }),
+
       this.prisma.deliveryLog.create({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         data,
         include: {
           house: { select: { id: true, houseNo: true, area: true } },
@@ -93,8 +102,15 @@ export class DeliveryLogsService {
     };
   }
 
-  async findAll(filters?: { houseId?: number; shift?: Shift }, user?: any) {
-    const where: any = {};
+  async findAll(
+    filters?: { houseId?: number; shift?: Shift },
+    user?: UserInfo,
+  ) {
+    const where: {
+      houseId?: number;
+      shift?: Shift;
+      supplierId?: string;
+    } = {};
 
     if (filters?.houseId) where.houseId = filters.houseId;
     if (filters?.shift) where.shift = filters.shift;
@@ -123,7 +139,7 @@ export class DeliveryLogsService {
     });
   }
 
-  async update(id: number, dto: UpdateDeliveryLogDto, user: any) {
+  async update(id: number, dto: UpdateDeliveryLogDto, user: UserInfo) {
     if (!user?.uuid) {
       throw new BadRequestException('Invalid user context');
     }
@@ -167,6 +183,7 @@ export class DeliveryLogsService {
         this.prisma.deliveryLog.update({
           where: { id },
           data: {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             items: validItems as any,
             totalAmount: computedTotal,
             closingBalance: Number(log.closingBalance ?? 0) + totalDelta,
@@ -201,7 +218,7 @@ export class DeliveryLogsService {
     });
   }
 
-  async remove(id: number, user: any) {
+  async remove(id: number, user: UserInfo) {
     if (!user?.uuid) {
       throw new BadRequestException('Invalid user context');
     }

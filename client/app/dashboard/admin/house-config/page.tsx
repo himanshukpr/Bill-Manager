@@ -33,7 +33,16 @@ type RowConfigForm = {
 
 type GlobalSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
-const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateSupplier, isLast }: any) => {
+type HouseRowProps = {
+  house: House
+  draft: RowConfigForm
+  suppliers: User[]
+  onUpdateShift: (houseId: number, shift: 'morning' | 'evening') => void
+  onUpdateSupplier: (houseId: number, supplierId: string) => void
+  isLast: boolean
+}
+
+const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateSupplier, isLast }: HouseRowProps) => {
   return (
     <tr
       className={`border-b border-border/60 transition-colors hover:bg-muted/20 ${isLast ? 'border-b-0' : ''}`}
@@ -138,7 +147,7 @@ export default function AdminHouseConfigPage() {
     try {
       housesApi.list()
       usersApi.list('supplier')
-    } catch (error: any) {
+    } catch (error) {
       toast.error('Failed to trigger background sync')
     }
   }, [])
@@ -282,8 +291,10 @@ export default function AdminHouseConfigPage() {
     try {
       const newSupplierId = shift === 'evening' ? null : (current.supplierId || null)
       if (current.configId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await houseConfigApi.update(current.configId, { shift, supplierId: newSupplierId as any })
       } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await houseConfigApi.create({ houseId, shift, supplierId: newSupplierId as any, position: 0 })
       }
       decrementPending(false)
@@ -301,8 +312,10 @@ export default function AdminHouseConfigPage() {
     try {
       const finalSupplierId = supplierId || null
       if (current.configId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await houseConfigApi.update(current.configId, { supplierId: finalSupplierId as any })
       } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await houseConfigApi.create({ houseId, shift: current.shift, supplierId: finalSupplierId as any, position: 0 })
       }
       decrementPending(false)

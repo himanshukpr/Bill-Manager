@@ -63,7 +63,7 @@ import {
     TableRow,
 } from '@/components/ui/table'
 import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
-import { getSessionAuth } from '@/lib/auth'
+import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 
 type DeliveryItemForm = {
@@ -226,7 +226,7 @@ function updateAllocatedProductsOptimistically(
 export default function DeliveryPage() {
     const router = useRouter()
 
-    const [auth, setAuth] = useState<any>(null)
+    const [auth, setAuth] = useState<SessionAuth | null>(null)
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
     const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
 
@@ -405,8 +405,8 @@ export default function DeliveryPage() {
             if (resetIndex) {
                 setCurrentIndex(0)
             }
-        } catch (err: any) {
-            toast.error(err.message)
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : String(err))
         } finally {
             setLoading(false)
         }
@@ -628,8 +628,8 @@ export default function DeliveryPage() {
                 await loadSelectedDateDeliveredSummary()
 
                 if (!active) return
-            } catch (error: any) {
-                if (active) toast.error(error.message)
+            } catch (error) {
+                if (active) toast.error(error instanceof Error ? error.message : String(error))
             }
         }
 
@@ -748,8 +748,8 @@ export default function DeliveryPage() {
                         return next
                     })
                 }
-            } catch (err: any) {
-                if (active) toast.error(err.message)
+            } catch (err) {
+                if (active) toast.error(err instanceof Error ? err.message : String(err))
             } finally {
                 if (active) setLogsLoading(false)
             }
@@ -1169,6 +1169,7 @@ export default function DeliveryPage() {
                     return null
                 }
 
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 return deliveryLogsApi.update(log.id, { items: nextItems as any })
             })
 
@@ -1312,6 +1313,7 @@ export default function DeliveryPage() {
             const primaryLog = currentHouseLogs[0]
             const duplicateIds = currentHouseLogs.slice(1).map((l) => l.id)
 
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const updatedLog = await deliveryLogsApi.update(primaryLog.id, { items: payloadItems as any })
             if (duplicateIds.length > 0) {
                 await Promise.all(duplicateIds.map((id) => deliveryLogsApi.delete(id)))

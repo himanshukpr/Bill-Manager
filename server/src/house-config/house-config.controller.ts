@@ -10,7 +10,6 @@ import {
   Query,
   UseGuards,
   Request,
-  ForbiddenException,
 } from '@nestjs/common';
 import { HouseConfigService } from './house-config.service';
 import {
@@ -41,7 +40,10 @@ export class HouseConfigController {
   }
 
   @Patch('reorder')
-  async reorder(@Body() dto: ReorderConfigDto, @Request() req: any) {
+  async reorder(
+    @Body() dto: ReorderConfigDto,
+    @Request() req: { user: { uuid: string; role: string } },
+  ) {
     return this.service.reorder(dto, req.user);
   }
 

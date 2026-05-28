@@ -42,8 +42,8 @@ export default function UsersPage() {
       setLoading(true)
       const data = await usersApi.list()
       setUsers(data)
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -61,8 +61,8 @@ export default function UsersPage() {
       await usersApi.verify(u.uuid, !u.isVerified)
       toast.success(`User ${u.isVerified ? 'unverified' : 'verified'}`)
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -83,8 +83,8 @@ export default function UsersPage() {
       setNewUsername('')
       setNewPassword('')
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setAddSaving(false)
     }
@@ -99,8 +99,8 @@ export default function UsersPage() {
       setPrivilegeDialogOpen(false)
       setSelectedUser(null)
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setPrivilegeSaving(false)
     }
@@ -113,8 +113,8 @@ export default function UsersPage() {
       toast.success('User deleted')
       setDeleteUuid(null)
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     }
   }
 

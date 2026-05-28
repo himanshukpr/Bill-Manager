@@ -65,8 +65,8 @@ export default function RatesPage() {
       setLoading(true)
       const data = await productRatesApi.list()
       setRates(data)
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to load rates')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load rates')
     } finally {
       setLoading(false)
     }
@@ -152,8 +152,8 @@ export default function RatesPage() {
       setDialogOpen(false)
       setForm(emptyForm)
       setEditId(null)
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to save rate')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save rate')
     } finally {
       setSaving(false)
     }
@@ -169,8 +169,8 @@ export default function RatesPage() {
       toast.success('Rate deleted successfully')
       setDeleteOpen(false)
       setDeleteTarget(null)
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete rate')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete rate')
     } finally {
       setDeleting(false)
     }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight } from 'lucide-react'
+import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, type PaymentHistory, type House, type HouseBalance, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
@@ -43,12 +43,57 @@ type PaymentSummaryRow = {
   id: number
   paidAt: string
   paidAmount: number
+  previousBalance: number
   remainingAmount: number
+  note?: string
+}
+
+type DeliveryEditForm = {
+  items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
   note?: string
 }
 
 function normalizeMilkType(value: unknown): string {
   return String(value ?? '').trim()
+}
+
+function normalizeRateType(value: unknown): string {
+  const text = String(value ?? '').trim().toLowerCase()
+  if (text.includes('buffalo')) return 'buffalo'
+  if (text.includes('cow')) return 'cow'
+  return text
+}
+
+function getRateByProductName(rates: ProductRate[], productName: string): number {
+  const normalized = (productName || '').toLowerCase().trim()
+  for (const rate of rates) {
+    if ((rate.name || '').toLowerCase().trim() === normalized) {
+      return Number(rate.rate)
+    }
+  }
+  return 0
+}
+
+function getActiveProducts(rates: ProductRate[]): ProductRate[] {
+  return rates.filter((rate) => rate.isActive && Number(rate.rate) > 0).sort((left, right) => (left.name || '').localeCompare(right.name || ''))
+}
+
+function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
+  if (!Array.isArray(items)) return []
+
+  return items.map((item) => {
+    const row = item as { milkType?: unknown; qty?: unknown; rate?: unknown; amount?: unknown }
+    const milkType = normalizeMilkType(row.milkType)
+    const qty = Number(row.qty ?? 0)
+    const rate = Number(row.rate ?? 0)
+    const amount = Number(row.amount ?? (qty * rate))
+    return { milkType, qty, rate, amount }
+  })
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return 'Something went wrong'
 }
 
 function getLocalDateKey(date: Date = new Date()): string {
@@ -234,6 +279,13 @@ export default function ReceiptsPage() {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryBills, setSummaryBills] = useState<Bill[]>([])
   const [productRates, setProductRates] = useState<ProductRate[]>([])
+  const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
+  const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
+  const [editingDeliveryShifts, setEditingDeliveryShifts] = useState<string[]>([])
+  const [editingDeliveryAllLogs, setEditingDeliveryAllLogs] = useState<DeliveryLog[]>([])
+  const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
+  const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
+  const [editDeliverySaving, setEditDeliverySaving] = useState(false)
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
@@ -248,6 +300,10 @@ export default function ReceiptsPage() {
     if (!summaryHouse) return []
     return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
+
+  const editDeliveryTotal = useMemo(() => {
+    return (editDeliveryForm.items || []).reduce((sum, item) => sum + Number(item?.amount ?? 0), 0)
+  }, [editDeliveryForm.items])
 
   const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
     if (!summaryHouse) return []
@@ -273,12 +329,14 @@ export default function ReceiptsPage() {
 
     return payments.map((payment) => {
       const paidAmount = Number(payment.amount ?? 0) + Number(payment.discount ?? 0)
+      const previousBalance = remainingAmount
       remainingAmount = Math.max(0, remainingAmount - paidAmount)
 
       return {
         id: payment.id,
         paidAt: payment.createdAt,
         paidAmount,
+        previousBalance,
         remainingAmount,
         note: payment.note,
       }
@@ -384,7 +442,7 @@ export default function ReceiptsPage() {
           const dateB = new Date(b.deliveredAt || b.createdAt)
           return dateB.getTime() - dateA.getTime()
         }))
-      } catch (e: any) {
+      } catch (e) {
         console.error('Failed to fetch period data:', e)
         setPeriodSummary(null)
         setPeriodDeliveryLogs([])
@@ -413,8 +471,8 @@ export default function ReceiptsPage() {
         cache.set(bill.id, bill)
       }
       setBillsCache(cache)
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -441,7 +499,7 @@ export default function ReceiptsPage() {
       // Calculate total pending
       const totalPending = bills.reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
       setFormAmount(String(totalPending))
-    } catch (e: any) {
+    } catch (e) {
       toast.error('Failed to load bills')
       setFormBills([])
     } finally {
@@ -462,6 +520,7 @@ export default function ReceiptsPage() {
     return houses.find((house) => house.id === houseId)?.phoneNo ?? '—'
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getBillPeriods = async (billIds?: any): Promise<string> => {
     if (!billIds || (Array.isArray(billIds) && billIds.length === 0)) return '—'
     
@@ -531,8 +590,8 @@ export default function ReceiptsPage() {
       setSummaryBills(bills)
       setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
       setSummaryPeriod(getLogPeriod(logs))
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to load summary')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load summary')
     } finally {
       setSummaryLoading(false)
     }
@@ -541,6 +600,180 @@ export default function ReceiptsPage() {
   async function handleChangeSummaryPeriod(newPeriod: { year: number; month: number }) {
     if (!summaryHouse || !isValidMonth(newPeriod.year, newPeriod.month)) return
     setSummaryPeriod(newPeriod)
+  }
+
+  function getBillForDateKey(dateKey: string): Bill | undefined {
+    const [yearStr, monthStr] = dateKey.split('-')
+    const month = Number.parseInt(monthStr ?? '', 10) - 1
+    const year = Number.parseInt(yearStr ?? '', 10)
+    return summaryBills.find((bill) => bill.month === month && bill.year === year)
+  }
+
+  function getPreferredRateForHouse(milkType: string): number {
+    const normalizedMilkType = normalizeRateType(milkType)
+    if (summaryHouse) {
+      const rate1Type = normalizeRateType((summaryHouse as unknown as { rate1Type?: unknown }).rate1Type)
+      const rate2Type = normalizeRateType((summaryHouse as unknown as { rate2Type?: unknown }).rate2Type)
+      const rate1 = Number((summaryHouse as unknown as { rate1?: unknown }).rate1 ?? 0)
+      const rate2 = Number((summaryHouse as unknown as { rate2?: unknown }).rate2 ?? 0)
+      if (rate1Type && rate1Type === normalizedMilkType && rate1 > 0) return rate1
+      if (rate2Type && rate2Type === normalizedMilkType && rate2 > 0) return rate2
+    }
+    return getRateByProductName(productRates, milkType)
+  }
+
+  function isDeliveryBlockedByBill(dateKey: string): boolean {
+    const bill = getBillForDateKey(dateKey)
+    if (!bill) return false
+
+    if (bill.generatedDate) {
+      const generatedDate = new Date(bill.generatedDate)
+      const [year, month, day] = dateKey.split('-').map(Number)
+      const deliveryDate = new Date(year, month - 1, day)
+      return deliveryDate.getTime() <= generatedDate.getTime()
+    }
+
+    return true
+  }
+
+  function openEditDeliveryDialog(row: HouseDeliverySummaryRow) {
+    if (isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)) {
+      toast.error('Cannot edit deliveries that were included in a generated bill')
+      return
+    }
+
+    if (row.log) {
+      setEditingDeliveryLog(row.log)
+      const logsForDate = row.allLogs ?? [row.log]
+      const uniqueShifts = [...new Set(logsForDate.map((log) => log.shift).filter(Boolean))]
+      setEditingDeliveryShifts(uniqueShifts)
+      setEditingDeliveryAllLogs(logsForDate)
+      const allItems = logsForDate.flatMap((log) =>
+        normalizeDeliveryItems(log.items).map((item) => {
+          const qty = Number(item.qty ?? 0)
+          const rate = getPreferredRateForHouse(item.milkType)
+          return { ...item, rate, amount: qty * rate }
+        }),
+      )
+      setEditDeliveryForm({
+        items: allItems,
+        note: row.log.note,
+      })
+    } else {
+      const [year, month, day] = row.dateKey.split('-').map(Number)
+      const deliveryDate = new Date(year, month - 1, day)
+      const firstProduct = getActiveProducts(productRates)[0] ?? { name: '', rate: 0 }
+      const defaultShift = (summaryHouse as unknown as { configs?: Array<{ shift?: 'morning' | 'evening' | 'shop' }> }).configs?.[0]?.shift ?? 'morning'
+      const newLog: DeliveryLog = {
+        id: 0,
+        houseId: summaryHouse?.id ?? 0,
+        deliveredAt: deliveryDate.toISOString(),
+        createdAt: new Date().toISOString(),
+        shift: defaultShift,
+        items: [],
+        billGenerated: false,
+        totalAmount: '0',
+        openingBalance: '0',
+        closingBalance: '0',
+        note: '',
+      }
+      setEditingDeliveryLog(newLog)
+      setEditingDeliveryShifts([])
+      setEditingDeliveryAllLogs([])
+      setEditDeliveryForm({
+        items: [{ milkType: firstProduct.name, qty: 0, rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
+        note: '',
+      })
+    }
+
+    setEditDeliveryDialogOpen(true)
+  }
+
+  async function handleSaveDeliveryEdit() {
+    if (!editingDeliveryLog || !summaryHouse) return
+
+    setEditDeliverySaving(true)
+    try {
+      const isNewDelivery = editingDeliveryLog.id === 0
+      const oldAmount = isNewDelivery
+        ? 0
+        : editingDeliveryAllLogs.reduce(
+            (sum, log) => sum + (log.items ?? []).reduce((itemSum, item) => itemSum + (Number(item.amount) ?? 0), 0),
+            0,
+          )
+      const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (Number(item.amount) ?? 0), 0)
+      const amountDifference = newAmount - oldAmount
+
+      if (isNewDelivery) {
+        await deliveryLogsApi.create({
+          houseId: summaryHouse.id,
+          shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
+          items: editDeliveryForm.items,
+          note: editDeliveryForm.note,
+          deliveredAt: editingDeliveryLog.deliveredAt,
+        })
+      } else {
+        await deliveryLogsApi.update(editingDeliveryLog.id, {
+          items: editDeliveryForm.items,
+          note: editDeliveryForm.note,
+        })
+
+        const secondaryLogs = editingDeliveryAllLogs.filter((log) => log.id !== editingDeliveryLog.id)
+        for (const log of secondaryLogs) {
+          try {
+            await deliveryLogsApi.delete(log.id)
+          } catch (error) {
+            console.warn(`Could not delete secondary log ${log.id}:`, error)
+          }
+        }
+      }
+
+      toast.success('Delivery updated successfully')
+
+      if (amountDifference !== 0) {
+        try {
+          const currentBalance = await balanceApi.get(summaryHouse.id)
+          await balanceApi.updateCurrent(summaryHouse.id, Number(currentBalance.currentBalance) || 0)
+        } catch (error) {
+          console.error('Failed to update balance:', error)
+          toast.warning('Balance update failed - delivery saved but balance unchanged')
+        }
+      }
+
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      setSummaryLogs(logs)
+
+      setEditDeliveryDialogOpen(false)
+      setEditingDeliveryLog(null)
+      setEditingDeliveryAllLogs([])
+      setEditingDeliveryShifts([])
+      setEditDeliveryForm({ items: [], note: '' })
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setEditDeliverySaving(false)
+    }
+  }
+
+  async function handleDeleteDeliveryLog() {
+    if (!deletingDeliveryLog || !summaryHouse) return
+    if (deletingDeliveryLog.billGenerated) {
+      toast.error('Cannot delete a delivery that was included in a generated bill')
+      return
+    }
+
+    setEditDeliverySaving(true)
+    try {
+      await deliveryLogsApi.delete(deletingDeliveryLog.id)
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      setSummaryLogs(logs)
+      setDeletingDeliveryLog(null)
+      toast.success('Delivery log deleted successfully')
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setEditDeliverySaving(false)
+    }
   }
 
   const handleExportSummaryPdf = useCallback(() => {
@@ -562,22 +795,195 @@ export default function ReceiptsPage() {
     doc.text(`Period: ${periodLabel}`, 14, 23)
     if (summaryHouse.area) doc.text(`Area: ${summaryHouse.area}`, 14, 29)
 
+    let currentY = 38
+
+    if (paymentSummaryRows.length > 0) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10)
+      doc.text('Received Payments', 14, currentY)
+      currentY += 6
+
+      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      autoTable(doc, {
+        startY: currentY,
+        head: [['Date', 'Paid (₹)']],
+        body: [
+          ...paymentSummaryRows.map((row) => [
+            new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+            row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+          ]),
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+        ],
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [200, 200, 200] },
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentY = (doc as any).lastAutoTable.finalY + 8
+    }
+
+    const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+    const monthLabels = monthKeys.map((monthKey) => {
+      const [year, month] = monthKey.split('-').map(Number)
+      return `${MONTH_NAMES[month]} ${year}`
+    })
+
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const left = 14
+    const right = 14
+    const bottom = 14
+    const tableWidth = pageWidth - left - right
+    const productColWidth = monthLabels.length > 0 ? Math.max(58, Math.min(76, tableWidth * 0.36)) : tableWidth
+    const monthColWidth = monthLabels.length > 0 ? (tableWidth - productColWidth) / monthLabels.length : 0
+    const headerHeight = 11
+    const rowHeight = 10
+    const paddingX = 2.5
+    const lineHeight = 4.2
+
+    const toLines = (text: string, width: number): string[] => {
+      const lines = doc.splitTextToSize(text, Math.max(8, width - (paddingX * 2)))
+      return Array.isArray(lines) ? lines : [String(lines)]
+    }
+
+    const drawCell = (
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      text: string | string[],
+      align: 'left' | 'right' = 'left',
+      bold = false,
+      fillColor: [number, number, number] = [255, 255, 255],
+      textColor: [number, number, number] = [17, 24, 39],
+    ) => {
+      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
+      doc.setDrawColor(210, 214, 220)
+      doc.rect(x, y, width, height, 'FD')
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setTextColor(textColor[0], textColor[1], textColor[2])
+      const lines = Array.isArray(text) ? text : toLines(text, width)
+      const contentHeight = lines.length * lineHeight
+      const textY = y + Math.max(2, (height - contentHeight) / 2) + (lineHeight - 1)
+      const textX = align === 'right' ? x + width - paddingX : x + paddingX
+      doc.text(lines, textX, textY, { align })
+    }
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(13)
+    doc.setTextColor(17, 24, 39)
+    doc.text('Monthly Product Summary', 14, currentY)
+
+    currentY += 6
+    drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+    monthLabels.forEach((label, index) => {
+      const x = left + productColWidth + (index * monthColWidth)
+      drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+    })
+
+    currentY += headerHeight
+
+    if (monthlyProductSummary.length === 0) {
+      drawCell(left, currentY, tableWidth, rowHeight, 'No product data available', 'left', false)
+      currentY += rowHeight
+    } else {
+      monthlyProductSummary.forEach((row) => {
+        if (currentY > pageHeight - bottom - rowHeight) {
+          doc.addPage()
+          currentY = 14
+          drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+          monthLabels.forEach((label, index) => {
+            const x = left + productColWidth + (index * monthColWidth)
+            drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+          })
+          currentY += headerHeight
+        }
+
+        const productTotal = summaryTotals.productTotals.find((item) => item.product === row.product)
+        const rowValues = monthKeys.map((monthKey) => {
+          const [year, month] = monthKey.split('-').map(Number)
+          const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
+          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+        })
+
+        const productLines = toLines(row.product, productColWidth)
+        const valueLines = rowValues.map((value) => toLines(value, monthColWidth))
+        const maxLines = Math.max(productLines.length, ...valueLines.map((lines) => lines.length))
+        const cellHeight = Math.max(rowHeight, (maxLines * lineHeight) + 4)
+
+        drawCell(left, currentY, productColWidth, cellHeight, productLines, 'left')
+        valueLines.forEach((value, index) => {
+          const x = left + productColWidth + (index * monthColWidth)
+          drawCell(x, currentY, monthColWidth, cellHeight, value, 'right')
+        })
+        currentY += cellHeight
+      })
+
+      if (currentY > pageHeight - bottom - rowHeight) {
+        doc.addPage()
+        currentY = 14
+        drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+        monthLabels.forEach((label, index) => {
+          const x = left + productColWidth + (index * monthColWidth)
+          drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+        })
+        currentY += headerHeight
+      }
+
+      drawCell(left, currentY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
+      monthLabels.forEach((_, index) => {
+        const x = left + productColWidth + (index * monthColWidth)
+        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+      })
+      currentY += rowHeight
+
+      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+      drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
+      monthLabels.forEach((_, index) => {
+        const x = left + productColWidth + (index * monthColWidth)
+        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
+      })
+      currentY += rowHeight
+    }
+
+    let deliveriesTitleY = currentY + 8
+    if (deliveriesTitleY > pageHeight - 20) {
+      doc.addPage()
+      deliveriesTitleY = 16
+    }
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(13)
+    doc.setTextColor(17, 24, 39)
+    doc.text('Daily Deliveries', 14, deliveriesTitleY)
+
     autoTable(doc, {
-      startY: 38,
-      head: [['Date', 'Products', 'Amount']],
-      body: summaryRows.map((row) => [
-        row.dayLabel,
-        row.productsLabel,
-        row.hasDelivery
-          ? `₹${(summaryLogs.find(l => l.id === row.logId)?.totalAmount ?? 0).toLocaleString('en-IN')}`
-          : '-',
-      ]),
-      margin: { left: 14, right: 14 },
-      styles: { fontSize: 9 },
+      startY: deliveriesTitleY + 6,
+      head: [['Date', 'Products']],
+      body: summaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
+      styles: {
+        font: 'helvetica',
+        fontSize: 9,
+        cellPadding: 3,
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [17, 24, 39],
+        textColor: 255,
+      },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { cellWidth: 'auto' },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      margin: { top: 30, left: 14, right: 14 },
     })
 
     doc.save(`House_${summaryHouse.houseNo}_Summary_${periodLabel.replace(' ', '_')}.pdf`)
-  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod])
+  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod, monthlyProductSummary, summaryTotals, paymentSummaryRows])
 
   async function handleRecord() {
     if (!formHouseId || !formAmount) { toast.error('House and Amount are required'); return }
@@ -620,8 +1026,8 @@ export default function ReceiptsPage() {
       setFormFromDate('')
       setFormToDate('')
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
     }
@@ -668,7 +1074,7 @@ export default function ReceiptsPage() {
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Receipt className="h-12 w-12 mb-3 opacity-30" />
               <p className="font-medium">No payments found</p>
-              <p className="text-sm mt-1">Click "Record Payment" to log a new receipt</p>
+              <p className="text-sm mt-1">Click &quot;Record Payment&quot; to log a new receipt</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -682,6 +1088,7 @@ export default function ReceiptsPage() {
                     {/* <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Bill Period</th> */}
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Note</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -722,6 +1129,21 @@ export default function ReceiptsPage() {
                           {new Date(p.createdAt).toLocaleDateString('en-IN', {
                             day: 'numeric', month: 'short', year: 'numeric'
                           })}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              if (p.balance?.house) {
+                                void openSummary(p.balance.house as House)
+                              }
+                            }}
+                            title="View summary"
+                            className="h-8 w-8 p-0"
+                          >
+                            <Rows3 className="h-4 w-4" />
+                          </Button>
                         </td>
                       </tr>
                     )
@@ -898,7 +1320,7 @@ export default function ReceiptsPage() {
                   <div className="space-y-1 border border-border rounded-lg p-2 bg-muted/30">
                     <div className="flex items-center justify-between mb-1">
                       <Label className="text-xs sm:text-sm font-semibold">Bills to Pay</Label>
-                      <Select value={formPaymentMode} onValueChange={(v: any) => {
+                      <Select value={formPaymentMode} onValueChange={(v: "all" | "selected") => {
                         setFormPaymentMode(v)
                         if (v === 'all') {
                           setFormSelectedBillIds(formBills.map(b => b.id))
@@ -1108,7 +1530,7 @@ export default function ReceiptsPage() {
                 
                 {log.note && (
                   <div className="border-l-2 border-muted-foreground/30 pl-2.5">
-                    <p className="text-xs text-muted-foreground italic">"{log.note}"</p>
+                    <p className="text-xs text-muted-foreground italic">&quot;{log.note}&quot;</p>
                   </div>
                 )}
               </div>
@@ -1183,8 +1605,6 @@ export default function ReceiptsPage() {
                             <tr className="border-b border-border bg-muted/50">
                               <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
                               <th className="px-4 py-3 text-right font-semibold text-foreground">Paid</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Left</th>
-                              <th className="px-4 py-3 text-left font-semibold text-foreground">Note</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1200,12 +1620,14 @@ export default function ReceiptsPage() {
                                 <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
                                   ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                 </td>
-                                <td className="px-4 py-3 text-right font-semibold text-amber-600 dark:text-amber-400">
-                                  ₹{row.remainingAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-muted-foreground">{row.note ?? '—'}</td>
                               </tr>
                             ))}
+                            <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-foreground">Total Received</td>
+                              <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                                ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
                           </tbody>
                         </table>
                       </div>
@@ -1231,29 +1653,59 @@ export default function ReceiptsPage() {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-border bg-muted/50">
-                              <th className="px-4 py-3 text-left font-semibold">Product</th>
-                              <th className="px-4 py-3 text-right font-semibold">Quantity</th>
-                              <th className="px-4 py-3 text-right font-semibold">Amount</th>
+                              <th className="px-4 py-3 text-left font-semibold text-foreground min-w-32">Product</th>
+                              {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                const [year, month] = monthKey.split('-').map(Number)
+                                return (
+                                  <th key={monthKey} className="px-3 py-3 text-right font-semibold text-foreground min-w-20">{MONTH_NAMES[month]} {year}</th>
+                                )
+                              })}
                             </tr>
                           </thead>
                           <tbody>
                             {monthlyProductSummary.map((row, idx) => {
-                              const productTotal = summaryTotals.productTotals.find(p => p.product === row.product)
+                              const uniqueMonths = Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+                              const productTotal = summaryTotals.productTotals.find((item) => item.product === row.product)
                               return (
                                 <tr key={row.product} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                  <td className="px-4 py-3 font-medium">{row.product}</td>
-                                  <td className="px-4 py-3 text-right">{row.totalQuantity.toLocaleString('en-IN')}L</td>
-                                  <td className="px-4 py-3 text-right font-semibold">₹{(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                  <td className="px-4 py-3 font-medium text-foreground">{row.product}</td>
+                                  {uniqueMonths.map((monthKey) => {
+                                    const monthData = row.months.find((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}` === monthKey)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground whitespace-nowrap">
+                                        {monthData ? `${monthData.quantity.toLocaleString('en-IN')}L — ₹${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                                      </td>
+                                    )
+                                  })}
                                 </tr>
                               )
                             })}
-                            <tr className="border-t-2 border-border bg-muted/50 font-semibold">
-                              <td className="px-4 py-3">Total</td>
-                              <td className="px-4 py-3 text-right">
-                                {summaryTotals.productTotals.reduce((sum, row) => sum + row.quantity, 0).toLocaleString('en-IN')}L
-                              </td>
-                              <td className="px-4 py-3 text-right">₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                            </tr>
+                            {monthlyProductSummary.length > 0 && (
+                              <>
+                                <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                  <td className="px-4 py-3 text-foreground">Total</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-foreground">
+                                        ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                                <tr className="border-t border-border bg-muted/50 font-semibold">
+                                  <td className="px-4 py-3">Pending Amount</td>
+                                  {Array.from(new Set(monthlyProductSummary.flatMap((item) => item.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                    const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+                                    const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+                                    return (
+                                      <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                        ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              </>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1266,6 +1718,7 @@ export default function ReceiptsPage() {
                   <div className="rounded-xl border border-border bg-muted/30 p-4">
                     {summaryLoading ? (
                       <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
                         <Skeleton className="h-10 w-full rounded-lg" />
                         <Skeleton className="h-10 w-full rounded-lg" />
                       </div>
@@ -1282,21 +1735,47 @@ export default function ReceiptsPage() {
                             <tr className="border-b border-border bg-muted/50">
                               <th className="px-4 py-3 text-left font-semibold">Date</th>
                               <th className="px-4 py-3 text-left font-semibold">Products</th>
-                              <th className="px-4 py-3 text-right font-semibold">Amount</th>
+                              <th className="px-4 py-3 text-left font-semibold">Action</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {summaryRows.map((row, idx) => (
-                              <tr key={row.dateKey} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                <td className="px-4 py-3 font-medium">{row.dayLabel}</td>
-                                <td className="px-4 py-3">
-                                  {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
-                                </td>
-                                <td className="px-4 py-3 text-right font-semibold">
-                                  {row.hasDelivery ? `₹${(summaryLogs.find(l => l.id === row.logId)?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
-                                </td>
-                              </tr>
-                            ))}
+                            {summaryRows.map((row, idx) => {
+                              const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)
+                              const isPaid = Boolean(row.log?.billGenerated)
+                              return (
+                                <tr key={row.dateKey} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'} ${isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
+                                  <td className={`px-4 py-3 font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</td>
+                                  <td className={`px-4 py-3 whitespace-normal ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
+                                    {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center justify-start gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => openEditDeliveryDialog(row)}
+                                        title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                        disabled={blocked}
+                                        className="h-8 w-8 p-0"
+                                      >
+                                        <Edit2 className="h-4 w-4" />
+                                      </Button>
+                                      {!blocked && row.log && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => setDeletingDeliveryLog(row.log!)}
+                                          title="Delete delivery"
+                                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -1313,6 +1792,198 @@ export default function ReceiptsPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editDeliveryDialogOpen} onOpenChange={setEditDeliveryDialogOpen}>
+        <DialogContent className="max-w-md sm:max-w-xl lg:max-w-2xl max-h-[90vh] overflow-y-auto">
+          {editingDeliveryLog && (
+            <div>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Edit2 className="h-5 w-5 text-primary" />
+                  Edit Delivery
+                </DialogTitle>
+                <DialogDescription>
+                  Edit the delivered products and quantities for this delivery.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Date</p>
+                    <p className="mt-1 text-sm font-semibold">{new Date(editingDeliveryLog.deliveredAt).toLocaleDateString('en-IN')}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Shift</p>
+                    <p className="mt-1 text-sm font-semibold capitalize">
+                      {editingDeliveryShifts.length > 1 ? editingDeliveryShifts.join(', ') : editingDeliveryShifts[0] ?? editingDeliveryLog.shift}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">House</p>
+                    <p className="mt-1 text-sm font-semibold">{summaryHouse?.houseNo || '-'}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Delivery Items</p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const activeProducts = getActiveProducts(productRates)
+                        const firstProduct = activeProducts[0] ?? { name: '', rate: 0 }
+                        const added = {
+                          milkType: firstProduct.name,
+                          qty: 0,
+                          rate: getPreferredRateForHouse(firstProduct.name),
+                          amount: 0,
+                        }
+                        setEditDeliveryForm({ ...editDeliveryForm, items: [...editDeliveryForm.items, added] })
+                      }}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add item
+                    </Button>
+                  </div>
+
+                  <div className="rounded border border-border bg-card">
+                    {editDeliveryForm.items.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">No items</div>
+                    ) : (
+                      <div className="w-full">
+                        <div className="grid grid-cols-12 items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+                          <div className="col-span-5">Product</div>
+                          <div className="col-span-2 text-right">Rate (₹/L)</div>
+                          <div className="col-span-2 text-right">Qty (L)</div>
+                          <div className="col-span-2 text-right">Amount</div>
+                          <div className="col-span-1" />
+                        </div>
+
+                        {(editDeliveryForm.items || []).map((item, index) => (
+                          <div key={index} className="grid grid-cols-12 items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-b-0">
+                            <div className="col-span-5 flex items-center gap-2">
+                              <Select
+                                value={item.milkType || ''}
+                                onValueChange={(value) => {
+                                  const newRate = getPreferredRateForHouse(value)
+                                  const updated = [...editDeliveryForm.items]
+                                  const newQty = updated[index].qty ?? 0
+                                  updated[index] = { ...updated[index], milkType: value, rate: newRate, amount: newQty * newRate }
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-32">
+                                  <SelectValue>{item.milkType || 'Select'}</SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {getActiveProducts(productRates).map((rate) => (
+                                    <SelectItem key={rate.id} value={rate.name}>
+                                      {rate.name} (₹{getPreferredRateForHouse(rate.name)})
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="col-span-2 text-right">
+                              <p className="text-sm font-medium text-muted-foreground">₹{Number(item.rate).toLocaleString('en-IN')}</p>
+                            </div>
+
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={item.qty}
+                                onChange={(event) => {
+                                  const newQty = Number(event.target.value)
+                                  const newAmount = newQty * item.rate
+                                  const updated = [...editDeliveryForm.items]
+                                  updated[index] = { ...item, qty: newQty, amount: newAmount }
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                                className="w-full rounded border border-border bg-background px-2 py-1 text-right text-sm"
+                                placeholder="Qty"
+                              />
+                            </div>
+
+                            <div className="col-span-2 text-right">
+                              <p className="font-medium">₹{Number(item.amount).toLocaleString('en-IN')}</p>
+                            </div>
+
+                            <div className="col-span-1 text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  const updated = editDeliveryForm.items.filter((_, i) => i !== index)
+                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
+                                }}
+                                title="Remove item"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="delivery-note">Notes</Label>
+                  <Textarea
+                    id="delivery-note"
+                    value={editDeliveryForm.note || ''}
+                    onChange={(event) => setEditDeliveryForm({ ...editDeliveryForm, note: event.target.value })}
+                    placeholder="Optional delivery notes..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col">
+                  <p className="text-xs text-muted-foreground">Total</p>
+                  <p className="text-lg font-semibold">₹{Number(editDeliveryTotal).toLocaleString('en-IN')}</p>
+                  {editDeliveryTotal <= 0 && (
+                    <p className="mt-1 text-xs text-destructive">Total must be greater than zero to save.</p>
+                  )}
+                </div>
+
+                <DialogFooter className="p-0">
+                  <Button variant="outline" onClick={() => setEditDeliveryDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={() => void handleSaveDeliveryEdit()} disabled={editDeliverySaving || editDeliveryTotal <= 0}>
+                    {editDeliverySaving ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deletingDeliveryLog} onOpenChange={(open) => !open && setDeletingDeliveryLog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Delivery Log</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this delivery for {deletingDeliveryLog && new Date(deletingDeliveryLog.deliveredAt).toLocaleDateString('en-IN')}?
+              This will deduct ₹{deletingDeliveryLog ? Number(deletingDeliveryLog.totalAmount).toLocaleString('en-IN') : 0} from the house balance.
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingDeliveryLog(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => void handleDeleteDeliveryLog()} disabled={editDeliverySaving}>
+              {editDeliverySaving ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

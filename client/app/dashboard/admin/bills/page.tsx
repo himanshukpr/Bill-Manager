@@ -114,8 +114,8 @@ export default function BillsPage() {
       setBills(billsData)
       setHouses(housesData)
       hasLoadedOnceRef.current = true
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -141,7 +141,7 @@ export default function BillsPage() {
         })
         setPreviewData(data)
         setGenNote(data.lastNote ?? '')
-      } catch (e: any) {
+      } catch (e) {
         setPreviewData(null)
       } finally {
         setPreviewLoading(false)
@@ -311,8 +311,8 @@ export default function BillsPage() {
       }
       setGenerateOpen(false)
       load()
-    } catch (e: any) {
-      const msg = String(e?.message ?? '')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
       toast.error(msg || 'Failed to generate bill')
     } finally {
       setSaving(false)
@@ -326,8 +326,8 @@ export default function BillsPage() {
       toast.success('Bill deleted')
       setDeleteId(null)
       load()
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
     }
   }
 
