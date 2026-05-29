@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../auth/guards/auth.guard';
+import { JwtAuthGuard, AdminGuard } from '../auth/guards/auth.guard';
 import { Role } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard)
@@ -22,16 +22,19 @@ export class UsersController {
     return this.usersService.findAll(role);
   }
 
+  @UseGuards(AdminGuard)
   @Patch(':uuid/verify')
   verify(@Param('uuid') uuid: string, @Body('isVerified') isVerified: boolean) {
     return this.usersService.verify(uuid, isVerified);
   }
 
+  @UseGuards(AdminGuard)
   @Patch(':uuid/role')
   changeRole(@Param('uuid') uuid: string, @Body('role') role: Role) {
     return this.usersService.changeRole(uuid, role);
   }
 
+  @UseGuards(AdminGuard)
   @Delete(':uuid')
   remove(@Param('uuid') uuid: string) {
     return this.usersService.remove(uuid);

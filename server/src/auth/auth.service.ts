@@ -1,4 +1,4 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
@@ -72,5 +72,31 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _pw, ...result } = user;
     return result;
+  }
+
+  async impersonate(adminUuid: string, targetUuid: string) {
+    const target = await this.usersService.findById(targetUuid);
+    if (!target) throw new NotFoundException('User not found');
+    if (target.role !== Role.supplier) throw new ForbiddenException('Can only impersonate supplier accounts');
+
+    const payload = {
+      sub: target.uuid,
+      username: target.username,
+      email: target.email,
+      role: target.role,
+      isVerified: target.isVerified,
+      impersonator: adminUuid,
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload),
+      user: {
+        uuid: target.uuid,
+        username: target.username,
+        email: target.email,
+        role: target.role,
+        isVerified: target.isVerified,
+      },
+    };
   }
 }

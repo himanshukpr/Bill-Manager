@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Users, Search, ShieldCheck, Trash2, UserPlus, ShieldOff, Lock } from 'lucide-react'
+import { Users, Search, ShieldCheck, Trash2, UserPlus, ShieldOff, Lock, SwitchCamera } from 'lucide-react'
 import { usersApi, type User } from '@/lib/api'
+import { apiImpersonate, saveSessionAuth, saveAdminSession, dashboardPath, getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -23,6 +25,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 
 export default function UsersPage() {
+  const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -77,6 +80,7 @@ export default function UsersPage() {
         username: newUsername,
         password: newPassword,
         role: 'supplier',
+        isVerified: true,
       })
       toast.success('User created successfully')
       setAddDialogOpen(false)
@@ -113,6 +117,18 @@ export default function UsersPage() {
       toast.success('User deleted')
       setDeleteUuid(null)
       load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleImpersonate(u: User) {
+    try {
+      const adminSession = { ...getSessionAuth()! }
+      saveAdminSession('adminSession', adminSession)
+      const impersonated = await apiImpersonate(u.uuid)
+      saveSessionAuth(impersonated)
+      router.push(dashboardPath('supplier'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
@@ -162,6 +178,7 @@ export default function UsersPage() {
             onToggleVerify={toggleVerify}
             onChangeRole={(u) => { setSelectedUser(u); setNewRole(u.role as 'admin' | 'supplier'); setPrivilegeDialogOpen(true); }}
             onDelete={setDeleteUuid}
+            onImpersonate={handleImpersonate}
           />
         </div>
       )}
@@ -244,13 +261,14 @@ export default function UsersPage() {
 }
 
 function UserSection({
-  title, users, onToggleVerify, onChangeRole, onDelete,
+  title, users, onToggleVerify, onChangeRole, onDelete, onImpersonate,
 }: {
   title: string
   users: User[]
   onToggleVerify: (u: User) => void
   onChangeRole: (u: User) => void
   onDelete: (uuid: string) => void
+  onImpersonate?: (u: User) => void
 }) {
   if (users.length === 0) return null
   return (
@@ -301,6 +319,14 @@ function UserSection({
                 <Lock className="h-3.5 w-3.5 shrink-0" />
                 <span className="hidden sm:inline">Privilege</span>
               </Button>
+              {u.role === 'supplier' && u.isVerified && onImpersonate && (
+                <Button variant="ghost" size="sm"
+                  className="flex-shrink-0 gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950/30 whitespace-nowrap"
+                  onClick={() => onImpersonate(u)}>
+                  <SwitchCamera className="h-3.5 w-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Switch</span>
+                </Button>
+              )}
               <Button variant="ghost" size="icon"
                 className="flex-shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8"
                 onClick={() => onDelete(u.uuid)}>

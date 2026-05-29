@@ -9,6 +9,7 @@ export interface JwtPayload {
   email: string;
   role: string;
   isVerified: boolean;
+  impersonator?: string;
 }
 
 @Injectable()
@@ -28,6 +29,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: payload.email,
       role: payload.role,
       isVerified: payload.isVerified,
+      impersonator: payload.impersonator,
     };
   }
 }

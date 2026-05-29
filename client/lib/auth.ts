@@ -12,6 +12,7 @@ export type SessionAuth = {
   role: AppRole
   isVerified: boolean
   loginAt: string
+  impersonator?: string
 }
 
 // ─── Cookie helpers (used by Edge Middleware) ─────────────────────────────────
@@ -158,4 +159,67 @@ export async function apiRegister(
 
   // Auto-login after registration to get the JWT
   return apiLogin(username, password)
+}
+
+/**
+ * POST /auth/impersonate/:uuid
+ * Admin-only: returns a new session for the target supplier.
+ * The returned session carries an `impersonator` field for traceability.
+ */
+export async function apiImpersonate(uuid: string): Promise<SessionAuth> {
+  const session = getSessionAuth()
+  if (!session) throw new Error('Not authenticated')
+
+  const res = await fetchApi(`/auth/impersonate/${uuid}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`,
+    },
+  })
+
+  const data = await handleResponse<{
+    access_token: string
+    user: {
+      uuid: string
+      username: string
+      email: string
+      role: AppRole
+      isVerified: boolean
+    }
+  }>(res)
+
+  const impersonated: SessionAuth = {
+    token: data.access_token,
+    uuid: data.user.uuid,
+    username: data.user.username,
+    email: data.user.email,
+    role: data.user.role,
+    isVerified: data.user.isVerified,
+    loginAt: new Date().toISOString(),
+    impersonator: session.uuid,
+  }
+
+  return impersonated
+}
+
+/** Save the current admin session to sessionStorage under the given key */
+export function saveAdminSession(key: string, auth: SessionAuth): void {
+  if (typeof window === "undefined") return
+  try { window.sessionStorage.setItem(key, JSON.stringify(auth)) } catch { /* noop */ }
+}
+
+/** Restore and activate a saved admin session from sessionStorage */
+export function restoreAdminSession(key: string): SessionAuth | null {
+  if (typeof window === "undefined") return null
+  let raw: string | null = null
+  try { raw = window.sessionStorage.getItem(key) } catch { /* noop */ }
+  if (!raw) return null
+  try { return JSON.parse(raw) as SessionAuth } catch { return null }
+}
+
+/** Remove a saved admin session from sessionStorage */
+export function removeAdminSession(key: string): void {
+  if (typeof window === "undefined") return
+  try { window.sessionStorage.removeItem(key) } catch { /* noop */ }
 }
