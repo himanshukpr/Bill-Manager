@@ -250,6 +250,7 @@ export default function ReceiptsPage() {
   const [receivedYear, setReceivedYear] = useState<string>(String(CURRENT_YEAR_RECEIPT))
 
   const filteredPaymentsByMonth = useMemo(() => {
+    if (receivedMonth === 'all') return payments
     return payments.filter(p => {
       const d = new Date(p.createdAt)
       return d.getMonth() === parseInt(receivedMonth) && d.getFullYear() === parseInt(receivedYear)
@@ -545,7 +546,7 @@ export default function ReceiptsPage() {
     }
   }
 
-  const filtered = payments.filter(p => {
+  const filtered = filteredPaymentsByMonth.filter(p => {
     const house = p.balance?.house
     if (!house) return true
     return house.houseNo.toLowerCase().includes(search.toLowerCase()) ||
@@ -1110,6 +1111,7 @@ export default function ReceiptsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
                 {MONTH_NAMES_FULL.map((name, i) => (
                   <SelectItem key={i} value={String(i)}>{name}</SelectItem>
                 ))}
