@@ -5,12 +5,13 @@ import {
   UseGuards,
   Request,
   Get,
+  Param,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/auth.dto';
-import { LocalAuthGuard, JwtAuthGuard } from './guards/auth.guard';
+import { LocalAuthGuard, JwtAuthGuard, AdminGuard } from './guards/auth.guard';
 
 interface AuthenticatedRequest {
   user: {
@@ -55,5 +56,15 @@ export class AuthController {
   @Get('me')
   async getProfile(@Request() req: AuthenticatedRequest) {
     return this.authService.getMe(req.user.uuid);
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('impersonate/:uuid')
+  @HttpCode(HttpStatus.OK)
+  async impersonate(
+    @Request() req: AuthenticatedRequest,
+    @Param('uuid') uuid: string,
+  ) {
+    return this.authService.impersonate(req.user.uuid, uuid);
   }
 }

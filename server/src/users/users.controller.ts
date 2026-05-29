@@ -9,10 +9,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../auth/guards/auth.guard';
+import { JwtAuthGuard, AdminGuard } from '../auth/guards/auth.guard';
 import { Role } from '@prisma/client';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('users')
 export class UsersController {
   constructor(private usersService: UsersService) {}

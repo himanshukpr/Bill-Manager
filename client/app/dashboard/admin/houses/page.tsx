@@ -765,7 +765,7 @@ export default function HousesPage() {
     try {
       await Promise.all([
         housesApi.list(),
-        usersApi.list('supplier'),
+        usersApi.list('supplier', true),
       ])
     } catch (error: unknown) {
       if (!silent) {

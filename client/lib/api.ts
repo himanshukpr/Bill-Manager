@@ -1496,17 +1496,26 @@ export const billsApi = {
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 export const usersApi = {
-  list: async (role?: string) =>
-    apiGet<User[]>(`/users${role ? `?role=${role}` : ''}`, {
+  list: async (role?: string, fresh?: boolean) => {
+    if (fresh && isBrowser()) {
+      const cacheKey = `GET:/users${role ? `?role=${role}` : ''}`;
+      await db.queryCache.where('key').equals(cacheKey).delete();
+    }
+    return apiGet<User[]>(`/users${role ? `?role=${role}` : ''}`, {
       onData: async (data) => {
         if (isBrowser()) await db.users.bulkPut(data);
       },
-    }),
-  create: async (data: { username: string; email?: string; password: string; role?: 'admin' | 'supplier' }) => {
+    });
+  },
+  create: async (data: { username: string; email?: string; password: string; role?: 'admin' | 'supplier'; isVerified?: boolean }) => {
     if (isBrowser()) {
       await invalidateCache('/users');
     }
-    return apiPost<User>('/auth/register', { ...data, email: data.email || `${data.username}@billmanager.local` });
+    const user = await apiPost<User>('/auth/register', { ...data, email: data.email || `${data.username}@billmanager.local` });
+    if (data.isVerified && user?.uuid) {
+      await usersApi.verify(user.uuid, true);
+    }
+    return user;
   },
   verify: async (uuid: string, isVerified: boolean) => {
     if (isBrowser()) {

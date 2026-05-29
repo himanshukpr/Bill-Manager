@@ -113,10 +113,13 @@ export default function AdminHouseConfigPage() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
-  const houses = useLiveQuery(() => db.houses.toArray())
-  const suppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
+  const cachedHouses = useLiveQuery(() => db.houses.toArray())
+  const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
 
-  const loading = !houses || !suppliers || configsLoading;
+  const houses = cachedHouses ?? []
+  const suppliers = cachedSuppliers ?? []
+
+  const loading = !cachedHouses || !cachedSuppliers || configsLoading;
 
   // Debounce search input for better performance
   useEffect(() => {
@@ -145,10 +148,12 @@ export default function AdminHouseConfigPage() {
 
   const loadData = useCallback(async () => {
     try {
-      housesApi.list()
-      usersApi.list('supplier')
+      await Promise.all([
+        housesApi.list(),
+        usersApi.list('supplier', true),
+      ])
     } catch (error) {
-      toast.error('Failed to trigger background sync')
+      toast.error('Failed to refresh data')
     }
   }, [])
 
@@ -165,7 +170,7 @@ export default function AdminHouseConfigPage() {
   }, [suppliers])
 
   const drafts = useMemo(() => {
-    if (!houses || !rawConfigs) return {}
+    if (!cachedHouses || !rawConfigs) return {}
 
     const mappedConfigs = new Map<number, HouseConfig>()
     for (const c of rawConfigs) mappedConfigs.set(c.houseId, c)
@@ -183,7 +188,7 @@ export default function AdminHouseConfigPage() {
   }, [houses, rawConfigs])
 
   const filteredHouses = useMemo(() => {
-    if (!houses) return []
+    if (!cachedHouses) return []
     
     const housesByActiveStatus = houses.filter(house => {
       const draft = drafts[house.id]
@@ -224,7 +229,7 @@ export default function AdminHouseConfigPage() {
   }, [houses, drafts, debouncedSearch, shiftFilter, supplierFilter])
 
   const searchSuggestions = useMemo(() => {
-    if (!houses) return []
+    if (!cachedHouses) return []
 
     const query = search.trim().toLowerCase()
     if (!query) return []
