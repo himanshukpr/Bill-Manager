@@ -424,8 +424,23 @@ export class BillsService {
         if (head.amount <= 0) paymentIndex++;
       }
 
-      const prevBal = Number(bill.previousBalance ?? 0);
-      billsWithPending[i].pendingAmount = Math.max(0, remaining) + prevBal;
+      const unpaidTotal = Math.max(0, remaining);
+
+      // Excess payment after totalAmount flows to previousBalance
+      let prevRemaining = Number(bill.previousBalance ?? 0);
+      while (prevRemaining > 0 && paymentIndex < paymentQueue.length) {
+        const head = paymentQueue[paymentIndex];
+        if (head.amount <= 0) {
+          paymentIndex++;
+          continue;
+        }
+        const take = Math.min(head.amount, prevRemaining);
+        head.amount = +(head.amount - take).toFixed(2);
+        prevRemaining = +(prevRemaining - take).toFixed(2);
+        if (head.amount <= 0) paymentIndex++;
+      }
+
+      billsWithPending[i].pendingAmount = unpaidTotal + Math.max(0, prevRemaining);
     }
 
     return billsWithPending;
@@ -655,8 +670,23 @@ export class BillsService {
       }
 
       const unpaidTotal = +Math.max(0, remaining).toFixed(2);
-      const shouldBeClosed = unpaidTotal <= 0;
-      const outstandingAmount = unpaidTotal + Number(bill.previousBalance ?? 0);
+
+      // Excess payment after totalAmount flows to previousBalance
+      let prevRemaining = Number(bill.previousBalance ?? 0);
+      while (prevRemaining > 0 && paymentQueue.length > 0) {
+        const head = paymentQueue[0];
+        if (head.amount <= 0) {
+          paymentQueue.shift();
+          continue;
+        }
+        const take = Math.min(head.amount, prevRemaining);
+        head.amount = +(head.amount - take).toFixed(2);
+        prevRemaining = +(prevRemaining - take).toFixed(2);
+        if (head.amount <= 0) paymentQueue.shift();
+      }
+
+      const shouldBeClosed = unpaidTotal <= 0 && prevRemaining <= 0;
+      const outstandingAmount = unpaidTotal + Math.max(0, prevRemaining);
 
       // Only write to DB if something changed
       if (

@@ -660,9 +660,10 @@ export default function BillsPage() {
 
     if (!q) {
       return filtered.sort((a, b) => {
-        // Unpaid bills first (isClosed = false), paid bills at bottom (isClosed = true)
-        if (a.isClosed === b.isClosed) return 0
-        return a.isClosed ? 1 : -1
+        const aIsPaid = Number(a.outstandingAmount) <= 0
+        const bIsPaid = Number(b.outstandingAmount) <= 0
+        if (aIsPaid === bIsPaid) return 0
+        return aIsPaid ? 1 : -1
       })
     }
 
@@ -682,8 +683,10 @@ export default function BillsPage() {
     })
 
     const sorted = [...exactMatches, ...partialMatches].sort((a, b) => {
-      if (a.isClosed === b.isClosed) return 0
-      return a.isClosed ? 1 : -1
+      const aIsPaid = Number(a.outstandingAmount) <= 0
+      const bIsPaid = Number(b.outstandingAmount) <= 0
+      if (aIsPaid === bIsPaid) return 0
+      return aIsPaid ? 1 : -1
     })
 
     return sorted
@@ -870,15 +873,14 @@ export default function BillsPage() {
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Period</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Total</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Outstanding</th>
-                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Pending Amt.</th>
-                  <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Prev. Balance</th>
+                  <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Pre Bal</th>
                   <th className="hidden lg:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Generated</th>
                   <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((b, idx) => (
-                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''} ${b.isClosed ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
+                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''} ${Number(b.outstandingAmount) <= 0 ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
                     <td className="px-4 py-3">
                       <div>
                         <p className="font-semibold">{b.house?.houseNo}</p>
@@ -898,32 +900,25 @@ export default function BillsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className={`font-bold ${b.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-primary'}`}>
+                        <span className={`font-bold ${Number(b.outstandingAmount) <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-primary'}`}>
                           ₹{Number(b.totalAmount).toLocaleString('en-IN')}
                         </span>
-                        {b.isClosed && (
+                        {Number(b.outstandingAmount) <= 0 && (
                           <Badge className="bg-emerald-600 text-white flex items-center gap-1 h-5 px-2">
                             <Check className="h-3 w-3" /> Paid
                           </Badge>
                         )}
                       </div>
                     </td>
-                    {/* Outstanding Amount */}
+                    {/* Outstanding */}
                     <td className="px-4 py-3">
-                      {b.isClosed ? (
-                        <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">— Cleared</span>
-                      ) : b.outstandingAmount != null ? (
+                      {(!b.outstandingAmount || Number(b.outstandingAmount) <= 0) ? (
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">— Completed</span>
+                      ) : (
                         <span className="font-semibold text-amber-600 dark:text-amber-400">
                           ₹{Number(b.outstandingAmount).toLocaleString('en-IN')}
                         </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`font-semibold ${b.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-yellow-500 dark:text-yellow-400'}`}>
-                        ₹{(Number(b.outstandingAmount || 0) + Number(b.previousBalance || 0)).toLocaleString('en-IN')}
-                      </span>
                     </td>
                     <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">
                       ₹{Number(b.previousBalance).toLocaleString('en-IN')}
@@ -1173,10 +1168,10 @@ export default function BillsPage() {
                     </span>
                   </div>
                   {viewBill.outstandingAmount != null && (
-                    <div className={`flex justify-between text-sm border-t border-border pt-2 mt-1 ${viewBill.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                      <span className="font-medium">{viewBill.isClosed ? 'Status' : 'Outstanding Amount'}</span>
+                    <div className={`flex justify-between text-sm border-t border-border pt-2 mt-1 ${Number(viewBill.outstandingAmount) <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      <span className="font-medium">{Number(viewBill.outstandingAmount) <= 0 ? 'Status' : 'Outstanding Amount'}</span>
                       <span className="font-bold">
-                        {viewBill.isClosed ? '✓ Fully Paid' : `₹${Number(viewBill.outstandingAmount).toLocaleString('en-IN')} remaining`}
+                        {Number(viewBill.outstandingAmount) <= 0 ? '✓ Fully Paid' : `₹${Number(viewBill.outstandingAmount).toLocaleString('en-IN')} remaining`}
                       </span>
                     </div>
                   )}
