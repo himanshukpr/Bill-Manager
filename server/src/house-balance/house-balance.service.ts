@@ -224,7 +224,6 @@ export class HouseBalanceService {
     if (!balance)
       throw new NotFoundException(`House #${houseId} balance not found`);
 
-    const unpaid = Math.max(0, billTotal - amountToApply);
     const [bill, payment, updatedBalance] = await this.prisma.$transaction([
       this.prisma.bill.create({
         data: {
@@ -256,7 +255,7 @@ export class HouseBalanceService {
         where: { houseId },
         data: {
           previousBalance: { increment: billTotal - amountToApply },
-          currentBalance: { decrement: unpaid },
+          currentBalance: { decrement: billTotal },
         },
       }),
       this.prisma.deliveryLog.updateMany({
