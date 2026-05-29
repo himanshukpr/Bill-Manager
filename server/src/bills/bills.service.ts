@@ -334,7 +334,7 @@ export class BillsService {
           previousBalance,
           generatedDate: periodEnd,
           note: noteText || undefined,
-          outstandingAmount: totalAmount, // full amount outstanding at creation
+          outstandingAmount: totalAmount + previousBalance,
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
       });
@@ -424,7 +424,8 @@ export class BillsService {
         if (head.amount <= 0) paymentIndex++;
       }
 
-      billsWithPending[i].pendingAmount = Math.max(0, remaining);
+      const prevBal = Number(bill.previousBalance ?? 0);
+      billsWithPending[i].pendingAmount = Math.max(0, remaining) + prevBal;
     }
 
     return billsWithPending;
@@ -623,6 +624,7 @@ export class BillsService {
       select: {
         id: true,
         totalAmount: true,
+        previousBalance: true,
         generatedDate: true,
         isClosed: true,
         outstandingAmount: true,
@@ -652,8 +654,9 @@ export class BillsService {
         if (head.amount <= 0) paymentQueue.shift();
       }
 
-      const outstandingAmount = +Math.max(0, remaining).toFixed(2);
-      const shouldBeClosed = outstandingAmount <= 0;
+      const unpaidTotal = +Math.max(0, remaining).toFixed(2);
+      const shouldBeClosed = unpaidTotal <= 0;
+      const outstandingAmount = unpaidTotal + Number(bill.previousBalance ?? 0);
 
       // Only write to DB if something changed
       if (

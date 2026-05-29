@@ -870,6 +870,7 @@ export default function BillsPage() {
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Period</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Total</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Outstanding</th>
+                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Pending Amt.</th>
                   <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Prev. Balance</th>
                   <th className="hidden lg:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Generated</th>
                   <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
@@ -918,6 +919,11 @@ export default function BillsPage() {
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`font-semibold ${b.isClosed ? 'text-emerald-600 dark:text-emerald-400' : 'text-yellow-500 dark:text-yellow-400'}`}>
+                        ₹{(Number(b.outstandingAmount || 0) + Number(b.previousBalance || 0)).toLocaleString('en-IN')}
+                      </span>
                     </td>
                     <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">
                       ₹{Number(b.previousBalance).toLocaleString('en-IN')}

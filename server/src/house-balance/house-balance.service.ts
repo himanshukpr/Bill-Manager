@@ -239,7 +239,7 @@ export class HouseBalanceService {
           previousBalance: Number(balance.previousBalance),
           generatedDate: periodEnd,
           note: note || undefined,
-          outstandingAmount: billTotal,
+          outstandingAmount: billTotal + Number(balance.previousBalance),
         },
         include: { house: { select: { id: true, houseNo: true, area: true } } },
       }),
