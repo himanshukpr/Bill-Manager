@@ -158,7 +158,7 @@ async function main() {
   }
   console.log('  ✓ House configs created');
 
-  // ─── House Balances (with previous balance) ──────────
+  // ─── House Balances ───────────────────────────────────
   const balanceData = [
     { houseId: houses[0].id, previousBalance: 1200, currentBalance: 1850 },
     { houseId: houses[1].id, previousBalance: 0, currentBalance: 550 },
@@ -174,31 +174,10 @@ async function main() {
     { houseId: houses[11].id, previousBalance: 1500, currentBalance: 2030 },
   ];
 
-  const balances: HouseBalance[] = [];
   for (const b of balanceData) {
-    const balance = await prisma.houseBalance.create({ data: b });
-    balances.push(balance);
+    await prisma.houseBalance.create({ data: b });
   }
   console.log('  ✓ House balances created');
-
-  // ─── Payment History (receipts) ──────────────────────
-  const payments = [
-    { balanceRef: balances[0].id, amount: 500, discount: 0, note: 'Partial payment for March bill', createdAt: new Date('2026-03-10') },
-    { balanceRef: balances[0].id, amount: 700, discount: 50, note: 'Full payment + discount', createdAt: new Date('2026-04-05') },
-    { balanceRef: balances[2].id, amount: 750, discount: 0, note: 'Previous balance cleared', createdAt: new Date('2026-03-15') },
-    { balanceRef: balances[4].id, amount: 1000, discount: 100, note: 'March bill payment with loyalty discount', createdAt: new Date('2026-03-28') },
-    { balanceRef: balances[4].id, amount: 1100, discount: 0, note: 'April advance payment', createdAt: new Date('2026-04-01') },
-    { balanceRef: balances[7].id, amount: 800, discount: 0, note: 'Part payment', createdAt: new Date('2026-03-20') },
-    { balanceRef: balances[9].id, amount: 500, discount: 50, note: 'Discount on timely payment', createdAt: new Date('2026-04-02') },
-    { balanceRef: balances[11].id, amount: 1500, discount: 0, note: 'Full settlement', createdAt: new Date('2026-03-25') },
-    { balanceRef: balances[3].id, amount: 340, discount: 0, note: 'Previous balance paid', createdAt: new Date('2026-04-01') },
-    { balanceRef: balances[6].id, amount: 300, discount: 0, note: 'Part payment', createdAt: new Date('2026-04-08') },
-  ];
-
-  for (const p of payments) {
-    await prisma.paymentHistory.create({ data: p });
-  }
-  console.log('  ✓ Payment history created');
 
   // ─── Delivery Logs (last 30 days) ────────────────────
   // Build lookup from house ID to config info
@@ -253,73 +232,12 @@ async function main() {
           openingBalance: opening,
           closingBalance: opening + totalAmount,
           deliveredAt: deliveryDate,
-          billGenerated: dayOffset > 25,
+          billGenerated: false,
         },
       });
     }
   }
   console.log('  ✓ Delivery logs created (30 days)');
-
-  // ─── Bills (last 2 months) ───────────────────────────
-  const billMonths = [
-    { month: 3, year: 2026, fromDate: new Date('2026-03-01'), toDate: new Date('2026-03-31') },
-    { month: 4, year: 2026, fromDate: new Date('2026-04-01'), toDate: new Date('2026-04-30') },
-  ];
-
-  for (const bm of billMonths) {
-    for (let i = 0; i < houses.length; i++) {
-      const house = houses[i];
-      const bal = balances[i];
-
-      const cowQty = 30 + Math.floor(Math.random() * 60);
-      const cowRate = Number(house.rate1 || 55);
-      const cowAmount = cowQty * cowRate;
-
-      const items: any[] = [
-        { name: house.rate1Type || 'Cow Milk', quantity: cowQty, rate: cowRate, amount: cowAmount },
-      ];
-
-      let totalAmount = cowAmount;
-
-      if (house.rate2Type) {
-        const qty2 = 5 + Math.floor(Math.random() * 20);
-        const rate2 = Number(house.rate2 || 40);
-        const amount2 = qty2 * rate2;
-        items.push({ name: house.rate2Type, quantity: qty2, rate: rate2, amount: amount2 });
-        totalAmount += amount2;
-      }
-
-      const prevBal = bm.month === 3 ? bal.previousBalance : bal.currentBalance;
-
-      const bill = await prisma.bill.create({
-        data: {
-          month: bm.month,
-          year: bm.year,
-          fromDate: bm.fromDate,
-          toDate: bm.toDate,
-          totalAmount,
-          items,
-          previousBalance: prevBal,
-          outstandingAmount: totalAmount + Number(prevBal),
-          houseId: house.id,
-          isClosed: false,
-          note: null,
-        },
-      });
-
-      // Add notes to some bills
-      if (i % 3 === 0) {
-        await prisma.billNote.create({
-          data: {
-            billId: bill.id,
-            houseNo: house.houseNo,
-            note: { message: `Bill includes ${items.length} products` },
-          },
-        });
-      }
-    }
-  }
-  console.log('  ✓ Bills created (March & April)');
 
   // ─── Delivery Plans ──────────────────────────────────
   const deliveryPlans = [

@@ -581,7 +581,13 @@ export const housesApi = {
     apiGet<House[]>('/houses', {
       onData: async (data) => {
         const normalized = normalizeHouseCollection(data as House[]);
-        if (isBrowser()) await db.houses.bulkPut(normalized);
+        if (isBrowser()) {
+          const serverIds = new Set(normalized.map((h) => h.id));
+          await db.transaction('rw', db.houses, async () => {
+            await db.houses.where('id').above(0).and((h) => !serverIds.has(h.id)).delete();
+            await db.houses.bulkPut(normalized);
+          });
+        }
       },
     }).then((data) => normalizeHouseCollection(data as House[])),
   get: async (id: number) =>

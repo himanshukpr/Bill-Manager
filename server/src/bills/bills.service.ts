@@ -293,7 +293,7 @@ export class BillsService {
 
     return this.prisma.bill.findMany({
       where,
-      orderBy: [{ year: 'desc' }, { month: 'desc' }, { generatedDate: 'desc' }],
+      orderBy: { toDate: 'desc' },
       include: {
         house: { select: { houseNo: true, area: true, phoneNo: true } },
       },
@@ -434,7 +434,26 @@ export class BillsService {
 
       const unpaidTotal = Math.max(0, remaining);
 
-      billsWithPending[i].pendingAmount = unpaidTotal;
+      // Only the first bill carries previousBalance debt (starting balance).
+      // Later bills' previousBalance is a snapshot of rolled-over debt already
+      // tracked by earlier bills' outstandingAmounts.
+      let prevRemaining = 0;
+      if (i === 0) {
+        prevRemaining = Number(bill.previousBalance ?? 0);
+        while (prevRemaining > 0 && paymentIndex < paymentQueue.length) {
+          const head = paymentQueue[paymentIndex];
+          if (head.amount <= 0) {
+            paymentIndex++;
+            continue;
+          }
+          const take = Math.min(head.amount, prevRemaining);
+          head.amount = +(head.amount - take).toFixed(2);
+          prevRemaining = +(prevRemaining - take).toFixed(2);
+          if (head.amount <= 0) paymentIndex++;
+        }
+      }
+
+      billsWithPending[i].pendingAmount = unpaidTotal + Math.max(0, prevRemaining);
     }
 
     return billsWithPending;
@@ -645,10 +664,8 @@ export class BillsService {
       amount: Number(p.amount) + Number(p.discount ?? 0),
     }));
 
-    for (const bill of bills) {
-      // Skip bills that are already fully paid
-      if (Number(bill.outstandingAmount ?? 0) === 0) continue;
-
+    for (let i = 0; i < bills.length; i++) {
+      const bill = bills[i];
       let remaining = Number(bill.totalAmount ?? 0);
 
       // Always consume from the queue for EVERY bill (closed or not).
@@ -668,8 +685,27 @@ export class BillsService {
 
       const unpaidTotal = +Math.max(0, remaining).toFixed(2);
 
-      const shouldBeClosed = unpaidTotal <= 0;
-      const outstandingAmount = unpaidTotal;
+      // Only the first bill carries previousBalance debt (starting balance).
+      // Later bills' previousBalance is a snapshot of rolled-over debt already
+      // tracked by earlier bills' outstandingAmounts.
+      let prevRemaining = 0;
+      if (i === 0) {
+        prevRemaining = Number(bill.previousBalance ?? 0);
+        while (prevRemaining > 0 && paymentQueue.length > 0) {
+          const head = paymentQueue[0];
+          if (head.amount <= 0) {
+            paymentQueue.shift();
+            continue;
+          }
+          const take = Math.min(head.amount, prevRemaining);
+          head.amount = +(head.amount - take).toFixed(2);
+          prevRemaining = +(prevRemaining - take).toFixed(2);
+          if (head.amount <= 0) paymentQueue.shift();
+        }
+      }
+
+      const shouldBeClosed = unpaidTotal <= 0 && prevRemaining <= 0;
+      const outstandingAmount = unpaidTotal + Math.max(0, prevRemaining);
 
       // Only write to DB if something changed
       if (

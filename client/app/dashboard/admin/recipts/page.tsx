@@ -533,12 +533,17 @@ export default function ReceiptsPage() {
     // Load the house balance directly
     try {
       const bills = await billsApi.pending(houseId)
-      setFormBills(bills)
-      // Auto-select all bills
-      setFormSelectedBillIds(bills.map(b => b.id))
-      // Calculate total pending
-      const totalPending = bills.reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
-      setFormAmount(String(totalPending))
+      // Only keep the last generated/altered bill for all calculations and receipt
+      const lastBillOnly = bills.length > 0 ? [bills[bills.length - 1]] : []
+      setFormBills(lastBillOnly)
+      const lastBill = lastBillOnly.length > 0 ? lastBillOnly[0] : null
+      if (lastBill) {
+        setFormSelectedBillIds([lastBill.id])
+        setFormAmount(String(lastBill.pendingAmount || 0))
+      } else {
+        setFormSelectedBillIds([])
+        setFormAmount('')
+      }
     } catch (e) {
       toast.error('Failed to load balance')
     }
@@ -592,17 +597,18 @@ export default function ReceiptsPage() {
     [houses, formHouseId],
   )
 
-  const formPendingAmount = useMemo(
-    () => formBills.reduce((sum, bill) => sum + (bill.pendingAmount || 0), 0),
-    [formBills],
-  )
+  const lastBillPendingAmount = useMemo(() => {
+    if (formBills.length === 0) return 0
+    return formBills[formBills.length - 1].pendingAmount || 0
+  }, [formBills])
 
   const amountHelperAmount = useMemo(() => {
+    if (formBills.length > 0) return lastBillPendingAmount
     if (selectedHouse?.balance) {
       return Number(selectedHouse.balance.previousBalance ?? 0) + Number(selectedHouse.balance.currentBalance ?? 0)
     }
     return 0
-  }, [selectedHouse])
+  }, [formBills.length, lastBillPendingAmount, selectedHouse])
 
   const amountHelperLabel = `Use balance ₹${amountHelperAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 

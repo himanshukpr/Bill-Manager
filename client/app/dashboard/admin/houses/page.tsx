@@ -417,7 +417,7 @@ function getFilteredHouses(houses: House[], query: string): House[] {
 export default function HousesPage() {
   const cachedHouses = useLiveQuery(() => db.houses.toArray())
   const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
-  const houses = useMemo(() => cachedHouses ?? [], [cachedHouses])
+  const houses = useMemo(() => (cachedHouses ?? []).filter((h) => h.id > 0), [cachedHouses])
   const suppliers = useMemo(() => cachedSuppliers ?? [], [cachedSuppliers])
   const [hydrated, setHydrated] = useState(false)
   const [search, setSearch] = useState('')
