@@ -243,6 +243,19 @@ export default function ReceiptsPage() {
   const [loadingBills, setLoadingBills] = useState(false)
   const [billsCache, setBillsCache] = useState<Map<number, Bill>>(new Map())
 
+  const MONTH_NAMES_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+  const CURRENT_YEAR_RECEIPT = new Date().getFullYear()
+  const YEARS_RECEIPT = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR_RECEIPT - i)
+  const [receivedMonth, setReceivedMonth] = useState<string>(String(new Date().getMonth()))
+  const [receivedYear, setReceivedYear] = useState<string>(String(CURRENT_YEAR_RECEIPT))
+
+  const filteredPaymentsByMonth = useMemo(() => {
+    return payments.filter(p => {
+      const d = new Date(p.createdAt)
+      return d.getMonth() === parseInt(receivedMonth) && d.getFullYear() === parseInt(receivedYear)
+    })
+  }, [payments, receivedMonth, receivedYear])
+
   // Form
   const [formHouseId, setFormHouseId] = useState('')
   const [formAmount, setFormAmount] = useState('')
@@ -572,7 +585,7 @@ export default function ReceiptsPage() {
     }
   }
 
-  const totalReceived = payments.reduce((sum, p) => sum + Number(p.amount), 0)
+  const totalReceived = filteredPaymentsByMonth.reduce((sum, p) => sum + Number(p.amount), 0)
 
   const selectedHouse = useMemo(
     () => houses.find((house) => String(house.id) === formHouseId) ?? null,
@@ -1083,11 +1096,37 @@ export default function ReceiptsPage() {
 
       {/* Summary Card */}
       <div className="rounded-2xl border border-border bg-linear-to-br from-emerald-500/10 to-emerald-600/10 p-5">
-        <p className="text-sm font-medium text-muted-foreground">Total Received (All Time)</p>
-        <p className="mt-2 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
-          ₹{totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? 's' : ''} recorded</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Total Received</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
+              ₹{totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{filteredPaymentsByMonth.length} payment{filteredPaymentsByMonth.length !== 1 ? 's' : ''} recorded</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={receivedMonth} onValueChange={setReceivedMonth}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MONTH_NAMES_FULL.map((name, i) => (
+                  <SelectItem key={i} value={String(i)}>{name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={receivedYear} onValueChange={setReceivedYear}>
+              <SelectTrigger className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {YEARS_RECEIPT.map(y => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
       </div>
 
       {/* Search + Table */}
