@@ -474,6 +474,7 @@ export type Bill = {
   note?: string;
   house?: { id: number; houseNo: string; area?: string; phoneNo?: string };
   pendingAmount?: number;
+  _shiftLabel?: string;
 };
 
 export type GenerateAllBillsResult = {
