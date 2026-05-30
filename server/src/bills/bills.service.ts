@@ -290,7 +290,7 @@ export class BillsService {
 
     return this.prisma.bill.findMany({
       where,
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      orderBy: [{ year: 'desc' }, { month: 'desc' }, { generatedDate: 'desc' }],
       include: {
         house: { select: { houseNo: true, area: true, phoneNo: true } },
       },
@@ -410,6 +410,11 @@ export class BillsService {
     let paymentIndex = 0;
     for (let i = 0; i < billsWithPending.length; i++) {
       const bill = billsWithPending[i];
+      // Skip fully paid bills
+      if (Number(bill.outstandingAmount ?? 0) === 0) {
+        billsWithPending[i].pendingAmount = 0;
+        continue;
+      }
       let remaining = Number(bill.totalAmount ?? 0);
 
       while (remaining > 0 && paymentIndex < paymentQueue.length) {

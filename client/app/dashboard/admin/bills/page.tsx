@@ -105,35 +105,37 @@ function formatBillDate(value?: string): string {
 }
 
 function buildPrintableBillItems(items: BillItem[]): BillItem[] {
-  const printableItems = [
-    { name: 'Buffalo Milk', qty: 0, rate: 0, amount: 0 },
-    { name: 'Cow Milk', qty: 0, rate: 0, amount: 0 },
-    { name: 'Other', qty: 0, rate: 0, amount: 0 },
-  ]
+  let buffaloQty = 0, buffaloRate = 0, buffaloAmount = 0;
+  let cowQty = 0, cowRate = 0, cowAmount = 0;
+  let otherAmount = 0;
 
   for (const item of items) {
-    const name = String(item.name ?? '').trim().toLowerCase()
-    const qty = Number(item.qty ?? 0)
-    const rate = Number(item.rate ?? 0)
-    const amount = Number(item.amount ?? qty * rate)
+    const name = String(item.name ?? '').trim().toLowerCase();
+    const qty = Number(item.qty ?? 0);
+    const rate = Number(item.rate ?? 0);
+    const amount = Number(item.amount ?? qty * rate);
+    if (qty <= 0 && amount <= 0) continue;
 
-    if (qty <= 0 && amount <= 0) continue
-
-    const targetIndex = name.includes('buffalo') ? 0 : name.includes('cow') ? 1 : 2
-    const target = printableItems[targetIndex]
-    target.qty += qty > 0 ? qty : 0
-    target.amount += amount > 0 ? amount : 0
-
-    if (targetIndex !== 2 && rate > 0) {
-      if (target.rate <= 0) {
-        target.rate = rate
-      } else if (target.rate !== rate) {
-        target.rate = Number((target.amount / target.qty).toFixed(2))
-      }
+    if (name.includes('buffalo')) {
+      buffaloQty += qty;
+      buffaloAmount += amount;
+      if (buffaloRate <= 0) buffaloRate = rate;
+      else if (buffaloRate !== rate) buffaloRate = Number((buffaloAmount / buffaloQty).toFixed(2));
+    } else if (name.includes('cow')) {
+      cowQty += qty;
+      cowAmount += amount;
+      if (cowRate <= 0) cowRate = rate;
+      else if (cowRate !== rate) cowRate = Number((cowAmount / cowQty).toFixed(2));
+    } else {
+      otherAmount += amount;
     }
   }
 
-  return printableItems
+  const result: BillItem[] = [];
+  if (buffaloQty > 0) result.push({ name: 'Buffalo Milk', qty: buffaloQty, rate: buffaloRate, amount: buffaloAmount });
+  if (cowQty > 0) result.push({ name: 'Cow Milk', qty: cowQty, rate: cowRate, amount: cowAmount });
+  if (otherAmount > 0) result.push({ name: 'Other', qty: 0, rate: 0, amount: otherAmount });
+  return result;
 }
 
 function buildPrintableBillItemsFromLogs(logs: DeliveryLog[]): BillItem[] {
@@ -392,11 +394,6 @@ export default function BillsPage() {
           const house = bill.house ?? housesById.get(bill.houseId)
           if (!house) continue
 
-          const houseLogs = logsByHouseId.get(bill.houseId) ?? []
-          if (!hasPrintableBillContent({ ...bill, house }, houseLogs)) continue
-
-          const printableItems = getPrintableBillItems({ ...bill, house }, houseLogs)
-
           const existing = billsByHouseId.get(bill.houseId)
           const nextBillDate = new Date(bill.generatedDate).getTime()
           const existingBillDate = existing ? new Date(existing.generatedDate).getTime() : Number.NEGATIVE_INFINITY
@@ -405,7 +402,7 @@ export default function BillsPage() {
             const houseConfig = housesById.get(bill.houseId)?.configs?.[0]
             const supplierName = houseConfig?.supplier?.username
             const shiftLabel = houseConfig?.shift === 'morning' ? (supplierName ?? 'MORNING') : houseConfig?.shift === 'evening' ? 'EVENING' : houseConfig?.shift === 'shop' ? 'SHOP' : ''
-            billsByHouseId.set(bill.houseId, { ...bill, house, items: printableItems, _shiftLabel: shiftLabel as string | undefined })
+            billsByHouseId.set(bill.houseId, { ...bill, house, _shiftLabel: shiftLabel as string | undefined })
           }
         }
 
@@ -559,11 +556,12 @@ export default function BillsPage() {
         const items = buildPrintableBillItems(bill.items ?? [])
         items.forEach((item, index) => {
           const rowY = firstDataRowY + (index * rowHeight)
+          const isOther = String(item.name ?? '').toLowerCase() === 'other'
           const values = [
             String(index + 1),
             item.name ? item.name.toUpperCase() : '',
-            index === 2 ? '' : formatQtyLabel(Number(item.qty ?? 0)),
-            index === 2 ? '' : (Number(item.rate ?? 0) ? formatPlainAmount(Number(item.rate ?? 0)) : ''),
+            isOther ? '' : formatQtyLabel(Number(item.qty ?? 0)),
+            isOther ? '' : (Number(item.rate ?? 0) ? formatPlainAmount(Number(item.rate ?? 0)) : ''),
             Number(item.amount ?? 0) ? formatPlainAmount(Number(item.amount ?? 0)) : '',
           ]
           values.forEach((value, columnIndex) => {
@@ -591,7 +589,7 @@ export default function BillsPage() {
         doc.setFontSize(6.2)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
         doc.text('Total', tableX + receiptsWidth + 1.4, receiptsY + 3.1, { baseline: 'middle' })
-        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0)), tableX + innerWidth - 1.4, receiptsY + 3.1, { align: 'right', baseline: 'middle' })
+        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0) + previousBalance), tableX + innerWidth - 1.4, receiptsY + 3.1, { align: 'right', baseline: 'middle' })
 
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(4.8)
@@ -872,15 +870,15 @@ export default function BillsPage() {
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Period</th>
                   <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Total</th>
-                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Outstanding</th>
                   <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Pre Bal</th>
+                  <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Total+Pre</th>
                   <th className="hidden lg:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Generated</th>
                   <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((b, idx) => (
-                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''} ${Number(b.outstandingAmount) <= 0 ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
+                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
                     <td className="px-4 py-3">
                       <div>
                         <p className="font-semibold">{b.house?.houseNo}</p>
@@ -900,28 +898,19 @@ export default function BillsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className={`font-bold ${Number(b.outstandingAmount) <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-primary'}`}>
+                        <span className="font-bold text-primary">
                           ₹{Number(b.totalAmount).toLocaleString('en-IN')}
                         </span>
-                        {Number(b.outstandingAmount) <= 0 && (
-                          <Badge className="bg-emerald-600 text-white flex items-center gap-1 h-5 px-2">
-                            <Check className="h-3 w-3" /> Paid
-                          </Badge>
-                        )}
                       </div>
-                    </td>
-                    {/* Outstanding */}
-                    <td className="px-4 py-3">
-                      {(!b.outstandingAmount || Number(b.outstandingAmount) <= 0) ? (
-                        <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">— Completed</span>
-                      ) : (
-                        <span className="font-semibold text-amber-600 dark:text-amber-400">
-                          ₹{Number(b.outstandingAmount).toLocaleString('en-IN')}
-                        </span>
-                      )}
                     </td>
                     <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">
                       ₹{Number(b.previousBalance).toLocaleString('en-IN')}
+                    </td>
+                    {/* Total+Pre */}
+                    <td className="px-4 py-3">
+                      <span className="font-semibold text-amber-600 dark:text-amber-400">
+                        ₹{(Number(b.totalAmount) + Number(b.previousBalance)).toLocaleString('en-IN')}
+                      </span>
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-muted-foreground text-xs">
                       {new Date(b.generatedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}

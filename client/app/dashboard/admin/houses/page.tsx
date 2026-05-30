@@ -1270,7 +1270,7 @@ export default function HousesPage() {
         String(house.houseNo),
         house.area || '-',
         house.phoneNo || '-',
-        house.balance?.previousBalance ? `₹${Number(house.balance.previousBalance).toLocaleString('en-IN')}` : '-',
+        house.balance ? `₹${(Number(house.balance.previousBalance) + Number(house.balance.currentBalance)).toLocaleString('en-IN')}` : '-',
       ]),
       styles: {
         font: 'helvetica',
@@ -1510,8 +1510,8 @@ export default function HousesPage() {
                     </td>
                     <td className="px-2 py-2 sm:px-3">
                       {h.balance ? (
-                        <span className={`font-semibold ${Number(h.balance.previousBalance) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                          ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
+                        <span className={`font-semibold ${(Number(h.balance.previousBalance) + Number(h.balance.currentBalance)) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          ₹{(Number(h.balance.previousBalance) + Number(h.balance.currentBalance)).toLocaleString('en-IN')}
                         </span>
                       ) : '—'}
                     </td>

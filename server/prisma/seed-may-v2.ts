@@ -11,7 +11,7 @@ const adapter = new PrismaMariaDb(databaseUrl);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log('Seeding database for May 2026...');
+  console.log('Seeding database for April–May 2026...');
 
   // Clean existing data in reverse dependency order
   await prisma.deliveryPlan.deleteMany();
@@ -131,11 +131,59 @@ async function main() {
   }
   console.log('  ✓ House balances created');
 
-  // ─── Delivery Logs (May 1-28) ────────────────────────
+  // ─── Delivery Logs (April 1-30) ──────────────────────
   const houseConfigMap = new Map<number, { shift: Shift; supplierId: string }>();
   for (const c of configData) {
     houseConfigMap.set(c.house.id, { shift: c.shift, supplierId: c.supplier.uuid });
   }
+
+  for (let day = 1; day <= 30; day++) {
+    for (const house of houses) {
+      const cfg = houseConfigMap.get(house.id);
+      if (!cfg) continue;
+
+      const qty1 = 1 + Math.floor(Math.random() * 3);
+      const milkType = house.rate1Type || 'Cow Milk';
+      const rate = Number(house.rate1 || 55);
+      const amount1 = qty1 * rate;
+
+      const items: any[] = [{ milkType, qty: qty1, rate, amount: amount1 }];
+      let totalAmount = amount1;
+
+      if (house.rate2Type && Math.random() > 0.4) {
+        const qty2 = 1 + Math.floor(Math.random() * 2);
+        const rate2 = Number(house.rate2 || 40);
+        const amount2 = qty2 * rate2;
+        items.push({ milkType: house.rate2Type, qty: qty2, rate: rate2, amount: amount2 });
+        totalAmount += amount2;
+      }
+
+      const opening = 10 + Math.floor(Math.random() * 50);
+
+      const deliveryDate = new Date(2026, 3, day); // April is month 3 (0-indexed)
+      if (cfg.shift === Shift.morning) deliveryDate.setHours(6, 0, 0, 0);
+      else if (cfg.shift === Shift.evening) deliveryDate.setHours(17, 0, 0, 0);
+      else deliveryDate.setHours(10, 0, 0, 0);
+
+      await prisma.deliveryLog.create({
+        data: {
+          houseId: house.id,
+          supplierId: cfg.supplierId,
+          shift: cfg.shift,
+          items,
+          totalAmount,
+          openingBalance: opening,
+          closingBalance: opening + totalAmount,
+          deliveredAt: deliveryDate,
+          billGenerated: false,
+          isClosed: false,
+        },
+      });
+    }
+  }
+  console.log('  ✓ Delivery logs created (April 1-30)');
+
+  // ─── Delivery Logs (May 1-28) ────────────────────────
 
   for (let day = 1; day <= 28; day++) {
     for (const house of houses) {
@@ -211,7 +259,7 @@ async function main() {
   }
   console.log('  ✓ Delivery plans created');
 
-  console.log('\n✅ May 2026 seeded successfully!');
+  console.log('\n✅ April–May 2026 seeded successfully!');
   console.log(`   Users: ${await prisma.user.count()}`);
   console.log(`   Houses: ${await prisma.house.count()}`);
   console.log(`   Product rates: ${await prisma.productRate.count()}`);
