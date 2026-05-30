@@ -426,21 +426,7 @@ export class BillsService {
 
       const unpaidTotal = Math.max(0, remaining);
 
-      // Excess payment after totalAmount flows to previousBalance
-      let prevRemaining = Number(bill.previousBalance ?? 0);
-      while (prevRemaining > 0 && paymentIndex < paymentQueue.length) {
-        const head = paymentQueue[paymentIndex];
-        if (head.amount <= 0) {
-          paymentIndex++;
-          continue;
-        }
-        const take = Math.min(head.amount, prevRemaining);
-        head.amount = +(head.amount - take).toFixed(2);
-        prevRemaining = +(prevRemaining - take).toFixed(2);
-        if (head.amount <= 0) paymentIndex++;
-      }
-
-      billsWithPending[i].pendingAmount = unpaidTotal + Math.max(0, prevRemaining);
+      billsWithPending[i].pendingAmount = unpaidTotal;
     }
 
     return billsWithPending;
@@ -652,6 +638,9 @@ export class BillsService {
     }));
 
     for (const bill of bills) {
+      // Skip bills that are already fully paid
+      if (Number(bill.outstandingAmount ?? 0) === 0) continue;
+
       let remaining = Number(bill.totalAmount ?? 0);
 
       // Always consume from the queue for EVERY bill (closed or not).
@@ -671,22 +660,8 @@ export class BillsService {
 
       const unpaidTotal = +Math.max(0, remaining).toFixed(2);
 
-      // Excess payment after totalAmount flows to previousBalance
-      let prevRemaining = Number(bill.previousBalance ?? 0);
-      while (prevRemaining > 0 && paymentQueue.length > 0) {
-        const head = paymentQueue[0];
-        if (head.amount <= 0) {
-          paymentQueue.shift();
-          continue;
-        }
-        const take = Math.min(head.amount, prevRemaining);
-        head.amount = +(head.amount - take).toFixed(2);
-        prevRemaining = +(prevRemaining - take).toFixed(2);
-        if (head.amount <= 0) paymentQueue.shift();
-      }
-
-      const shouldBeClosed = unpaidTotal <= 0 && prevRemaining <= 0;
-      const outstandingAmount = unpaidTotal + Math.max(0, prevRemaining);
+      const shouldBeClosed = unpaidTotal <= 0;
+      const outstandingAmount = unpaidTotal;
 
       // Only write to DB if something changed
       if (

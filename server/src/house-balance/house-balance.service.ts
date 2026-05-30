@@ -59,9 +59,25 @@ export class HouseBalanceService {
       }),
     ]);
 
-    // After recording a payment, try to recompute bill closures for this house
+    // Deduct the payment from the latest bill's totalAmount portion only
     try {
-      await this.billsService.recomputeClosuresForHouse(dto.houseId);
+      const latestBill = await this.prisma.bill.findFirst({
+        where: { houseId: dto.houseId },
+        orderBy: { generatedDate: 'desc' },
+        select: { id: true, totalAmount: true, outstandingAmount: true },
+      });
+      if (latestBill) {
+        const billTotal = Number(latestBill.totalAmount ?? 0);
+        const paid = Math.min(totalAmount, billTotal);
+        const newOutstanding = Math.max(0, billTotal - paid).toFixed(2);
+        await this.prisma.bill.update({
+          where: { id: latestBill.id },
+          data: {
+            outstandingAmount: +newOutstanding,
+            isClosed: +newOutstanding <= 0,
+          },
+        });
+      }
     } catch {
       // ignore errors here
     }
