@@ -531,6 +531,7 @@ export type ProductRate = {
 
 export type DeliveryLogItem = {
   milkType: string;
+  name?: string;
   qty: number;
   rate: number;
   amount: number;
