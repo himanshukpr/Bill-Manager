@@ -1281,21 +1281,31 @@ export const balanceApi = {
       if (data.billIds?.length) (paymentBase as PaymentHistory & { billIds?: number[] }).billIds = data.billIds;
       if (data.discount) (paymentBase as PaymentHistory & { discount?: number }).discount = data.discount;
 
-      const resolveNextPreviousBalance = (current: number) => {
-        if (balance?.previousBalance !== undefined && balance?.previousBalance !== null) {
-          return Number(balance.previousBalance) || 0;
+      // Cascade: reduce currentBalance first (to 0), then previousBalance
+      const resolveNextBalances = (currentCurr: number, currentPrev: number) => {
+        if (balance?.currentBalance !== undefined && balance?.currentBalance !== null) {
+          const serverCurr = Number(balance.currentBalance) || 0;
+          const serverPrev = Number(balance.previousBalance) ?? 0;
+          return { currentBalance: serverCurr, previousBalance: serverPrev };
         }
-        return Math.round((current - totalAmount) * 100) / 100;
+        const fromCurrent = Math.min(totalAmount, Math.max(0, currentCurr));
+        const fromPrevious = totalAmount - fromCurrent;
+        return {
+          currentBalance: Math.round((currentCurr - fromCurrent) * 100) / 100,
+          previousBalance: Math.round((currentPrev - fromPrevious) * 100) / 100,
+        };
       };
 
       if (existingHouse) {
+        const currentCurr = Number(existingHouse.balance?.currentBalance ?? 0);
         const currentPrev = Number(existingHouse.balance?.previousBalance ?? 0);
-        const nextPrev = resolveNextPreviousBalance(currentPrev);
+        const { currentBalance: nextCurr, previousBalance: nextPrev } = resolveNextBalances(currentCurr, currentPrev);
         await db.houses.put({
           ...existingHouse,
           balance: {
             ...(existingHouse.balance ?? { id: balance?.id ?? 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' }),
             houseId: data.houseId,
+            currentBalance: String(nextCurr),
             previousBalance: String(nextPrev),
           },
         });
@@ -1306,13 +1316,15 @@ export const balanceApi = {
         (cached) => {
           const updateHouse = (house: House) => {
             if (house.id !== data.houseId) return house;
+            const currentCurr = Number(house.balance?.currentBalance ?? 0);
             const currentPrev = Number(house.balance?.previousBalance ?? 0);
-            const nextPrev = resolveNextPreviousBalance(currentPrev);
+            const { currentBalance: nextCurr, previousBalance: nextPrev } = resolveNextBalances(currentCurr, currentPrev);
             return {
               ...house,
               balance: {
                 ...(house.balance ?? { id: balance?.id ?? 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' }),
                 houseId: data.houseId,
+                currentBalance: String(nextCurr),
                 previousBalance: String(nextPrev),
               },
             };
@@ -1327,12 +1339,14 @@ export const balanceApi = {
       await updateCachedQueries<HouseBalance>(
         (cacheKey) => cacheKey === `GET:/house-balance/${data.houseId}`,
         (cached) => {
+          const currentCurr = Number(cached?.currentBalance ?? 0);
           const currentPrev = Number(cached?.previousBalance ?? 0);
-          const nextPrev = resolveNextPreviousBalance(currentPrev);
+          const { currentBalance: nextCurr, previousBalance: nextPrev } = resolveNextBalances(currentCurr, currentPrev);
           const nextPayments = cached?.payments ? [paymentBase, ...cached.payments.filter((p) => p.id !== paymentBase.id)] : [paymentBase];
           return {
             ...(cached ?? { id: balance?.id ?? 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' }),
             houseId: data.houseId,
+            currentBalance: String(nextCurr),
             previousBalance: String(nextPrev),
             payments: nextPayments,
           };

@@ -39,6 +39,11 @@ export class HouseBalanceService {
     // Calculate total amount including discount
     const totalAmount = dto.amount + (dto.discount || 0);
 
+    // Cascade: reduce currentBalance first (to 0), then previousBalance
+    const currentBal = Number(balance.currentBalance ?? 0);
+    const fromCurrent = Math.min(totalAmount, Math.max(0, currentBal));
+    const fromPrevious = totalAmount - fromCurrent;
+
     const [payment, updatedBalance] = await this.prisma.$transaction([
       this.prisma.paymentHistory.create({
         data: {
@@ -52,14 +57,13 @@ export class HouseBalanceService {
       this.prisma.houseBalance.update({
         where: { houseId: dto.houseId },
         data: {
-          previousBalance: {
-            decrement: totalAmount,
-          },
+          currentBalance: { decrement: fromCurrent },
+          ...(fromPrevious > 0 ? { previousBalance: { decrement: fromPrevious } } : {}),
         },
       }),
     ]);
 
-    // Deduct the payment from the latest bill's totalAmount portion only
+    // Deduct the payment from the latest bill's outstandingAmount
     try {
       const latestBill = await this.prisma.bill.findFirst({
         where: { houseId: dto.houseId },
@@ -67,9 +71,9 @@ export class HouseBalanceService {
         select: { id: true, totalAmount: true, outstandingAmount: true },
       });
       if (latestBill) {
-        const billTotal = Number(latestBill.totalAmount ?? 0);
-        const paid = Math.min(totalAmount, billTotal);
-        const newOutstanding = Math.max(0, billTotal - paid).toFixed(2);
+        const billOutstanding = Number(latestBill.outstandingAmount ?? latestBill.totalAmount ?? 0);
+        const paid = Math.min(totalAmount, billOutstanding);
+        const newOutstanding = Math.max(0, billOutstanding - paid).toFixed(2);
         await this.prisma.bill.update({
           where: { id: latestBill.id },
           data: {
