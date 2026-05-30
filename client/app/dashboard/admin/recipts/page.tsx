@@ -532,12 +532,14 @@ export default function ReceiptsPage() {
     setLoadingBills(true)
     try {
       const bills = await billsApi.pending(houseId)
-      setFormBills(bills)
-      // Auto-select all bills
-      setFormSelectedBillIds(bills.map(b => b.id))
-      // Calculate total pending
-      const totalPending = bills.reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
-      setFormAmount(String(totalPending))
+      // Only show the latest bill
+      const sorted = [...bills].sort(
+        (a, b) => new Date(b.generatedDate).getTime() - new Date(a.generatedDate).getTime()
+      )
+      const latestBill = sorted[0] ?? null
+      setFormBills(latestBill ? [latestBill] : [])
+      setFormSelectedBillIds(latestBill ? [latestBill.id] : [])
+      setFormAmount(String(latestBill?.pendingAmount || 0))
     } catch (e) {
       toast.error('Failed to load bills')
       setFormBills([])
