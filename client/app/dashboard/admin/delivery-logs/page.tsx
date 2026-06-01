@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Truck, Package, Edit2, Trash2, Save, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '@/lib/db'
 
 import {
   AlertDialog,
@@ -44,7 +46,6 @@ type EditingLog = {
 }
 
 export default function DeliveryLogsPage() {
-  const [logs, setLogs] = useState<DeliveryLog[]>([])
   const [houses, setHouses] = useState<Map<number, House>>(new Map())
   const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [loading, setLoading] = useState(true)
@@ -53,6 +54,10 @@ export default function DeliveryLogsPage() {
   const [editingLog, setEditingLog] = useState<EditingLog | null>(null)
   const [deletingLog, setDeletingLog] = useState<DeliveryLog | null>(null)
 
+  // Primary source: live Dexie cache — instant, reactive, consistent across views
+  const cachedLogs = useLiveQuery(() => db.deliveryLogs.toArray())
+
+  // Background refresh: fetch latest from server to keep Dexie cache in sync
   useEffect(() => {
     async function load() {
       try {
@@ -61,7 +66,6 @@ export default function DeliveryLogsPage() {
           housesApi.list(),
           productRatesApi.list(),
         ])
-        setLogs(logsData)
         const houseMap = new Map<number, House>()
         for (const house of housesData) {
           houseMap.set(house.id, house)
@@ -72,7 +76,17 @@ export default function DeliveryLogsPage() {
       finally { setLoading(false) }
     }
     load()
+
+    // Periodic refresh (every 30s) catches cross-tab changes
+    const interval = setInterval(load, 30_000)
+    return () => clearInterval(interval)
   }, [])
+
+  // Logs to display: use Dexie cache if available, fall back to server response
+  const logs = useMemo(() => {
+    if (cachedLogs && cachedLogs.length > 0) return cachedLogs as DeliveryLog[]
+    return []
+  }, [cachedLogs])
 
   const ratesMap = useMemo(() => {
     const map: Record<string, string> = {}
@@ -133,7 +147,7 @@ export default function DeliveryLogsPage() {
     setSaving(true)
     try {
       const updated = await deliveryLogsApi.update(editingLog.log.id, { items })
-      setLogs((prev) => prev.map((l) => (l.id === editingLog.log.id ? updated : l)))
+      // Dexie cache is already updated by deliveryLogsApi.update → useLiveQuery picks it up
       toast.success('Delivery log updated successfully')
       setEditingLog(null)
     } catch (error) {
@@ -149,7 +163,7 @@ export default function DeliveryLogsPage() {
     setSaving(true)
     try {
       await deliveryLogsApi.delete(deletingLog.id)
-      setLogs((prev) => prev.filter((l) => l.id !== deletingLog.id))
+      // Dexie cache is already updated by deliveryLogsApi.delete → useLiveQuery picks it up
       toast.success('Delivery log deleted successfully')
       setDeletingLog(null)
     } catch (error) {

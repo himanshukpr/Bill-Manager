@@ -20,6 +20,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel,
+} from '@/components/ui/alert-dialog'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -298,6 +302,11 @@ export default function ReceiptsPage() {
   const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
+  const [editingPayment, setEditingPayment] = useState<PaymentHistory | null>(null)
+  const [editingPaymentNote, setEditingPaymentNote] = useState('')
+  const [editingPaymentAmount, setEditingPaymentAmount] = useState('')
+  const [editingPaymentDiscount, setEditingPaymentDiscount] = useState('')
+  const [deletingPayment, setDeletingPayment] = useState<PaymentHistory | null>(null)
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
@@ -994,6 +1003,67 @@ export default function ReceiptsPage() {
     doc.save(`House_${summaryHouse.houseNo}_Summary_${periodLabel.replace(' ', '_')}.pdf`)
   }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
+  async function handleEditPayment() {
+    if (!editingPayment) return
+
+    try {
+      const amountRaw = editingPaymentAmount.trim()
+      const discountRaw = editingPaymentDiscount.trim()
+      const newAmount = amountRaw === '' ? 0 : parseFloat(amountRaw)
+      const newDiscount = discountRaw === '' ? 0 : parseFloat(discountRaw)
+
+      const effectiveNewAmount = isNaN(newAmount) ? Number(editingPayment.amount) : newAmount
+      const effectiveNewDiscount = isNaN(newDiscount) ? Number(editingPayment.discount ?? 0) : newDiscount
+
+      if (effectiveNewAmount <= 0 && effectiveNewDiscount <= 0) {
+        toast.error('Amount or discount must be greater than 0')
+        return
+      }
+
+      const oldTotal = Number(editingPayment.amount) + Number(editingPayment.discount ?? 0)
+      const newTotal = effectiveNewAmount + effectiveNewDiscount
+      const amountChanged = !isNaN(newAmount) && Math.abs(newAmount - Number(editingPayment.amount)) > 0.001
+      const discountChanged = !isNaN(newDiscount) && Math.abs(newDiscount - Number(editingPayment.discount ?? 0)) > 0.001
+
+      if (Math.abs(oldTotal - newTotal) > 0.001 || amountChanged || discountChanged) {
+        await balanceApi.updatePayment(editingPayment.id, {
+          amount: isNaN(newAmount) ? undefined : newAmount,
+          discount: isNaN(newDiscount) ? undefined : newDiscount,
+          note: editingPaymentNote || undefined,
+        })
+        toast.success('Payment updated')
+      } else {
+        await balanceApi.updatePayment(editingPayment.id, {
+          note: editingPaymentNote || undefined,
+        })
+        toast.success('Payment note updated')
+      }
+      setEditingPayment(null)
+      const [paymentsData] = await Promise.all([
+        balanceApi.allPayments(),
+      ])
+      setPayments(paymentsData)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update payment')
+    }
+  }
+
+  async function handleDeletePayment() {
+    if (!deletingPayment) return
+
+    try {
+      await balanceApi.deletePayment(deletingPayment.id)
+      toast.success('Payment record deleted')
+      setDeletingPayment(null)
+      const [paymentsData] = await Promise.all([
+        balanceApi.allPayments(),
+      ])
+      setPayments(paymentsData)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete payment')
+    }
+  }
+
   async function handleRecord() {
     if (!formHouseId || !formAmount) { toast.error('House and Amount are required'); return }
     setSaving(true)
@@ -1158,6 +1228,11 @@ export default function ReceiptsPage() {
                           <span className="font-bold text-emerald-600 dark:text-emerald-400">
                             ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                           </span>
+                          {Number(p.discount ?? 0) > 0 && (
+                            <span className="ml-1 text-xs font-normal text-red-500">
+                              (₹{Number(p.discount).toLocaleString('en-IN', { maximumFractionDigits: 2 })} discount)
+                            </span>
+                          )}
                         </td>
                         <td className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">{p.note ?? '—'}</td>
 
@@ -1179,6 +1254,29 @@ export default function ReceiptsPage() {
                             className="h-8 w-8 p-0"
                           >
                             <Rows3 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setEditingPayment(p)
+                              setEditingPaymentNote(p.note ?? '')
+                              setEditingPaymentAmount(String(Number(p.amount)))
+                              setEditingPaymentDiscount(String(Number(p.discount ?? 0)))
+                            }}
+                            title="Edit payment"
+                            className="h-8 w-8 p-0"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeletingPayment(p)}
+                            title="Delete payment"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </td>
                       </tr>
@@ -1986,6 +2084,75 @@ export default function ReceiptsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Edit Payment Dialog */}
+      <Dialog open={!!editingPayment} onOpenChange={(open) => !open && setEditingPayment(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Payment</DialogTitle>
+            <DialogDescription>
+              Update the payment details for {editingPayment?.balance?.house ? `House ${editingPayment.balance.house.houseNo}` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label htmlFor="edit-payment-amount">Amount (₹)</Label>
+              <Input
+                id="edit-payment-amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={editingPaymentAmount}
+                onChange={(e) => setEditingPaymentAmount(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-payment-discount">Discount (₹)</Label>
+              <Input
+                id="edit-payment-discount"
+                type="number"
+                step="0.01"
+                min="0"
+                value={editingPaymentDiscount}
+                onChange={(e) => setEditingPaymentDiscount(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-payment-note">Note</Label>
+              <Input
+                id="edit-payment-note"
+                value={editingPaymentNote}
+                onChange={(e) => setEditingPaymentNote(e.target.value)}
+                placeholder="Payment note..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingPayment(null)}>Cancel</Button>
+            <Button onClick={() => void handleEditPayment()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Payment Confirmation */}
+      <AlertDialog open={!!deletingPayment} onOpenChange={(open) => !open && setDeletingPayment(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Payment Record</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this payment record of ₹{deletingPayment ? Number(deletingPayment.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : 0}
+              {deletingPayment?.balance?.house ? ` for ${deletingPayment.balance.house.houseNo}` : ''}?
+              The amount will be added back to the house's previous balance. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button variant="destructive" onClick={() => void handleDeletePayment()}>
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

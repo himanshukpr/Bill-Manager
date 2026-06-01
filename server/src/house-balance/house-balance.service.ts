@@ -39,11 +39,6 @@ export class HouseBalanceService {
     // Calculate total amount including discount
     const totalAmount = dto.amount + (dto.discount || 0);
 
-    // Cascade: reduce currentBalance first (to 0), then previousBalance
-    const currentBal = Number(balance.currentBalance ?? 0);
-    const fromCurrent = Math.min(totalAmount, Math.max(0, currentBal));
-    const fromPrevious = totalAmount - fromCurrent;
-
     const [payment, updatedBalance] = await this.prisma.$transaction([
       this.prisma.paymentHistory.create({
         data: {
@@ -57,8 +52,9 @@ export class HouseBalanceService {
       this.prisma.houseBalance.update({
         where: { houseId: dto.houseId },
         data: {
-          currentBalance: { decrement: fromCurrent },
-          ...(fromPrevious > 0 ? { previousBalance: { decrement: fromPrevious } } : {}),
+          previousBalance: {
+            decrement: totalAmount,
+          },
         },
       }),
     ]);
@@ -143,6 +139,135 @@ export class HouseBalanceService {
       where: { houseId },
       data: { currentBalance },
     });
+  }
+
+  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number }) {
+    const payment = await this.prisma.paymentHistory.findUnique({
+      where: { id },
+      include: { balance: true },
+    });
+    if (!payment)
+      throw new NotFoundException(`Payment #${id} not found`);
+
+    const data: Record<string, unknown> = {};
+    if (dto.note !== undefined) data.note = dto.note;
+    if (dto.amount !== undefined) data.amount = dto.amount;
+    if (dto.discount !== undefined) data.discount = dto.discount;
+
+    const oldTotal = Number(payment.amount) + Number(payment.discount ?? 0);
+    const newTotal =
+      (dto.amount ?? Number(payment.amount)) +
+      (dto.discount ?? Number(payment.discount ?? 0));
+    const delta = +(oldTotal - newTotal).toFixed(2); // positive = refund, negative = more to deduct
+
+    if (delta !== 0) {
+      // Find the bill that was current when this payment was recorded
+      const billAtPaymentTime = await this.prisma.bill.findFirst({
+        where: { houseId: payment.balance.houseId, generatedDate: { lte: payment.createdAt } },
+        orderBy: { generatedDate: 'desc' },
+        select: { id: true, outstandingAmount: true, totalAmount: true },
+      });
+
+      if (billAtPaymentTime) {
+        await this.prisma.$transaction([
+          this.prisma.houseBalance.update({
+            where: { id: payment.balanceRef },
+            data: {
+              previousBalance: { increment: delta },
+            },
+          }),
+          this.prisma.bill.update({
+            where: { id: billAtPaymentTime.id },
+            data: {
+              outstandingAmount: {
+                increment: delta,
+              },
+              isClosed: false,
+            },
+          }),
+          this.prisma.paymentHistory.update({
+            where: { id },
+            data,
+          }),
+        ]);
+      } else {
+        await this.prisma.$transaction([
+          this.prisma.houseBalance.update({
+            where: { id: payment.balanceRef },
+            data: {
+              previousBalance: { increment: delta },
+            },
+          }),
+          this.prisma.paymentHistory.update({
+            where: { id },
+            data,
+          }),
+        ]);
+      }
+    } else {
+      await this.prisma.paymentHistory.update({
+        where: { id },
+        data,
+      });
+    }
+
+    return { updated: true };
+  }
+
+  async deletePayment(id: number) {
+    const payment = await this.prisma.paymentHistory.findUnique({
+      where: { id },
+      include: { balance: true },
+    });
+    if (!payment)
+      throw new NotFoundException(`Payment #${id} not found`);
+
+    const totalAmount = Number(payment.amount) + Number(payment.discount ?? 0);
+
+    // Find the bill that was adjusted when this payment was recorded
+    const billAtPaymentTime = await this.prisma.bill.findFirst({
+      where: { houseId: payment.balance.houseId, generatedDate: { lte: payment.createdAt } },
+      orderBy: { generatedDate: 'desc' },
+      select: { id: true, outstandingAmount: true, totalAmount: true },
+    });
+
+    // Reverse bill outstanding adjustment on the bill that was current at payment time
+    if (billAtPaymentTime) {
+      const billOutstanding = Number(billAtPaymentTime.outstandingAmount ?? billAtPaymentTime.totalAmount ?? 0);
+      const newOutstanding = +(billOutstanding + totalAmount).toFixed(2);
+      await this.prisma.$transaction([
+        this.prisma.houseBalance.update({
+          where: { id: payment.balanceRef },
+          data: {
+            previousBalance: { increment: totalAmount },
+          },
+        }),
+        this.prisma.bill.update({
+          where: { id: billAtPaymentTime.id },
+          data: {
+            outstandingAmount: newOutstanding,
+            isClosed: newOutstanding <= 0,
+          },
+        }),
+        this.prisma.paymentHistory.delete({
+          where: { id },
+        }),
+      ]);
+    } else {
+      await this.prisma.$transaction([
+        this.prisma.houseBalance.update({
+          where: { id: payment.balanceRef },
+          data: {
+            previousBalance: { increment: totalAmount },
+          },
+        }),
+        this.prisma.paymentHistory.delete({
+          where: { id },
+        }),
+      ]);
+    }
+
+    return { deleted: true };
   }
 
   // Close a date range by generating a bill + recording payment

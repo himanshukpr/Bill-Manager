@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   ParseIntPipe,
@@ -13,6 +14,7 @@ import {
   RecordPaymentDto,
   UpdatePreviousBalanceDto,
   UpdateCurrentBalanceDto,
+  UpdatePaymentDto,
 } from './dto/payment.dto';
 import { ClosePeriodDto } from './dto/close-period.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
@@ -40,6 +42,19 @@ export class HouseBalanceController {
   @Post('payment')
   recordPayment(@Body() dto: RecordPaymentDto) {
     return this.service.recordPayment(dto);
+  }
+
+  @Patch('payment/:id')
+  updatePayment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePaymentDto,
+  ) {
+    return this.service.updatePayment(id, dto);
+  }
+
+  @Delete('payment/:id')
+  deletePayment(@Param('id', ParseIntPipe) id: number) {
+    return this.service.deletePayment(id);
   }
 
   @Post('close-period')

@@ -1005,20 +1005,6 @@ export default function HousesPage() {
         toast.success('Delivery updated successfully')
       }
 
-      // Update balance if amount changed
-      if (amountDifference !== 0) {
-        try {
-          const currentBalance = await balanceApi.get(summaryHouse.id)
-          const currentPreviousBalance = parseFloat(currentBalance.previousBalance) || 0
-          const newPreviousBalance = currentPreviousBalance + amountDifference
-          await balanceApi.updatePrevious(summaryHouse.id, newPreviousBalance)
-          toast.success('Balance updated')
-        } catch (error: unknown) {
-          console.error('Failed to update balance:', error)
-          toast.warning('Balance update failed - delivery saved but balance unchanged')
-        }
-      }
-
       // Reload logs to get updated data
       const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
       setSummaryLogs(logs)

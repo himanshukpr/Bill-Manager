@@ -15,7 +15,7 @@ export class RecordPaymentDto {
 
   @Type(() => Number)
   @IsNumber()
-  @Min(0.01)
+  @Min(0)
   amount: number;
 
   @IsOptional()
@@ -44,4 +44,22 @@ export class UpdateCurrentBalanceDto {
   @Type(() => Number)
   @IsNumber()
   currentBalance: number;
+}
+
+export class UpdatePaymentDto {
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amount?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  discount?: number;
 }

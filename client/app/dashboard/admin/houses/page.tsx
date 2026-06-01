@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import {
@@ -64,6 +64,7 @@ type PaymentSummaryRow = {
   id: number
   paidAt: string
   paidAmount: number
+  discount: number
   remainingAmount: number
   note?: string
 }
@@ -455,11 +456,36 @@ export default function HousesPage() {
     return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
+  const matchingBill = useMemo(() => {
+    return summaryBills.find(
+      b => b.year === summaryPeriod.year && b.month === summaryPeriod.month + 1,
+    ) ?? null
+  }, [summaryBills, summaryPeriod])
+
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
+
+    // If a bill exists for this period, derive product summary from bill items
+    if (matchingBill && matchingBill.items?.length) {
+      const items = matchingBill.items as BillItem[]
+      const productMap = new Map<string, number>()
+      for (const item of items) {
+        if (item.name && item.qty > 0) {
+          productMap.set(item.name, (productMap.get(item.name) ?? 0) + item.qty)
+        }
+      }
+      return Array.from(productMap.entries())
+        .map(([product, quantity]) => ({
+          product,
+          months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity }],
+          totalQuantity: quantity,
+        }))
+        .sort((a, b) => b.totalQuantity - a.totalQuantity)
+    }
+
     const pendingLogs = filteredSummaryLogs.filter(log => !log.billGenerated)
     return buildMonthlyProductSummary(pendingLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBill])
 
   const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
     if (!summaryHouse) return []
@@ -484,13 +510,15 @@ export default function HousesPage() {
     let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
 
     return payments.map((payment) => {
-      const paidAmount = Number(payment.amount ?? 0) + Number(payment.discount ?? 0)
-      remainingAmount = Math.max(0, remainingAmount - paidAmount)
+      const paidAmount = Number(payment.amount ?? 0)
+      const discount = Number(payment.discount ?? 0)
+      remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
 
       return {
         id: payment.id,
         paidAt: payment.createdAt,
         paidAmount,
+        discount,
         remainingAmount,
         note: payment.note,
       }
@@ -511,7 +539,24 @@ export default function HousesPage() {
   }, [summaryRows, summaryFromDate, summaryToDate, hasDateRangeFilter])
 
   const summaryTotals = useMemo(() => {
-    if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
+    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
+
+    // If a bill exists for this period, use its data
+    if (matchingBill) {
+      const items = (matchingBill.items as BillItem[]) ?? []
+      const productMap = new Map<string, { qty: number; amount: number }>()
+      for (const item of items) {
+        if (item.name && item.qty > 0) {
+          const existing = productMap.get(item.name) ?? { qty: 0, amount: 0 }
+          productMap.set(item.name, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
+        }
+      }
+      return {
+        productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+        grandTotal: Number(matchingBill.totalAmount),
+      }
+    }
+
     const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
@@ -534,7 +579,7 @@ export default function HousesPage() {
       productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal,
     }
-  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBill])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
@@ -576,15 +621,17 @@ export default function HousesPage() {
       currentY += 6
 
       const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      const totalDiscount = paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0)
       autoTable(doc, {
         startY: currentY,
-        head: [['Date', 'Paid (₹)']],
+        head: [['Date', 'Paid (₹)', 'Discount (₹)']],
         body: [
           ...paymentSummaryRows.map((row) => [
             new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
             row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
           ]),
-          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
         ],
         margin: { left: 14, right: 14 },
         styles: { fontSize: 9 },
@@ -1959,40 +2006,89 @@ export default function HousesPage() {
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-muted/50">
-                              <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Paid</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {paymentSummaryRows.map((row, idx) => (
-                              <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                <td className="px-4 py-3 font-medium text-foreground">
-                                  {new Date(row.paidAt).toLocaleDateString('en-IN', {
-                                    day: 'numeric',
-                                    month: 'short',
-                                    year: 'numeric',
-                                  })}
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/50">
+                                <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paymentSummaryRows.map((row, idx) => (
+                                <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                  <td className="px-4 py-3 font-medium text-foreground">
+                                    {new Date(row.paidAt).toLocaleDateString('en-IN', {
+                                      day: 'numeric',
+                                      month: 'short',
+                                      year: 'numeric',
+                                    })}
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                    ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="px-4 py-3 text-right text-red-500">
+                                    {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                <td className="px-4 py-3 text-foreground">Total Received</td>
+                                <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                                  ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                 </td>
-                                <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
-                                  ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                <td className="px-4 py-3 text-right text-red-500">
+                                  ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                 </td>
                               </tr>
-                            ))}
-                            <tr className="border-t-2 border-border bg-muted/50 font-semibold">
-                              <td className="px-4 py-3 text-foreground">Total Received</td>
-                              <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
-                                ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </td>
-                            </tr>
                           </tbody>
                         </table>
                       </div>
                     )}
                   </div>
                 </div>
+
+                {matchingBill && (
+                  <div>
+                    <h3 className="mb-3 text-sm font-semibold">Generated Bill</h3>
+                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(matchingBill.items as BillItem[]).map((item, idx) => (
+                              <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">{item.name}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                              <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                ₹{Number(matchingBill.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                              <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                              <td className="px-4 py-3 text-right text-primary">
+                                ₹{(Number(matchingBill.totalAmount) + Number(matchingBill.previousBalance)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Monthly Summary Grid */}
                 <div>
@@ -2060,7 +2156,7 @@ export default function HousesPage() {
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
+                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryBalance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
                                         ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -2071,7 +2167,7 @@ export default function HousesPage() {
                                 <tr className="border-t-2 border-border bg-muted/50 font-bold">
                                   <td className="px-4 py-3 text-foreground">Grand Total</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
+                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryBalance?.previousBalance ?? 0)
                                     const grandTotal = summaryTotals.grandTotal + prevBal
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-primary">
@@ -2080,7 +2176,7 @@ export default function HousesPage() {
                                     )
                                   })}
                                 </tr>
-                                {!hasDateRangeFilter && (
+                                {/* {!hasDateRangeFilter && (
                                   <tr className="border-t border-border bg-muted/50 font-semibold">
                                     <td className="px-4 py-3">Pending Amount</td>
                                     {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
@@ -2094,7 +2190,7 @@ export default function HousesPage() {
                                       )
                                     })}
                                   </tr>
-                                )}
+                                )} */}
                               </>
                             )}
                           </tbody>
