@@ -36,7 +36,7 @@ const PDF_COLUMNS = 2
 const PDF_ROWS = 4
 const PDF_CARD_GAP_X = 4
 const PDF_CARD_GAP_Y = 4
-const PDF_TABLE_ROWS = 3
+const PDF_TABLE_ROWS = 4
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
@@ -475,10 +475,11 @@ export default function BillsPage() {
       const amtWidth = 16
       const contentWidth = leftColWidth + particularsWidth + qtyWidth + rateWidth + amtWidth
       const contentLeftPad = (innerWidth - contentWidth) / 2
-      const headerTextY = 4.5
-      const titleY = 11.5
-      const toY = 18.5
-      const tableTop = 23.5
+      const headerTextY = 3.5
+      const titleY = 8.5
+      const noteY = 12
+      const toY = 14.5
+      const tableTop = 18
       const tableHeaderHeight = 6.6
       const rowHeight = 4.65
       const textColor: [number, number, number] = [20, 20, 20]
@@ -539,7 +540,7 @@ export default function BillsPage() {
         const innerRight = x + cardWidth - 1
         const rowX = innerX + contentLeftPad
 
-        doc.setFont('helvetica', 'italic')
+        doc.setFont('helvetica', 'bolditalic')
         doc.setFontSize(5.7)
         doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2])
         doc.text(`Bill of Month: ${MONTH_NAMES[bill.month]}`, rowX, innerY + headerTextY)
@@ -550,8 +551,14 @@ export default function BillsPage() {
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
         doc.text('DAIRY', x + cardWidth / 2, innerY + titleY, { align: 'center' })
 
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(5.5)
+        doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2])
+        doc.text('Note: Bill has to be submitted by 15th of month', x + cardWidth / 2, innerY + noteY, { align: 'center' })
+
         doc.setFont('helvetica', 'bolditalic')
         doc.setFontSize(6.5)
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
         doc.text(`To: ${bill.house?.houseNo ?? ''}`, rowX, innerY + toY)
 
         const firstDataRowY = innerY + tableTop + tableHeaderHeight
@@ -583,21 +590,30 @@ export default function BillsPage() {
           ]
           values.forEach((value, columnIndex) => {
             drawCell(colXs[columnIndex], rowY, colWidths[columnIndex], rowHeight, value, columnIndex === 1 ? 'left' : 'center', {
-              size: columnIndex === 1 ? 5.6 : 5.6,
+              bold: true,
+              size: 5.6,
               fill: true,
             })
           })
         })
 
+        // Previous Balance row
         const previousBalance = Number(bill.previousBalance ?? 0)
+        const balanceLabel = previousBalance < 0 ? 'ADVANCE' : 'BAL'
+        const prevRowY = firstDataRowY + (items.length * rowHeight)
+        const prevValues = ['', 'PREVIOUS BALANCE / ADVANCE', '', '', `${formatPlainAmount(Math.abs(previousBalance))} ${balanceLabel}`]
+        prevValues.forEach((value, columnIndex) => {
+          drawCell(colXs[columnIndex], prevRowY, colWidths[columnIndex], rowHeight, value, columnIndex === 1 || columnIndex === 4 ? 'right' : 'center', {
+            bold: true,
+            size: 5.6,
+            fill: true,
+          })
+        })
+
         const outstandingAmount = Number(bill.outstandingAmount ?? bill.totalAmount ?? 0)
         const receipts = Math.max(0, Number(bill.totalAmount ?? 0) - outstandingAmount)
-        const balanceLabel = previousBalance < 0 ? 'ADVANCE' : 'BAL'
-        const previousLineText = `PREVIOUS BALANCE / ADVANCE : ${Math.abs(previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 0 })} ${balanceLabel}`
 
-        drawCell(tableX, footerStartY, innerWidth, 5.3, previousLineText, 'center', { italic: true, size: 5.8, fill: true })
-
-        const receiptsY = footerStartY + 5.3
+        const receiptsY = footerStartY
         const receiptsWidth = innerWidth * 0.68
         const totalWidth = innerWidth - receiptsWidth
         drawCell(tableX, receiptsY, receiptsWidth, 5.9, `THIS MONTH RECEIPTS: Rs. ${formatPlainAmount(receipts)}`, 'left', { bold: true, size: 5.7, fill: true })
