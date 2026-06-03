@@ -104,36 +104,50 @@ function formatBillDate(value?: string): string {
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+function cleanItemName(name: string): string {
+  const text = name.trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function billItemProduct(name: string): 'buffalo' | 'cow' | 'other' {
+  const lower = name.toLowerCase().trim()
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ')) return 'buffalo'
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ')) return 'cow'
+  return 'other'
+}
+
 function buildPrintableBillItems(items: BillItem[]): BillItem[] {
-  let buffaloQty = 0, buffaloRate = 0, buffaloAmount = 0;
-  let cowQty = 0, cowRate = 0, cowAmount = 0;
+  let buffaloQty = 0, buffaloAmount = 0;
+  let cowQty = 0, cowAmount = 0;
   let otherAmount = 0;
 
   for (const item of items) {
-    const name = String(item.name ?? '').trim().toLowerCase();
+    const name = String(item.name ?? '').trim();
     const qty = Number(item.qty ?? 0);
-    const rate = Number(item.rate ?? 0);
-    const amount = Number(item.amount ?? qty * rate);
+    const amount = Number(item.amount ?? 0);
     if (qty <= 0 && amount <= 0) continue;
 
-    if (name.includes('buffalo')) {
+    const product = billItemProduct(name);
+    if (product === 'buffalo') {
       buffaloQty += qty;
       buffaloAmount += amount;
-      if (buffaloRate <= 0) buffaloRate = rate;
-      else if (buffaloRate !== rate) buffaloRate = Number((buffaloAmount / buffaloQty).toFixed(2));
-    } else if (name.includes('cow')) {
+    } else if (product === 'cow') {
       cowQty += qty;
       cowAmount += amount;
-      if (cowRate <= 0) cowRate = rate;
-      else if (cowRate !== rate) cowRate = Number((cowAmount / cowQty).toFixed(2));
     } else {
       otherAmount += amount;
     }
   }
 
   const result: BillItem[] = [];
-  if (buffaloQty > 0) result.push({ name: 'Buffalo Milk', qty: buffaloQty, rate: buffaloRate, amount: buffaloAmount });
-  if (cowQty > 0) result.push({ name: 'Cow Milk', qty: cowQty, rate: cowRate, amount: cowAmount });
+  if (buffaloQty > 0) result.push({ name: 'Buffalo Milk', qty: buffaloQty, rate: Number((buffaloAmount / buffaloQty).toFixed(2)), amount: buffaloAmount });
+  if (cowQty > 0) result.push({ name: 'Cow Milk', qty: cowQty, rate: Number((cowAmount / cowQty).toFixed(2)), amount: cowAmount });
   if (otherAmount > 0) result.push({ name: 'Other', qty: 0, rate: 0, amount: otherAmount });
   return result;
 }
@@ -179,9 +193,12 @@ function buildItemsFromDeliveryLogs(logs: DeliveryLog[]): BillItem[] {
 
       const key = `${normalizedType}:${rate}`
       const existingItem = itemSummary.get(key)
+      const displayName = normalizedType.endsWith('milk')
+        ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1, -4) + 'Milk'
+        : normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1) + ' Milk';
       if (!existingItem) {
         itemSummary.set(key, {
-          name: `${normalizedType.charAt(0).toUpperCase()}${normalizedType.slice(1)} Milk`,
+          name: displayName,
           qty,
           rate,
           amount,
@@ -1126,7 +1143,7 @@ export default function BillsPage() {
                     <tbody>
                       {(viewBill.items as BillItem[]).map((it, i) => (
                         <tr key={`${it.name ?? 'item'}-${i}`} className="border-t border-border/60">
-                          <td className="px-4 py-2.5">{it.name}</td>
+                          <td className="px-4 py-2.5">{cleanItemName(it.name ?? '')}</td>
                           <td className="px-4 py-2.5 text-right">{it.qty}</td>
                           <td className="px-4 py-2.5 text-right">₹{it.rate}</td>
                           <td className="px-4 py-2.5 text-right font-medium">₹{it.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>

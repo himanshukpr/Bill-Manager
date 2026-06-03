@@ -247,8 +247,11 @@ export class BillsService {
         const key = `${normalizedType}:${rate}`;
         const existingItem = itemSummary.get(key);
         if (!existingItem) {
+          const displayName = normalizedType.endsWith('milk')
+            ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1, -4) + 'Milk'
+            : normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1) + ' Milk';
           itemSummary.set(key, {
-            name: `${normalizedType.charAt(0).toUpperCase()}${normalizedType.slice(1)} Milk`,
+            name: displayName,
             qty,
             rate,
             amount,

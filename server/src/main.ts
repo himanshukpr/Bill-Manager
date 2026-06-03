@@ -17,6 +17,7 @@ async function bootstrap() {
       'https://bill-manager-pi.vercel.app',
       'http://localhost:3000',
       'http://localhost:5173',
+      'http://31.97.235.218:8080',
       process.env.CORS_ORIGIN,
     ].filter(Boolean),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],

@@ -75,7 +75,25 @@ type DeliveryEditForm = {
 }
 
 function normalizeMilkType(value: unknown): string {
-  return String(value ?? '').trim()
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function cleanItemName(name: string): string {
+  const text = name.trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
 function normalizeRateType(value: unknown): string {
@@ -176,6 +194,7 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
       const qty = Number(item.qty ?? 0)
       if (!qty) return null
       const milkType = normalizeMilkType(item.milkType)
+      if (!milkType) return null
       return `${milkType} ${qty.toLocaleString('en-IN')}L`
     }).filter((part): part is string => Boolean(part))
 
@@ -471,7 +490,8 @@ export default function HousesPage() {
       const productMap = new Map<string, number>()
       for (const item of items) {
         if (item.name && item.qty > 0) {
-          productMap.set(item.name, (productMap.get(item.name) ?? 0) + item.qty)
+          const product = cleanItemName(item.name)
+          productMap.set(product, (productMap.get(product) ?? 0) + item.qty)
         }
       }
       return Array.from(productMap.entries())
@@ -547,8 +567,9 @@ export default function HousesPage() {
       const productMap = new Map<string, { qty: number; amount: number }>()
       for (const item of items) {
         if (item.name && item.qty > 0) {
-          const existing = productMap.get(item.name) ?? { qty: 0, amount: 0 }
-          productMap.set(item.name, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
+          const product = cleanItemName(item.name)
+          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
+          productMap.set(product, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
         }
       }
       return {
@@ -2065,7 +2086,7 @@ export default function HousesPage() {
                           <tbody>
                             {(matchingBill.items as BillItem[]).map((item, idx) => (
                               <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                <td className="px-4 py-3 font-medium text-foreground">{item.name}</td>
+                                <td className="px-4 py-3 font-medium text-foreground">{cleanItemName(item.name ?? '')}</td>
                                 <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
                                 <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
                                 <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
