@@ -556,18 +556,20 @@ export default function ReceiptsPage() {
 
     // Load the house balance directly
     try {
-      const bills = await billsApi.pending(houseId)
+      const [bills, balance] = await Promise.all([
+        billsApi.pending(houseId),
+        balanceApi.get(houseId),
+      ])
       // Only keep the last generated/altered bill for all calculations and receipt
       const lastBillOnly = bills.length > 0 ? [bills[bills.length - 1]] : []
       setFormBills(lastBillOnly)
       const lastBill = lastBillOnly.length > 0 ? lastBillOnly[0] : null
       if (lastBill) {
         setFormSelectedBillIds([lastBill.id])
-        setFormAmount(String(lastBill.pendingAmount || 0))
       } else {
         setFormSelectedBillIds([])
-        setFormAmount('')
       }
+      setFormAmount(String(Number(balance.previousBalance ?? 0)))
     } catch (e) {
       toast.error('Failed to load balance')
     }
@@ -1119,7 +1121,10 @@ export default function ReceiptsPage() {
   }
 
   async function handleRecord() {
-    if (!formHouseId || !formAmount) { toast.error('House and Amount are required'); return }
+    if (!formHouseId) { toast.error('House is required'); return }
+    const amount = formAmount === '' ? 0 : parseFloat(formAmount)
+    const discount = formDiscount === '' ? 0 : parseFloat(formDiscount)
+    if ((amount <= 0 || isNaN(amount)) && (discount <= 0 || isNaN(discount))) { toast.error('Amount or Discount must be greater than 0'); return }
     setSaving(true)
     try {
       if (formClosePeriod) {
@@ -1133,16 +1138,16 @@ export default function ReceiptsPage() {
           houseId: parseInt(formHouseId),
           fromDate: formFromDate,
           toDate: formToDate,
-          amount: parseFloat(formAmount),
+          amount,
           note: formNote || undefined,
         })
       } else {
         await balanceApi.record({
           houseId: parseInt(formHouseId),
-          amount: parseFloat(formAmount),
+          amount,
           note: formNote || undefined,
           billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
-          discount: formDiscount ? parseFloat(formDiscount) : undefined,
+          discount: discount > 0 ? discount : undefined,
         })
       }
       toast.success('Payment recorded successfully')
