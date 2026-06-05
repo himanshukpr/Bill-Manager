@@ -18,12 +18,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel,
-} from '@/components/ui/alert-dialog'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -271,7 +266,6 @@ export default function ReceiptsPage() {
   const [formHouseSelected, setFormHouseSelected] = useState(false)
   const [formBills, setFormBills] = useState<Bill[]>([])
   const [formSelectedBillIds, setFormSelectedBillIds] = useState<number[]>([])
-  const [formPaymentMode, setFormPaymentMode] = useState<'all' | 'selected'>('all')
   const [formDiscount, setFormDiscount] = useState('')
   const [formClosePeriod, setFormClosePeriod] = useState(false)
   const [formFromDate, setFormFromDate] = useState<string>('')
@@ -417,6 +411,35 @@ export default function ReceiptsPage() {
     }
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
+  // Auto-tick bills based on amount and mode
+  useEffect(() => {
+    if (!formBills.length) return
+
+    if (formPaymentMode === 'all') {
+      // In 'all' mode, tick all non-closed bills
+      const nonClosedBillIds = formBills
+        .filter(b => !b.isClosed)
+        .map(b => b.id)
+      setFormSelectedBillIds(nonClosedBillIds)
+    } else if (formPaymentMode === 'selected' && formAmount) {
+      // In 'selected' mode, auto-tick bills based on entered amount
+      let remaining = parseFloat(formAmount) || 0
+      const autoTicked: number[] = []
+
+      for (const bill of formBills) {
+        if (bill.isClosed) continue // Skip closed bills
+        const pending = bill.pendingAmount || 0
+        if (remaining > 0) {
+          autoTicked.push(bill.id)
+          remaining -= pending
+        }
+        if (remaining <= 0) break
+      }
+
+      setFormSelectedBillIds(autoTicked)
+    }
+  }, [formAmount, formPaymentMode, formBills])
+
   // Fetch period summary and delivery logs when close period dates are set
   useEffect(() => {
     const fetchPeriodData = async () => {
@@ -505,15 +528,16 @@ export default function ReceiptsPage() {
     setFormArea(area)
     setFormPhone(phone)
     setFormHouseSelected(true)
-    setFormPaymentMode('all')
     setFormSelectedBillIds([])
 
     // Load the house balance directly
     try {
-      const houseBalance = await balanceApi.get(houseId)
-      const totalPending =
-        (parseFloat(String(houseBalance.previousBalance ?? 0)) +
-         parseFloat(String(houseBalance.currentBalance ?? 0)))
+      const bills = await billsApi.pending(houseId)
+      setFormBills(bills)
+      // Auto-select all bills
+      setFormSelectedBillIds(bills.map(b => b.id))
+      // Calculate total pending
+      const totalPending = bills.reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
       setFormAmount(String(totalPending))
     } catch (e) {
       toast.error('Failed to load balance')
@@ -1301,7 +1325,6 @@ export default function ReceiptsPage() {
           setFormSelectedBillIds([])
           setFormHouseSelected(false)
           setFormHouseQuery('')
-          setFormPaymentMode('all')
           setFormDiscount('')
         }
       }}>
@@ -1445,7 +1468,83 @@ export default function ReceiptsPage() {
                   </div>
                 </div>
 
-                {/* Bills Selection Section Removed */}
+                {/* Bills Selection */}
+                {loadingBills ? (
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
+                  </div>
+                ) : formBills.length > 0 ? (
+                  <div className="space-y-1 border border-border rounded-lg p-2 bg-muted/30">
+                    <div className="flex items-center justify-between mb-1">
+                      <Label className="text-xs sm:text-sm font-semibold">Bills to Pay</Label>
+                      <Select value={formPaymentMode} onValueChange={(v: "all" | "selected") => {
+                        setFormPaymentMode(v)
+                        if (v === 'all') {
+                          setFormSelectedBillIds(formBills.map(b => b.id))
+                          const total = formBills.reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
+                          setFormAmount(String(total))
+                        }
+                      }}>
+                        <SelectTrigger className="w-36">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Bills</SelectItem>
+                          <SelectItem value="selected">Selected</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                      {formBills.map(bill => {
+                        const daysInMonth = new Date(bill.year, bill.month, 0).getDate()
+                        const calculatedDateRange = `1 - ${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
+                        const actualDateRange = bill.fromDate && bill.toDate
+                          ? `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                          : calculatedDateRange
+                        return (
+                          <div key={bill.id} className={`flex items-center gap-1 p-1.5 rounded border text-xs ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
+                            {formPaymentMode === 'selected' && (
+                              <Checkbox
+                                checked={formSelectedBillIds.includes(bill.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setFormSelectedBillIds([...formSelectedBillIds, bill.id])
+                                  } else {
+                                    setFormSelectedBillIds(formSelectedBillIds.filter(id => id !== bill.id))
+                                  }
+                                  // Update amount based on selected bills
+                                  const selected = formPaymentMode === 'selected'
+                                    ? (checked ? [...formSelectedBillIds, bill.id] : formSelectedBillIds.filter(id => id !== bill.id))
+                                    : formSelectedBillIds
+                                  const total = formBills
+                                    .filter(b => selected.includes(b.id))
+                                    .reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
+                                  setFormAmount(String(total))
+                                }}
+                              />
+                            )}
+                            <div className="flex-1 text-xs">
+                              <div className="font-medium">{actualDateRange}</div>
+                              <div className="text-muted-foreground">₹{Number(bill.totalAmount).toLocaleString('en-IN')}</div>
+                            </div>
+                            <div className={`text-right font-semibold text-xs ${bill.isClosed ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {bill.isClosed ? (
+                                <div className="flex items-center gap-1"><Check className="h-3 w-3" /> Closed</div>
+                              ) : (
+                                <div>Pending: ₹{(bill.pendingAmount || 0).toLocaleString('en-IN')}</div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-2 text-xs text-muted-foreground">
+                    No bills found for this house
+                  </div>
+                )}
               </>
             )}
 
