@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react'
+import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2, Eye } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, invalidateCache, type PaymentHistory, type House, type HouseBalance, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
+import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, invalidateCache, type PaymentHistory, type House, type HouseBalance, type Bill, type BillItem, type DeliveryLog, type ProductRate } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -46,7 +46,7 @@ type PaymentSummaryRow = {
   id: number
   paidAt: string
   paidAmount: number
-  previousBalance: number
+  discount: number
   remainingAmount: number
   note?: string
 }
@@ -57,7 +57,25 @@ type DeliveryEditForm = {
 }
 
 function normalizeMilkType(value: unknown): string {
-  return String(value ?? '').trim()
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function cleanItemName(name: string): string {
+  const text = name.trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
 function normalizeRateType(value: unknown): string {
@@ -271,6 +289,8 @@ export default function ReceiptsPage() {
   const [formPhone, setFormPhone] = useState('')
   const [formHouseSelected, setFormHouseSelected] = useState(false)
   const [formBills, setFormBills] = useState<Bill[]>([])
+  const [lastSelectedBill, setLastSelectedBill] = useState<Bill | null>(null)
+  const [viewBillDialogOpen, setViewBillDialogOpen] = useState(false)
   const [formSelectedBillIds, setFormSelectedBillIds] = useState<number[]>([])
   const [formDiscount, setFormDiscount] = useState('')
   const [formPaymentMode, setFormPaymentMode] = useState<'all' | 'selected'>('all')
@@ -331,11 +351,36 @@ export default function ReceiptsPage() {
     return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
+  const matchingBill = useMemo(() => {
+    return summaryBills.find(
+      b => b.year === summaryPeriod.year && b.month === summaryPeriod.month + 1,
+    ) ?? null
+  }, [summaryBills, summaryPeriod])
+
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
+
+    if (matchingBill && matchingBill.items?.length) {
+      const items = matchingBill.items as BillItem[]
+      const productMap = new Map<string, number>()
+      for (const item of items) {
+        if (item.name && item.qty > 0) {
+          const product = cleanItemName(item.name)
+          productMap.set(product, (productMap.get(product) ?? 0) + item.qty)
+        }
+      }
+      return Array.from(productMap.entries())
+        .map(([product, quantity]) => ({
+          product,
+          months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity }],
+          totalQuantity: quantity,
+        }))
+        .sort((a, b) => b.totalQuantity - a.totalQuantity)
+    }
+
     const pendingLogs = filteredSummaryLogs.filter(log => !log.billGenerated)
     return buildMonthlyProductSummary(pendingLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBill])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, item) => sum + Number(item?.amount ?? 0), 0)
@@ -364,15 +409,15 @@ export default function ReceiptsPage() {
     let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
 
     return payments.map((payment) => {
-      const paidAmount = Number(payment.amount ?? 0) + Number(payment.discount ?? 0)
-      const previousBalance = remainingAmount
-      remainingAmount = Math.max(0, remainingAmount - paidAmount)
+      const paidAmount = Number(payment.amount ?? 0)
+      const discount = Number(payment.discount ?? 0)
+      remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
 
       return {
         id: payment.id,
         paidAt: payment.createdAt,
         paidAmount,
-        previousBalance,
+        discount,
         remainingAmount,
         note: payment.note,
       }
@@ -394,6 +439,23 @@ export default function ReceiptsPage() {
 
   const summaryTotals = useMemo(() => {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
+
+    if (matchingBill) {
+      const items = (matchingBill.items as BillItem[]) ?? []
+      const productMap = new Map<string, { qty: number; amount: number }>()
+      for (const item of items) {
+        if (item.name && item.qty > 0) {
+          const product = cleanItemName(item.name)
+          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
+          productMap.set(product, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
+        }
+      }
+      return {
+        productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+        grandTotal: Number(matchingBill.totalAmount),
+      }
+    }
+
     const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
@@ -416,7 +478,7 @@ export default function ReceiptsPage() {
       productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal,
     }
-  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBill])
 
   // Auto-tick bills based on amount and mode
   useEffect(() => {
@@ -570,10 +632,11 @@ export default function ReceiptsPage() {
         setFormSelectedBillIds([])
       }
       setFormAmount(String(Number(balance.previousBalance ?? 0)))
+      setLastSelectedBill(lastBill)
     } catch (e) {
       toast.error('Failed to load balance')
+      setLastSelectedBill(null)
     }
-    setFormBills([])
   }
 
   const filtered = filteredPaymentsByMonth.filter(p => {
@@ -625,7 +688,8 @@ export default function ReceiptsPage() {
 
   const lastBillPendingAmount = useMemo(() => {
     if (formBills.length === 0) return 0
-    return formBills[formBills.length - 1].pendingAmount || 0
+    const b = formBills[formBills.length - 1]
+    return Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0)
   }, [formBills])
 
   const amountHelperAmount = useMemo(() => {
@@ -876,15 +940,17 @@ export default function ReceiptsPage() {
       currentY += 6
 
       const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      const totalDiscount = paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0)
       autoTable(doc, {
         startY: currentY,
-        head: [['Date', 'Paid (₹)']],
+        head: [['Date', 'Paid (₹)', 'Discount (₹)']],
         body: [
           ...paymentSummaryRows.map((row) => [
             new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
             row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
           ]),
-          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
         ],
         margin: { left: 14, right: 14 },
         styles: { fontSize: 9 },
@@ -1458,6 +1524,20 @@ export default function ReceiptsPage() {
                       {formPhone || '—'}
                     </p>
                   </div>
+                  <div className="col-span-2 space-y-0.5 sm:space-y-1 sm:col-span-2 flex items-end justify-end">
+                    {lastSelectedBill && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setViewBillDialogOpen(true)}
+                        className="h-8 text-xs gap-1"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View Last Bill
+                      </Button>
+                    )}
+                  </div>
                   <div className="col-span-2 space-y-0.5 sm:space-y-1 sm:col-span-2">
                     <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
                     <div className="relative">
@@ -1516,7 +1596,7 @@ export default function ReceiptsPage() {
                         setFormPaymentMode(v)
                         if (v === 'all') {
                           setFormSelectedBillIds(formBills.map(b => b.id))
-                          const total = formBills.reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
+                          const total = formBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
                           setFormAmount(String(total))
                         }
                       }}>
@@ -1554,7 +1634,7 @@ export default function ReceiptsPage() {
                                     : formSelectedBillIds
                                   const total = formBills
                                     .filter(b => selected.includes(b.id))
-                                    .reduce((sum, b) => sum + (b.pendingAmount || 0), 0)
+                                    .reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
                                   setFormAmount(String(total))
                                 }}
                               />
@@ -1567,7 +1647,7 @@ export default function ReceiptsPage() {
                               {bill.isClosed ? (
                                 <div className="flex items-center gap-1"><Check className="h-3 w-3" /> Closed</div>
                               ) : (
-                                <div>Pending: ₹{(bill.pendingAmount || 0).toLocaleString('en-IN')}</div>
+                                <div>Pending: ₹{(Number(bill.totalAmount ?? 0) + Number(bill.previousBalance ?? 0)).toLocaleString('en-IN')}</div>
                               )}
                             </div>
                           </div>
@@ -1811,7 +1891,8 @@ export default function ReceiptsPage() {
                           <thead>
                             <tr className="border-b border-border bg-muted/50">
                               <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Paid</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1827,12 +1908,18 @@ export default function ReceiptsPage() {
                                 <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
                                   ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                 </td>
+                                <td className="px-4 py-3 text-right text-red-500">
+                                  {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                                </td>
                               </tr>
                             ))}
                             <tr className="border-t-2 border-border bg-muted/50 font-semibold">
                               <td className="px-4 py-3 text-foreground">Total Received</td>
                               <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
                                 ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="px-4 py-3 text-right text-red-500">
+                                ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </td>
                             </tr>
                           </tbody>
@@ -1841,6 +1928,48 @@ export default function ReceiptsPage() {
                     )}
                   </div>
                 </div>
+
+                {matchingBill && (
+                  <div>
+                    <h3 className="mb-3 text-sm font-semibold">Generated Bill</h3>
+                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(matchingBill.items as BillItem[]).map((item, idx) => (
+                              <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">{cleanItemName(item.name ?? '')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                              <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                ₹{Number(matchingBill.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                              <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                              <td className="px-4 py-3 text-right text-primary">
+                                ₹{(Number(matchingBill.totalAmount) + Number(matchingBill.previousBalance)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <h3 className="mb-3 text-sm font-semibold">Monthly Product Summary</h3>
@@ -2287,6 +2416,80 @@ export default function ReceiptsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* View Last Bill Dialog */}
+      <Dialog open={viewBillDialogOpen} onOpenChange={open => !open && setViewBillDialogOpen(false)}>
+        <DialogContent className="max-w-lg">
+          {lastSelectedBill && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Bill — House {lastSelectedBill.house?.houseNo ?? formHouseQuery}</DialogTitle>
+                <DialogDescription>
+                  {lastSelectedBill.fromDate && lastSelectedBill.toDate
+                    ? `${new Date(lastSelectedBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(lastSelectedBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                    : `${MONTH_NAMES[(lastSelectedBill.month ?? 1) - 1]} ${lastSelectedBill.year}`
+                  }
+                  {formArea && ` · ${formArea}`}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-muted/40 border-b border-border">
+                        <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground">Item</th>
+                        <th className="px-4 py-2.5 text-right font-semibold text-muted-foreground">Qty</th>
+                        <th className="px-4 py-2.5 text-right font-semibold text-muted-foreground">Rate</th>
+                        <th className="px-4 py-2.5 text-right font-semibold text-muted-foreground">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(lastSelectedBill.items as BillItem[]).map((it, i) => (
+                        <tr key={`${it.name ?? 'item'}-${i}`} className="border-t border-border/60">
+                          <td className="px-4 py-2.5">{cleanItemName(it.name ?? '')}</td>
+                          <td className="px-4 py-2.5 text-right">{it.qty}</td>
+                          <td className="px-4 py-2.5 text-right">₹{it.rate}</td>
+                          <td className="px-4 py-2.5 text-right font-medium">₹{it.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="space-y-2 rounded-xl bg-muted/30 p-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">This Month Total</span>
+                    <span className="font-semibold">₹{Number(lastSelectedBill.totalAmount).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Previous Balance</span>
+                    <span className="font-semibold text-amber-600 dark:text-amber-400">₹{Number(lastSelectedBill.previousBalance).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-base font-bold border-t border-border pt-2 mt-1">
+                    <span>Grand Total</span>
+                    <span className="text-primary">₹{(Number(lastSelectedBill.totalAmount) + Number(lastSelectedBill.previousBalance)).toLocaleString('en-IN')}</span>
+                  </div>
+                  {lastSelectedBill.outstandingAmount != null && (
+                    <div className={`flex justify-between text-sm border-t border-border pt-2 mt-1 ${Number(lastSelectedBill.outstandingAmount) <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      <span className="font-medium">{Number(lastSelectedBill.outstandingAmount) <= 0 ? 'Status' : 'Outstanding Amount'}</span>
+                      <span className="font-bold">
+                        {Number(lastSelectedBill.outstandingAmount) <= 0 ? '✓ Fully Paid' : `₹${Number(lastSelectedBill.outstandingAmount).toLocaleString('en-IN')} remaining`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {lastSelectedBill.note && (
+                  <div className="text-sm text-muted-foreground rounded-lg bg-muted/30 p-3">
+                    <span className="font-medium">Note: </span>{lastSelectedBill.note}
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button onClick={() => setViewBillDialogOpen(false)}>Close</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

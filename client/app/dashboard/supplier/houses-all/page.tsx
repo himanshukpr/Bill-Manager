@@ -65,7 +65,25 @@ type DeliveryEditForm = {
 }
 
 function normalizeMilkType(value: unknown): string {
-  return String(value ?? '').trim()
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function cleanItemName(name: string): string {
+  const text = name.trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
 function normalizeRateType(value: unknown): string {
@@ -165,6 +183,7 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
       if (!qty) return null
 
       const milkType = normalizeMilkType(item.milkType)
+      if (!milkType) return null
       return `${milkType} ${qty.toLocaleString('en-IN')}L`
     }).filter((part): part is string => Boolean(part))
 
@@ -433,13 +452,57 @@ export default function HousesPage() {
     return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
 
+  const matchingBill = useMemo(() => {
+    return summaryBills.find(
+      b => b.year === summaryPeriod.year && b.month === summaryPeriod.month + 1,
+    ) ?? null
+  }, [summaryBills, summaryPeriod])
+
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
+
+    // If a bill exists for this period, derive product summary from bill items
+    if (matchingBill && matchingBill.items?.length) {
+      const items = matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>
+      const productMap = new Map<string, number>()
+      for (const item of items) {
+        if (item.name && item.qty > 0) {
+          const product = cleanItemName(item.name)
+          productMap.set(product, (productMap.get(product) ?? 0) + item.qty)
+        }
+      }
+      return Array.from(productMap.entries())
+        .map(([product, quantity]) => ({
+          product,
+          months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity }],
+          totalQuantity: quantity,
+        }))
+        .sort((a, b) => b.totalQuantity - a.totalQuantity)
+    }
+
     return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBill])
 
   const summaryTotals = useMemo(() => {
-    if (!summaryHouse) return { productTotals: [], grandTotal: 0 }
+    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
+
+    // If a bill exists for this period, use its data
+    if (matchingBill) {
+      const items = (matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>) ?? []
+      const productMap = new Map<string, { qty: number; amount: number }>()
+      for (const item of items) {
+        if (item.name && item.qty > 0) {
+          const product = cleanItemName(item.name)
+          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
+          productMap.set(product, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
+        }
+      }
+      return {
+        productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+        grandTotal: Number(matchingBill.totalAmount),
+      }
+    }
+
     const monthLogs = summaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
@@ -462,7 +525,7 @@ export default function HousesPage() {
       productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal,
     }
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBill])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
@@ -1328,7 +1391,7 @@ export default function HousesPage() {
               <tbody>
                 {filtered.map((h, idx) => (
                   <tr
-                    key={h.houseNo}
+                    key={h.id}
                     className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
                   >
                     <td className="px-2 py-2 sm:px-3">
@@ -1851,7 +1914,7 @@ export default function HousesPage() {
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(summaryHouse?.balance?.previousBalance ?? 0)
+                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryHouse?.balance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
                                         ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -1862,7 +1925,7 @@ export default function HousesPage() {
                                 <tr className="border-t-2 border-border bg-muted/50 font-bold">
                                   <td className="px-4 py-3 text-foreground">Grand Total</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(summaryHouse?.balance?.previousBalance ?? 0)
+                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryHouse?.balance?.previousBalance ?? 0)
                                     const grandTotal = summaryTotals.grandTotal + prevBal
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-primary">
@@ -1879,6 +1942,48 @@ export default function HousesPage() {
                     )}
                   </div>
                 </div>
+
+                {matchingBill && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bill</h3>
+                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>).map((item, idx) => (
+                              <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">{cleanItemName(item.name ?? '')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                              <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                ₹{Number(matchingBill.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                              <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                              <td className="px-4 py-3 text-right text-primary">
+                                ₹{(Number(matchingBill.totalAmount) + Number(matchingBill.previousBalance)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Daily View */}
                 <div>

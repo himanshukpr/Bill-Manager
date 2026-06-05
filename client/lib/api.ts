@@ -585,6 +585,7 @@ export const housesApi = {
           const serverIds = new Set(normalized.map((h) => h.id));
           await db.transaction('rw', db.houses, async () => {
             await db.houses.where('id').above(0).and((h) => !serverIds.has(h.id)).delete();
+            await db.houses.where('id').below(0).delete();
             await db.houses.bulkPut(normalized);
           });
         }
