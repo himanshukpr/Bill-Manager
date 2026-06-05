@@ -169,7 +169,7 @@ async function applyOnDataIfChanged<T>(
   await onData(data);
 }
 
-async function invalidateCache(path: string): Promise<void> {
+export async function invalidateCache(path: string): Promise<void> {
   if (!isBrowser()) return;
 
   const resource = getResource(path);

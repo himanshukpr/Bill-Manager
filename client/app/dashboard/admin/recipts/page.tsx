@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, type PaymentHistory, type House, type HouseBalance, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
+import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, invalidateCache, type PaymentHistory, type House, type HouseBalance, type Bill, type DeliveryLog, type ProductRate } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -19,6 +19,10 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel,
+} from '@/components/ui/alert-dialog'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -249,11 +253,13 @@ export default function ReceiptsPage() {
   const [receivedYear, setReceivedYear] = useState<string>(String(CURRENT_YEAR_RECEIPT))
 
   const filteredPaymentsByMonth = useMemo(() => {
-    if (receivedMonth === 'all') return payments
-    return payments.filter(p => {
-      const d = new Date(p.createdAt)
-      return d.getMonth() === parseInt(receivedMonth) && d.getFullYear() === parseInt(receivedYear)
-    })
+    const filtered = receivedMonth === 'all'
+      ? payments
+      : payments.filter(p => {
+        const d = new Date(p.createdAt)
+        return d.getMonth() === parseInt(receivedMonth) && d.getFullYear() === parseInt(receivedYear)
+      })
+    return [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [payments, receivedMonth, receivedYear])
 
   // Form
@@ -267,6 +273,7 @@ export default function ReceiptsPage() {
   const [formBills, setFormBills] = useState<Bill[]>([])
   const [formSelectedBillIds, setFormSelectedBillIds] = useState<number[]>([])
   const [formDiscount, setFormDiscount] = useState('')
+  const [formPaymentMode, setFormPaymentMode] = useState<'all' | 'selected'>('all')
   const [formClosePeriod, setFormClosePeriod] = useState(false)
   const [formFromDate, setFormFromDate] = useState<string>('')
   const [formToDate, setFormToDate] = useState<string>('')
@@ -520,7 +527,24 @@ export default function ReceiptsPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        Promise.all([
+          invalidateCache('/houses'),
+          invalidateCache('/house-balance'),
+          invalidateCache('/bills'),
+          invalidateCache('/delivery-logs'),
+          invalidateCache('/product-rates'),
+        ]).then(() => load())
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [load])
 
   const handleHouseSelect = async (houseId: number, houseNo: string, area: string, phone: string) => {
     setFormHouseId(String(houseId))
