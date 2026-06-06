@@ -536,7 +536,7 @@ export default function HousesPage() {
 
       return {
         id: payment.id,
-        paidAt: payment.createdAt,
+        paidAt: payment.paidAt || payment.createdAt,
         paidAmount,
         discount,
         remainingAmount,
@@ -1934,7 +1934,7 @@ export default function HousesPage() {
                             {p.note && <span className="ml-2 text-xs text-muted-foreground">{p.note}</span>}
                           </div>
                           <span className="text-xs text-muted-foreground">
-                            {new Date(p.createdAt).toLocaleDateString('en-IN')}
+                            {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN')}
                           </span>
                         </div>
                       ))}

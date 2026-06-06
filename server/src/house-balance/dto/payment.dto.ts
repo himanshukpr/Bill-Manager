@@ -32,6 +32,10 @@ export class RecordPaymentDto {
   @IsNumber()
   @Min(0)
   discount?: number;
+
+  @IsOptional()
+  @IsString()
+  paidAt?: string;
 }
 
 export class UpdatePreviousBalanceDto {
@@ -62,4 +66,8 @@ export class UpdatePaymentDto {
   @IsNumber()
   @Min(0)
   discount?: number;
+
+  @IsOptional()
+  @IsString()
+  paidAt?: string;
 }

@@ -35,6 +35,12 @@ export class UsersController {
   }
 
   @UseGuards(AdminGuard)
+  @Patch(':uuid/permissions')
+  updatePermissions(@Param('uuid') uuid: string, @Body() permissions: Record<string, boolean>) {
+    return this.usersService.updatePermissions(uuid, permissions);
+  }
+
+  @UseGuards(AdminGuard)
   @Delete(':uuid')
   remove(@Param('uuid') uuid: string) {
     return this.usersService.remove(uuid);

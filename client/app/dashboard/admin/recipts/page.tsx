@@ -282,6 +282,7 @@ export default function ReceiptsPage() {
 
   // Form
   const [formHouseId, setFormHouseId] = useState('')
+  const [formPaidAt, setFormPaidAt] = useState('')
   const [formAmount, setFormAmount] = useState('')
   const [formNote, setFormNote] = useState('')
   const [formHouseQuery, setFormHouseQuery] = useState('')
@@ -327,6 +328,7 @@ export default function ReceiptsPage() {
   const [editingPaymentNote, setEditingPaymentNote] = useState('')
   const [editingPaymentAmount, setEditingPaymentAmount] = useState('')
   const [editingPaymentDiscount, setEditingPaymentDiscount] = useState('')
+  const [editingPaymentPaidAt, setEditingPaymentPaidAt] = useState('')
   const [deletingPayment, setDeletingPayment] = useState<PaymentHistory | null>(null)
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
     const now = new Date()
@@ -415,7 +417,7 @@ export default function ReceiptsPage() {
 
       return {
         id: payment.id,
-        paidAt: payment.createdAt,
+        paidAt: payment.paidAt || payment.createdAt,
         paidAmount,
         discount,
         remainingAmount,
@@ -1147,18 +1149,21 @@ export default function ReceiptsPage() {
       const amountChanged = !isNaN(newAmount) && Math.abs(newAmount - Number(editingPayment.amount)) > 0.001
       const discountChanged = !isNaN(newDiscount) && Math.abs(newDiscount - Number(editingPayment.discount ?? 0)) > 0.001
 
+      const paidAtPayload = editingPaymentPaidAt ? { paidAt: new Date(editingPaymentPaidAt).toISOString() } : {}
       if (Math.abs(oldTotal - newTotal) > 0.001 || amountChanged || discountChanged) {
         await balanceApi.updatePayment(editingPayment.id, {
           amount: isNaN(newAmount) ? undefined : newAmount,
           discount: isNaN(newDiscount) ? undefined : newDiscount,
           note: editingPaymentNote || undefined,
+          ...paidAtPayload,
         })
         toast.success('Payment updated')
       } else {
         await balanceApi.updatePayment(editingPayment.id, {
           note: editingPaymentNote || undefined,
+          ...paidAtPayload,
         })
-        toast.success('Payment note updated')
+        toast.success('Payment updated')
       }
       setEditingPayment(null)
       const [paymentsData] = await Promise.all([
@@ -1214,6 +1219,7 @@ export default function ReceiptsPage() {
           note: formNote || undefined,
           billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
           discount: discount > 0 ? discount : undefined,
+          ...(formPaidAt ? { paidAt: new Date(formPaidAt).toISOString() } : {}),
         })
       }
       toast.success('Payment recorded successfully')
@@ -1226,6 +1232,7 @@ export default function ReceiptsPage() {
       setFormHouseSelected(false)
       setFormHouseQuery('')
       setFormDiscount('')
+      setFormPaidAt('')
       setFormClosePeriod(false)
       setFormFromDate('')
       setFormToDate('')
@@ -1362,7 +1369,7 @@ export default function ReceiptsPage() {
                         <td className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">{p.note ?? '—'}</td>
 
                         <td className="px-4 py-3 text-sm text-muted-foreground">
-                          {new Date(p.createdAt).toLocaleDateString('en-IN', {
+                          {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN', {
                             day: 'numeric', month: 'short', year: 'numeric'
                           })}
                         </td>
@@ -1388,6 +1395,7 @@ export default function ReceiptsPage() {
                               setEditingPaymentNote(p.note ?? '')
                               setEditingPaymentAmount(String(Number(p.amount)))
                               setEditingPaymentDiscount(String(Number(p.discount ?? 0)))
+                              setEditingPaymentPaidAt(p.paidAt ? new Date(p.paidAt).toISOString().split('T')[0] : '')
                             }}
                             title="Edit payment"
                             className="h-8 w-8 p-0"
@@ -1581,6 +1589,14 @@ export default function ReceiptsPage() {
                       </p>
                     </div>
                   </div>
+                </div>
+
+                {/* Payment Date */}
+                <div className="space-y-0.5 sm:space-y-1">
+                  <Label htmlFor="receipt-date" className="text-xs sm:text-sm">Payment Date <span className="text-muted-foreground text-[10px] sm:text-xs">(Optional)</span></Label>
+                  <Input id="receipt-date" type="date"
+                    value={formPaidAt}
+                    onChange={e => setFormPaidAt(e.target.value)} />
                 </div>
 
                 {/* Bills Selection */}
@@ -2350,44 +2366,37 @@ export default function ReceiptsPage() {
 
       {/* Edit Payment Dialog */}
       <Dialog open={!!editingPayment} onOpenChange={(open) => !open && setEditingPayment(null)}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Payment</DialogTitle>
             <DialogDescription>
               Update the payment details for {editingPayment?.balance?.house ? `House ${editingPayment.balance.house.houseNo}` : ''}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div>
-              <Label htmlFor="edit-payment-amount">Amount (₹)</Label>
-              <Input
-                id="edit-payment-amount"
-                type="number"
-                step="0.01"
-                min="0.01"
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="edit-amount">Amount (₹)</Label>
+              <Input id="edit-amount" type="number" min="0" step="0.01" placeholder="Amount"
                 value={editingPaymentAmount}
-                onChange={(e) => setEditingPaymentAmount(e.target.value)}
-              />
+                onChange={e => setEditingPaymentAmount(e.target.value)} />
             </div>
-            <div>
-              <Label htmlFor="edit-payment-discount">Discount (₹)</Label>
-              <Input
-                id="edit-payment-discount"
-                type="number"
-                step="0.01"
-                min="0"
+            <div className="space-y-1">
+              <Label htmlFor="edit-discount">Discount (₹)</Label>
+              <Input id="edit-discount" type="number" min="0" step="0.01" placeholder="Discount"
                 value={editingPaymentDiscount}
-                onChange={(e) => setEditingPaymentDiscount(e.target.value)}
-              />
+                onChange={e => setEditingPaymentDiscount(e.target.value)} />
             </div>
-            <div>
-              <Label htmlFor="edit-payment-note">Note</Label>
-              <Input
-                id="edit-payment-note"
+            <div className="space-y-1">
+              <Label htmlFor="edit-date" className="text-xs sm:text-sm">Payment Date</Label>
+              <Input id="edit-date" type="date"
+                value={editingPaymentPaidAt}
+                onChange={e => setEditingPaymentPaidAt(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-note">Note</Label>
+              <Textarea id="edit-note" placeholder="Note (optional)"
                 value={editingPaymentNote}
-                onChange={(e) => setEditingPaymentNote(e.target.value)}
-                placeholder="Payment note..."
-              />
+                onChange={e => setEditingPaymentNote(e.target.value)} rows={2} />
             </div>
           </div>
           <DialogFooter>

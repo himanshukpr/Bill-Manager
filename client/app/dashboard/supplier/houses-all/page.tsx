@@ -10,6 +10,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
+import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -407,9 +408,16 @@ function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefi
 }
 
 export default function HousesPage() {
+  const [auth, setAuth] = useState<SessionAuth | null>(null)
   const cachedHouses = useLiveQuery(() => db.houses.toArray())
   const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
-  const houses = useMemo(() => cachedHouses ?? [], [cachedHouses])
+  const housesBase = useMemo(() => cachedHouses ?? [], [cachedHouses])
+  const houses = useMemo(() => {
+    if (auth?.permissions?.canViewAllHouses) return housesBase
+    return housesBase.filter(h =>
+      h.configs?.some(c => c.supplierId === auth?.uuid),
+    )
+  }, [housesBase, auth])
   const suppliers = useMemo(() => cachedSuppliers ?? [], [cachedSuppliers])
   const [hydrated, setHydrated] = useState(false)
   const [search, setSearch] = useState('')
@@ -530,6 +538,10 @@ export default function HousesPage() {
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
   }, [editDeliveryForm.items])
+
+  useEffect(() => {
+    setAuth(getSessionAuth())
+  }, [])
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -1251,9 +1263,11 @@ export default function HousesPage() {
               <Building2 className="h-4 w-4" />
               <span className="hidden sm:inline">Export PDF</span>
             </Button>
-            <Button onClick={openAdd} className="gap-2 sm:gap-2">
-              <Plus className="h-4 w-4" /> Add House
-            </Button>
+            {auth?.permissions?.canEditHouses && (
+              <Button onClick={openAdd} className="gap-2 sm:gap-2">
+                <Plus className="h-4 w-4" /> Add House
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -1445,10 +1459,12 @@ export default function HousesPage() {
                         <Button variant="ghost" size="icon" onClick={() => openSummary(h)} title="Summary">
                           <Rows3 className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {h.active ? (
+                        {auth?.permissions?.canEditHouses && (
+                          <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {auth?.permissions?.canEditHouses && (h.active ? (
                           <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('deactivate-confirm') }} title="Deactivate" className="text-destructive hover:text-destructive">
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1456,7 +1472,7 @@ export default function HousesPage() {
                           <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('inactive-choice') }} title="Activate or delete permanently" className="text-green-600 hover:text-green-700">
                             <Save className="h-4 w-4" />
                           </Button>
-                        )}
+                        ))}
                       </div>
                     </td>
                   </tr>
@@ -1724,9 +1740,11 @@ export default function HousesPage() {
                 <div className="rounded-xl border border-border bg-muted/30 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Configs</p>
-                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse)}>
-                      <Settings2 className="h-3.5 w-3.5" /> {viewHouse.configs?.length ? 'Edit Config' : 'Add Config'}
-                    </Button>
+                    {auth?.permissions?.canEditHouses && (
+                      <Button variant="outline" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse)}>
+                        <Settings2 className="h-3.5 w-3.5" /> {viewHouse.configs?.length ? 'Edit Config' : 'Add Config'}
+                      </Button>
+                    )}
                   </div>
                   {viewHouse.configs && viewHouse.configs.length > 0 ? (
                     <div className="space-y-2">
@@ -1749,9 +1767,11 @@ export default function HousesPage() {
                                 return <span className="text-xs text-amber-700 dark:text-amber-400">{alertPreview}</span>
                               })()}
                             </div>
-                            <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
-                              <Pencil className="h-3.5 w-3.5" /> Edit
-                            </Button>
+                            {auth?.permissions?.canEditHouses && (
+                              <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
+                                <Pencil className="h-3.5 w-3.5" /> Edit
+                              </Button>
+                            )}
                           </div>
                         )
                       })()}
@@ -1788,7 +1808,7 @@ export default function HousesPage() {
                             {p.note && <span className="ml-2 text-xs text-muted-foreground">{p.note}</span>}
                           </div>
                           <span className="text-xs text-muted-foreground">
-                            {new Date(p.createdAt).toLocaleDateString('en-IN')}
+                            {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN')}
                           </span>
                         </div>
                       ))}
@@ -1798,9 +1818,11 @@ export default function HousesPage() {
               </div>
 
               <DialogFooter>
-                <Button variant="outline" onClick={() => { setViewHouse(null); openEdit(viewHouse) }}>
-                  <Pencil className="h-4 w-4 mr-2" /> Edit
-                </Button>
+                {auth?.permissions?.canEditHouses && (
+                  <Button variant="outline" onClick={() => { setViewHouse(null); openEdit(viewHouse) }}>
+                    <Pencil className="h-4 w-4 mr-2" /> Edit
+                  </Button>
+                )}
                 <Button onClick={() => setViewHouse(null)}>Close</Button>
               </DialogFooter>
             </>
@@ -2021,17 +2043,19 @@ export default function HousesPage() {
                                   {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => openEditDeliveryDialog(row)}
-                                    title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
-                                    disabled={blocked}
-                                    className="h-8 w-8 p-0"
-                                  >
-                                    <Edit2 className="h-4 w-4" />
-                                  </Button>
-                                  {!blocked && row.log && (
+                                  {auth?.permissions?.canEditItems && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => openEditDeliveryDialog(row)}
+                                      title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                      disabled={blocked}
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      <Edit2 className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                  {auth?.permissions?.canEditItems && !blocked && row.log && (
                                     <Button
                                       variant="ghost"
                                       size="sm"

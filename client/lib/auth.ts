@@ -11,6 +11,7 @@ export type SessionAuth = {
   email: string
   role: AppRole
   isVerified: boolean
+  permissions?: Record<string, boolean>
   loginAt: string
   impersonator?: string
 }
@@ -129,6 +130,7 @@ export async function apiLogin(
     email: data.user.email,
     role: data.user.role,
     isVerified: data.user.isVerified,
+    permissions: (data.user as { permissions?: Record<string, boolean> }).permissions,
     loginAt: new Date().toISOString(),
   }
 
@@ -196,6 +198,7 @@ export async function apiImpersonate(uuid: string): Promise<SessionAuth> {
     email: data.user.email,
     role: data.user.role,
     isVerified: data.user.isVerified,
+    permissions: (data.user as { permissions?: Record<string, boolean> }).permissions,
     loginAt: new Date().toISOString(),
     impersonator: session.uuid,
   }

@@ -9,6 +9,7 @@ export interface JwtPayload {
   email: string;
   role: string;
   isVerified: boolean;
+  permissions?: Record<string, boolean>;
   impersonator?: string;
 }
 
@@ -29,6 +30,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: payload.email,
       role: payload.role,
       isVerified: payload.isVerified,
+      permissions: payload.permissions ?? {},
       impersonator: payload.impersonator,
     };
   }

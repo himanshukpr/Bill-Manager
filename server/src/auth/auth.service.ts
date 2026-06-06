@@ -52,6 +52,7 @@ export class AuthService {
     email: string;
     role: string;
     isVerified: boolean;
+    permissions?: Record<string, boolean>;
   }) {
     const payload = {
       sub: user.uuid,
@@ -59,6 +60,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       isVerified: user.isVerified,
+      permissions: user.permissions ?? {},
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -79,12 +81,14 @@ export class AuthService {
     if (!target) throw new NotFoundException('User not found');
     if (target.role !== Role.supplier) throw new ForbiddenException('Can only impersonate supplier accounts');
 
+    const permissions = (target.permissions ?? {}) as Record<string, boolean>;
     const payload = {
       sub: target.uuid,
       username: target.username,
       email: target.email,
       role: target.role,
       isVerified: target.isVerified,
+      permissions,
       impersonator: adminUuid,
     };
 
@@ -96,6 +100,7 @@ export class AuthService {
         email: target.email,
         role: target.role,
         isVerified: target.isVerified,
+        permissions,
       },
     };
   }

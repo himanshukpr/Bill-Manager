@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { Role } from '@prisma/client';
 
 @Injectable()
@@ -40,6 +41,22 @@ export class UsersService {
         role: true,
         isVerified: true,
         createdAt: true,
+        permissions: true,
+      },
+    });
+  }
+
+  async updatePermissions(uuid: string, permissions: Record<string, boolean>) {
+    return this.prisma.user.update({
+      where: { uuid },
+      data: { permissions },
+      select: {
+        uuid: true,
+        username: true,
+        email: true,
+        role: true,
+        isVerified: true,
+        permissions: true,
       },
     });
   }
@@ -73,6 +90,22 @@ export class UsersService {
   }
 
   async remove(uuid: string) {
-    return this.prisma.user.delete({ where: { uuid } });
+    try {
+      return await this.prisma.user.delete({ where: { uuid } });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError
+      ) {
+        if (error.code === 'P2003') {
+          throw new BadRequestException(
+            'Cannot delete user: they have existing house configs, delivery logs, or delivery plans. Remove those associations first.',
+          );
+        }
+        if (error.code === 'P2025') {
+          throw new BadRequestException('User not found or already deleted.');
+        }
+      }
+      throw error;
+    }
   }
 }

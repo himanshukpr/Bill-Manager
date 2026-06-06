@@ -46,6 +46,7 @@ export class HouseBalanceService {
           amount: dto.amount,
           note: dto.note,
           discount: dto.discount || 0,
+          ...(dto.paidAt ? { paidAt: new Date(dto.paidAt) } : {}),
           ...(dto.billIds ? { billIds: dto.billIds } : {}),
         },
       }),
@@ -141,7 +142,7 @@ export class HouseBalanceService {
     });
   }
 
-  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number }) {
+  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number; paidAt?: string }) {
     const payment = await this.prisma.paymentHistory.findUnique({
       where: { id },
       include: { balance: true },
@@ -153,6 +154,7 @@ export class HouseBalanceService {
     if (dto.note !== undefined) data.note = dto.note;
     if (dto.amount !== undefined) data.amount = dto.amount;
     if (dto.discount !== undefined) data.discount = dto.discount;
+    if (dto.paidAt !== undefined) data.paidAt = new Date(dto.paidAt);
 
     const oldTotal = Number(payment.amount) + Number(payment.discount ?? 0);
     const newTotal =

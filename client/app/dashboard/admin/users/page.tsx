@@ -39,11 +39,14 @@ export default function UsersPage() {
   const [newPassword, setNewPassword] = useState('')
   const [addingSaving, setAddSaving] = useState(false)
   const [privilegeSaving, setPrivilegeSaving] = useState(false)
+  const [permEditItems, setPermEditItems] = useState(false)
+  const [permEditHouses, setPermEditHouses] = useState(false)
+  const [permViewAll, setPermViewAll] = useState(false)
 
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      const data = await usersApi.list()
+      const data = await usersApi.list(undefined, true)
       setUsers(data)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -98,7 +101,14 @@ export default function UsersPage() {
     if (!selectedUser) return
     setPrivilegeSaving(true)
     try {
-      await usersApi.changeRole(selectedUser.uuid, newRole)
+      await Promise.all([
+        usersApi.changeRole(selectedUser.uuid, newRole),
+        usersApi.updatePermissions(selectedUser.uuid, {
+          canEditItems: permEditItems,
+          canEditHouses: permEditHouses,
+          canViewAllHouses: permViewAll,
+        }),
+      ])
       toast.success(`User role changed to ${newRole}`)
       setPrivilegeDialogOpen(false)
       setSelectedUser(null)
@@ -176,7 +186,14 @@ export default function UsersPage() {
             title="All Users"
             users={filtered}
             onToggleVerify={toggleVerify}
-            onChangeRole={(u) => { setSelectedUser(u); setNewRole(u.role as 'admin' | 'supplier'); setPrivilegeDialogOpen(true); }}
+            onChangeRole={(u) => {
+              setSelectedUser(u)
+              setNewRole(u.role as 'admin' | 'supplier')
+              setPermEditItems(u.permissions?.canEditItems ?? false)
+              setPermEditHouses(u.permissions?.canEditHouses ?? false)
+              setPermViewAll(u.permissions?.canViewAllHouses ?? false)
+              setPrivilegeDialogOpen(true)
+            }}
             onDelete={setDeleteUuid}
             onImpersonate={handleImpersonate}
           />
@@ -210,16 +227,17 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Change Role Dialog */}
+      {/* Privileges Dialog */}
       <Dialog open={privilegeDialogOpen} onOpenChange={setPrivilegeDialogOpen}>
         <DialogContent className="max-w-md w-[90vw] sm:w-full">
           <DialogHeader>
-            <DialogTitle>Change User Role</DialogTitle>
-            <DialogDescription>Select a new role for {selectedUser?.username}.</DialogDescription>
+            <DialogTitle>User Privileges</DialogTitle>
+            <DialogDescription>Manage role and permissions for {selectedUser?.username}.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-5 py-2">
+            {/* Role */}
             <div className="space-y-1.5">
-              <Label>Role</Label>
+              <Label className="text-sm font-semibold">Role</Label>
               <Select value={newRole} onValueChange={(v) => setNewRole(v as 'admin' | 'supplier')}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select role" />
@@ -230,11 +248,56 @@ export default function UsersPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Permissions (only for suppliers) */}
+            {newRole === 'supplier' && (
+              <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
+                <Label className="text-sm font-semibold">Supplier Permissions</Label>
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={permEditItems}
+                      onChange={(e) => setPermEditItems(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Edit & Delete Items</p>
+                      <p className="text-xs text-muted-foreground">Allow editing and deleting delivery items</p>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={permEditHouses}
+                      onChange={(e) => setPermEditHouses(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Edit & Delete Houses</p>
+                      <p className="text-xs text-muted-foreground">Allow editing and deleting house records</p>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={permViewAll}
+                      onChange={(e) => setPermViewAll(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">View All Houses</p>
+                      <p className="text-xs text-muted-foreground">Show complete house list instead of only assigned routes</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setPrivilegeDialogOpen(false); setSelectedUser(null); }}>Cancel</Button>
             <Button onClick={handleChangeRole} disabled={privilegeSaving}>
-              {privilegeSaving ? 'Changing...' : 'Change Role'}
+              {privilegeSaving ? 'Saving...' : 'Save'}
             </Button>
           </DialogFooter>
         </DialogContent>

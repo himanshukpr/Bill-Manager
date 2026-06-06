@@ -68,6 +68,15 @@ Fix and maintain the Bill Manager app's billing, balance, payment, receipt displ
 ### 12. Receipts Page — payment table and dialog (recipts/page.tsx)
 - Payment view/edit/delete integrated
 
+### 13. Payment Date (`paidAt`) field
+- Added `paidAt DateTime @default(now()) @map("paid_at")` to `PaymentHistory` Prisma model (`server/prisma/schema.prisma`)
+- Added optional `paidAt?: string` to `RecordPaymentDto` and `UpdatePaymentDto` (`server/src/house-balance/dto/payment.dto.ts`)
+- Updated `house-balance.service.ts`: `recordPayment()` and `updatePayment()` pass `paidAt` to Prisma when provided
+- Client Record Payment dialog: optional date picker (`formPaidAt` state), defaults to today
+- Client Edit Payment dialog: date field prefilled from existing `paidAt`
+- Display uses `paidAt || createdAt` in all payment tables and summary popups (recipts page, houses pages, supplier houses-all page)
+- **Build pitfall**: After adding a field to `schema.prisma`, `npx prisma generate` must be run BEFORE `npx nest build` — otherwise the Prisma client doesn't recognize the new field and throws `Unknown argument` at runtime
+
 ## Reverted Changes
 None.
 

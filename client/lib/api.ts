@@ -447,6 +447,7 @@ export type PaymentHistory = {
   discount?: number;
   note?: string;
   createdAt: string;
+  paidAt: string;
   billIds?: number[];
   balance?: { house?: { id: number; houseNo: string; area?: string } };
 };
@@ -506,6 +507,7 @@ export type User = {
   role: 'admin' | 'supplier';
   isVerified: boolean;
   createdAt: string;
+  permissions?: Record<string, boolean>;
 };
 
 export type HouseStats = {
@@ -1271,7 +1273,7 @@ export const balanceApi = {
 
     return { queued: true };
   },
-  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number }) => {
+  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number; paidAt?: string }) => {
     const applyLocalPaymentUpdate = async (payment?: PaymentHistory, balance?: HouseBalance) => {
       if (!isBrowser()) return;
 
@@ -1284,6 +1286,7 @@ export const balanceApi = {
         amount: String(data.amount),
         note: data.note,
         createdAt: payment?.createdAt ?? now,
+        paidAt: data.paidAt ?? now,
         balance: payment?.balance ?? (existingHouse ? { house: { id: existingHouse.id, houseNo: existingHouse.houseNo, area: existingHouse.area } } : undefined),
       };
 
@@ -1399,7 +1402,7 @@ export const balanceApi = {
 
     return null;
   },
-  updatePayment: async (id: number, data: { note?: string; amount?: number; discount?: number }) => {
+  updatePayment: async (id: number, data: { note?: string; amount?: number; discount?: number; paidAt?: string }) => {
     const res = await apiPatch<PaymentHistory>(`/house-balance/payment/${id}`, data);
     if (isBrowser()) {
       await invalidateCache('/house-balance');
@@ -1567,17 +1570,24 @@ export const usersApi = {
 
     return { uuid, role };
   },
+  updatePermissions: async (uuid: string, permissions: Record<string, boolean>) => {
+    if (isBrowser()) {
+      await db.users.update(uuid, { permissions });
+      await invalidateCache('/users');
+    }
+    return apiPatch(`/users/${uuid}/permissions`, permissions);
+  },
   delete: async (uuid: string) => {
     if (isBrowser()) {
       await db.users.delete(uuid);
       await invalidateCache('/users');
-      await syncEngine.enqueue(`/users/${uuid}`, 'DELETE');
     }
 
     if (isOnline()) {
       return apiDelete(`/users/${uuid}`);
     }
 
+    await syncEngine.enqueue(`/users/${uuid}`, 'DELETE');
     return null;
   },
 };
