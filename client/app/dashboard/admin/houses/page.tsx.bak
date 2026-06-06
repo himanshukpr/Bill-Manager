@@ -4,13 +4,12 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Plus, Search, X, Phone, MapPin, Building2, Bell, CalendarDays,
-  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2
+  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2, History
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
-import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -52,12 +51,22 @@ type HouseDeliverySummaryRow = {
   hasDelivery: boolean
   logId?: number
   log?: DeliveryLog
+  allLogs?: DeliveryLog[]
 }
 
 type MonthlyProductSummary = {
   product: string
   months: { month: number; year: number; quantity: number }[]
   totalQuantity: number
+}
+
+type PaymentSummaryRow = {
+  id: number
+  paidAt: string
+  paidAmount: number
+  discount: number
+  remainingAmount: number
+  note?: string
 }
 
 type DeliveryEditForm = {
@@ -118,7 +127,7 @@ function getRateByProductName(rates: ProductRate[], productName: string): number
 }
 
 function getActiveProducts(rates: ProductRate[]): ProductRate[] {
-  return rates.filter((rate) => rate.isActive && Number(rate.rate) > 0).sort((left, right) => (left.name || '').localeCompare(right.name || ''))
+  return rates.filter(r => r.isActive && Number(r.rate) > 0).sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 }
 
 function getErrorMessage(error: unknown): string {
@@ -170,10 +179,12 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
       hasDelivery: false,
       logId: undefined,
       log: undefined,
+      allLogs: [],
     }
 
     existing.hasDelivery = true
-    // Store the first log for this date (for editing)
+    existing.allLogs = [...(existing.allLogs ?? []), log]
+    // Store the first log for backwards compat
     if (!existing.logId) {
       existing.logId = log.id
       existing.log = log
@@ -182,14 +193,12 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
     const productParts = (log.items ?? []).map((item) => {
       const qty = Number(item.qty ?? 0)
       if (!qty) return null
-
       const milkType = normalizeMilkType(item.milkType)
       if (!milkType) return null
       return `${milkType} ${qty.toLocaleString('en-IN')}L`
     }).filter((part): part is string => Boolean(part))
 
     const productText = productParts.join(', ')
-
     existing.productsLabel = existing.productsLabel
       ? `${existing.productsLabel}, ${productText}`
       : productText || '-'
@@ -215,6 +224,7 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
         hasDelivery: false,
         logId: undefined,
         log: undefined,
+        allLogs: [],
       },
     )
   }
@@ -226,10 +236,7 @@ function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: nu
   const productMap = new Map<string, number>()
 
   // Group quantities by product for the selected month only.
-  // Exclude logs that are already part of a paid bill.
   for (const log of logs) {
-    if (log.billGenerated) continue
-
     const deliveredAt = new Date(log.deliveredAt)
     const logYear = deliveredAt.getFullYear()
     const logMonth = deliveredAt.getMonth()
@@ -361,6 +368,28 @@ type HouseStatusFilter = 'activated' | 'deactivated' | 'all'
 type HouseToggleAction = 'deactivate' | 'reactivate' | 'delete'
 type ToggleDialogMode = 'deactivate-confirm' | 'inactive-choice' | null
 
+function getHouseShift(house: House): 'morning' | 'evening' {
+  return house.configs?.[0]?.shift ?? 'evening'
+}
+
+function getHousePaymentStatus(house: House): Exclude<PaymentFilter, 'all'> {
+  const balance = Number(house.balance?.previousBalance ?? 0)
+  if (balance > 0) return 'pending'
+  if (balance < 0) return 'advance'
+  return 'clear'
+}
+
+function matchesHouseStatusFilter(house: House, filter: HouseStatusFilter): boolean {
+  if (filter === 'all') return true
+  return filter === 'activated' ? house.active : !house.active
+}
+
+function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefined {
+  if (!Array.isArray(configs) || configs.length === 0) return undefined
+
+  return configs.find((config) => parseDailyAlerts(config.dailyAlerts).length > 0) ?? configs[0]
+}
+
 function getFilteredHouses(houses: House[], query: string): House[] {
   const q = query.trim().toLowerCase()
   if (!q) return houses.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
@@ -385,46 +414,16 @@ function getFilteredHouses(houses: House[], query: string): House[] {
   return [...exactMatches, ...partialMatches]
 }
 
-function getHouseShift(house: House): 'morning' | 'evening' {
-  return house.configs?.[0]?.shift ?? 'evening'
-}
-
-function getHousePaymentStatus(house: House): Exclude<PaymentFilter, 'all'> {
-  const balance = Number(house.balance?.previousBalance ?? 0)
-  if (balance > 0) return 'pending'
-  if (balance < 0) return 'advance'
-  return 'clear'
-}
-
-function matchesHouseStatusFilter(house: House, filter: HouseStatusFilter): boolean {
-  if (filter === 'all') return true
-  return filter === 'activated' ? house.active : !house.active
-}
-
-function getHouseConfigWithAlerts(configs?: HouseConfig[]): HouseConfig | undefined {
-  if (!Array.isArray(configs) || configs.length === 0) return undefined
-
-  return configs.find((config) => parseDailyAlerts(config.dailyAlerts).length > 0) ?? configs[0]
-}
-
 export default function HousesPage() {
-  const [auth, setAuth] = useState<SessionAuth | null>(null)
   const cachedHouses = useLiveQuery(() => db.houses.toArray())
   const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
-  const housesBase = useMemo(() => cachedHouses ?? [], [cachedHouses])
-  const houses = useMemo(() => {
-    if (auth?.permissions?.canViewAllHouses) return housesBase
-    return housesBase.filter(h =>
-      h.configs?.some(c => c.supplierId === auth?.uuid),
-    )
-  }, [housesBase, auth])
+  const houses = useMemo(() => (cachedHouses ?? []).filter((h) => h.id > 0), [cachedHouses])
   const suppliers = useMemo(() => cachedSuppliers ?? [], [cachedSuppliers])
   const [hydrated, setHydrated] = useState(false)
   const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>('all')
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all')
-  const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('activated')
+  const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('all')
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -439,26 +438,42 @@ export default function HousesPage() {
   const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
+  const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
   const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
+  const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryBills, setSummaryBills] = useState<Bill[]>([])
-  const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
   })
+  const [summaryFromDate, setSummaryFromDate] = useState<string>('')
+  const [summaryToDate, setSummaryToDate] = useState<string>('')
   const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
   const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
+  const [editingDeliveryShifts, setEditingDeliveryShifts] = useState<string[]>([])
+  const [editingDeliveryAllLogs, setEditingDeliveryAllLogs] = useState<DeliveryLog[]>([])
   const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const loading = !hydrated && (!cachedHouses || !cachedSuppliers)
 
+  const filteredSummaryLogs = useMemo(() => {
+    if (!summaryFromDate || !summaryToDate) return summaryLogs
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d >= from && d <= to
+    })
+  }, [summaryLogs, summaryFromDate, summaryToDate])
+
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
-    return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+    return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const matchingBill = useMemo(() => {
     return summaryBills.find(
@@ -471,7 +486,7 @@ export default function HousesPage() {
 
     // If a bill exists for this period, derive product summary from bill items
     if (matchingBill && matchingBill.items?.length) {
-      const items = matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>
+      const items = matchingBill.items as BillItem[]
       const productMap = new Map<string, number>()
       for (const item of items) {
         if (item.name && item.qty > 0) {
@@ -488,15 +503,67 @@ export default function HousesPage() {
         .sort((a, b) => b.totalQuantity - a.totalQuantity)
     }
 
-    return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBill])
+    const pendingLogs = filteredSummaryLogs.filter(log => !log.billGenerated)
+    return buildMonthlyProductSummary(pendingLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBill])
+
+  const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
+    if (!summaryHouse) return []
+
+    const payments = [...(summaryBalance?.payments ?? [])].sort(
+      (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )
+
+    const baseOutstanding = Number(
+      summaryBalance?.previousBalance ??
+      summaryBalance?.currentBalance ??
+      summaryHouse.balance?.previousBalance ??
+      summaryHouse.balance?.currentBalance ??
+      0,
+    )
+
+    const totalApplied = payments.reduce(
+      (sum, payment) => sum + Number(payment.amount ?? 0) + Number(payment.discount ?? 0),
+      0,
+    )
+
+    let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
+
+    return payments.map((payment) => {
+      const paidAmount = Number(payment.amount ?? 0)
+      const discount = Number(payment.discount ?? 0)
+      remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
+
+      return {
+        id: payment.id,
+        paidAt: payment.paidAt || payment.createdAt,
+        paidAmount,
+        discount,
+        remainingAmount,
+        note: payment.note,
+      }
+    })
+  }, [summaryBalance, summaryHouse])
+
+  const hasDateRangeFilter = summaryFromDate !== '' && summaryToDate !== ''
+
+  const displaySummaryRows = useMemo(() => {
+    if (!hasDateRangeFilter) return summaryRows
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryRows.filter(row => {
+      const d = new Date(row.dateKey)
+      return d >= from && d <= to
+    })
+  }, [summaryRows, summaryFromDate, summaryToDate, hasDateRangeFilter])
 
   const summaryTotals = useMemo(() => {
-    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0 }
+    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0 }
 
     // If a bill exists for this period, use its data
     if (matchingBill) {
-      const items = (matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>) ?? []
+      const items = (matchingBill.items as BillItem[]) ?? []
       const productMap = new Map<string, { qty: number; amount: number }>()
       for (const item of items) {
         if (item.name && item.qty > 0) {
@@ -508,11 +575,10 @@ export default function HousesPage() {
       return {
         productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
         grandTotal: Number(matchingBill.totalAmount),
-        previousBalance: Number(matchingBill.previousBalance ?? 0),
       }
     }
 
-    const monthLogs = summaryLogs.filter(log => {
+    const monthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
     })
@@ -533,24 +599,12 @@ export default function HousesPage() {
     return {
       productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal,
-      previousBalance: 0,
     }
-  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBill])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBill])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
   }, [editDeliveryForm.items])
-
-  useEffect(() => {
-    setAuth(getSessionAuth())
-  }, [])
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(search)
-    }, 200)
-    return () => clearTimeout(handler)
-  }, [search])
 
   const handleExportSummaryPdf = useCallback(() => {
     if (!summaryHouse) return
@@ -565,13 +619,47 @@ export default function HousesPage() {
     const periodLabel = `${MONTH_NAMES[summaryPeriod.month + 1]} ${summaryPeriod.year}`
 
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(13)
-    doc.text(title, 14, 14)
+    doc.setFontSize(16)
+    doc.text(title, 14, 16)
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
-    doc.text(`Period: ${periodLabel}`, 14, 21)
+    doc.setFontSize(10)
+    if (hasDateRangeFilter) {
+      doc.text(`Date Range: ${summaryFromDate} to ${summaryToDate}`, 14, 23)
+    } else {
+      doc.text(`Period: ${periodLabel}`, 14, 23)
+    }
     if (summaryHouse.area) {
-      doc.text(`Area: ${summaryHouse.area}`, 14, 26)
+      doc.text(`Area: ${summaryHouse.area}`, 14, 29)
+    }
+
+    let currentY = 38
+
+    // Received Payments Table
+    if (paymentSummaryRows.length > 0) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10)
+      doc.text('Received Payments', 14, currentY)
+      currentY += 6
+
+      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      const totalDiscount = paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0)
+      autoTable(doc, {
+        startY: currentY,
+        head: [['Date', 'Paid (₹)', 'Discount (₹)']],
+        body: [
+          ...paymentSummaryRows.map((row) => [
+            new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+            row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+          ]),
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+        ],
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [200, 200, 200] },
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentY = (doc as any).lastAutoTable.finalY + 8
     }
 
     const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
@@ -584,17 +672,14 @@ export default function HousesPage() {
     const pageHeight = doc.internal.pageSize.getHeight()
     const left = 14
     const right = 14
-    const headerBottomY = summaryHouse.area ? 26 : 21
-    const monthlyTitleY = headerBottomY + 7
-    const top = monthlyTitleY + 4
-    const bottom = 10
+    const bottom = 14
     const tableWidth = pageWidth - left - right
     const productColWidth = monthLabels.length > 0 ? Math.max(58, Math.min(76, tableWidth * 0.36)) : tableWidth
     const monthColWidth = monthLabels.length > 0 ? (tableWidth - productColWidth) / monthLabels.length : 0
-    const headerHeight = 9
-    const rowHeight = 8
-    const paddingX = 2
-    const lineHeight = 3.6
+    const headerHeight = 11
+    const rowHeight = 10
+    const paddingX = 2.5
+    const lineHeight = 4.2
 
     const toLines = (text: string, width: number): string[] => {
       const lines = doc.splitTextToSize(text, Math.max(8, width - (paddingX * 2)))
@@ -624,12 +709,12 @@ export default function HousesPage() {
       doc.text(lines, textX, textY, { align })
     }
 
-    let currentY = top
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
+    doc.setFontSize(13)
     doc.setTextColor(17, 24, 39)
-    doc.text('Monthly Product Summary', 14, monthlyTitleY)
+    doc.text('Monthly Product Summary', 14, currentY)
 
+    currentY += 6
     drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
     monthLabels.forEach((label, index) => {
       const x = left + productColWidth + (index * monthColWidth)
@@ -645,7 +730,7 @@ export default function HousesPage() {
       monthlyProductSummary.forEach((row) => {
         if (currentY > pageHeight - bottom - rowHeight) {
           doc.addPage()
-          currentY = top
+          currentY = 14
           drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
           monthLabels.forEach((label, index) => {
             const x = left + productColWidth + (index * monthColWidth)
@@ -676,7 +761,7 @@ export default function HousesPage() {
 
       if (currentY > pageHeight - bottom - rowHeight) {
         doc.addPage()
-        currentY = top
+        currentY = 14
         drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
         monthLabels.forEach((label, index) => {
           const x = left + productColWidth + (index * monthColWidth)
@@ -685,6 +770,7 @@ export default function HousesPage() {
         currentY += headerHeight
       }
 
+      // Total row
       drawCell(left, currentY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
       monthLabels.forEach((_, index) => {
         const x = left + productColWidth + (index * monthColWidth)
@@ -692,63 +778,62 @@ export default function HousesPage() {
       })
       currentY += rowHeight
 
-      if (summaryTotals.previousBalance > 0) {
-        drawCell(left, currentY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
+      // Pending Amount row
+      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+      const pending = Math.max(0, summaryTotals.grandTotal - totalReceived)
+      if (!hasDateRangeFilter) {
+        drawCell(left, currentY, productColWidth, rowHeight, 'Pending Amount', 'left', true, [255, 243, 224])
         monthLabels.forEach((_, index) => {
           const x = left + productColWidth + (index * monthColWidth)
-          drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${summaryTotals.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
-        })
-        currentY += rowHeight
-
-        const grandTotalWithPrev = summaryTotals.grandTotal + summaryTotals.previousBalance
-        drawCell(left, currentY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
-        monthLabels.forEach((_, index) => {
-          const x = left + productColWidth + (index * monthColWidth)
-          drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${grandTotalWithPrev.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
+          drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 243, 224])
         })
         currentY += rowHeight
       }
     }
 
-    let deliveriesTitleY = currentY + 10
-    if (deliveriesTitleY > pageHeight - 16) {
+    let deliveriesTitleY = currentY + 8
+    if (deliveriesTitleY > pageHeight - 20) {
       doc.addPage()
-      deliveriesTitleY = 14
+      deliveriesTitleY = 16
     }
 
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
+    doc.setFontSize(13)
     doc.setTextColor(17, 24, 39)
     doc.text('Daily Deliveries', 14, deliveriesTitleY)
 
-    const daysLeft = summaryRows.slice(0, 15)
-    const daysRight = summaryRows.slice(15)
-    const splitX = 100
-    const makeDeliveriesTable = (rows: any[], marginLeft: number, marginRight: number) => {
-      if (rows.length === 0) return
-      autoTable(doc, {
-        startY: deliveriesTitleY + 4,
-        head: [['Date', 'Products']],
-        body: rows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
-        styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
-        headStyles: { fillColor: [17, 24, 39], textColor: 255 },
-        columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 'auto' } },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        margin: { left: marginLeft, right: marginRight },
-      })
-    }
-    makeDeliveriesTable(daysLeft, 14, pageWidth - splitX + 4)
-    makeDeliveriesTable(daysRight, splitX, 14)
+    autoTable(doc, {
+      startY: deliveriesTitleY + 6,
+      head: [['Date', 'Products']],
+      body: displaySummaryRows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
+      styles: {
+        font: 'helvetica',
+        fontSize: 9,
+        cellPadding: 3,
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [17, 24, 39],
+        textColor: 255,
+      },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { cellWidth: 'auto' },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      margin: { top: 30, left: 14, right: 14 },
+    })
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
-  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals])
+  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {
       await Promise.all([
         housesApi.list(),
-        productRatesApi.list(),
-        usersApi.list('supplier'),
+        usersApi.list('supplier', true),
       ])
     } catch (error: unknown) {
       if (!silent) {
@@ -764,8 +849,8 @@ export default function HousesPage() {
   }, [refreshCachedData])
 
   const filtered = useMemo(() => {
-    const query = debouncedSearch.trim()
-    const filtered = (houses || []).filter((house) => {
+    const query = search.trim()
+    const filtered = houses.filter((house) => {
       const shift = getHouseShift(house)
       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
@@ -778,13 +863,13 @@ export default function HousesPage() {
     })
 
     return getFilteredHouses(filtered, query)
-  }, [houses, debouncedSearch, shiftFilter, paymentFilter, houseStatusFilter])
+  }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
 
   const searchSuggestions = useMemo(() => {
     const query = search.trim()
     if (!query) return []
 
-    const filtered = (houses || []).filter((house) => {
+    const filtered = houses.filter((house) => {
       const shift = getHouseShift(house)
       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
@@ -801,13 +886,11 @@ export default function HousesPage() {
 
   const handleSearchSelect = useCallback((value: string) => {
     setSearch(value)
-    setDebouncedSearch(value)
     setIsSearchOpen(false)
   }, [])
 
   const clearSearch = useCallback(() => {
     setSearch('')
-    setDebouncedSearch('')
   }, [])
 
   const selectedConfigHouse = houses.find(h => h.id === Number.parseInt(configForm.houseId, 10))
@@ -948,21 +1031,23 @@ export default function HousesPage() {
 
   async function openSummary(house: House) {
     setSummaryHouse(house)
+    setSummaryBalance(null)
     setSummaryLogs([])
     setSummaryBills([])
-    setProductRates([])
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [logs, bills, rates] = await Promise.all([
+      const [balance, logs, bills, rates] = await Promise.all([
+        balanceApi.get(house.id),
         deliveryLogsApi.list({ houseId: house.id }),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
+      setSummaryBalance(balance)
       setSummaryLogs(logs)
       setSummaryBills(bills)
-      setProductRates(rates.filter((rate) => rate.isActive && Number(rate.rate) > 0))
+      setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
       setSummaryPeriod(getLogPeriod(logs))
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))
@@ -983,8 +1068,10 @@ export default function HousesPage() {
     const year = parseInt(yearStr)
     return summaryBills.find((bill) => bill.month === month && bill.year === year)
   }
+
   function getPreferredRateForHouse(milkType: string): number {
     const mt = normalizeRateType(milkType)
+    // Prefer house-specific rates if present
     if (summaryHouse) {
       const r1Type = normalizeRateType(summaryHouse.rate1Type)
       const r2Type = normalizeRateType(summaryHouse.rate2Type)
@@ -1019,16 +1106,22 @@ export default function HousesPage() {
     }
 
     if (row.log) {
-      // Edit existing delivery - overwrite item rates with house-preferred rates
+      // Edit existing delivery — combine items from ALL logs for this date
       setEditingDeliveryLog(row.log)
-      const normalized = normalizeDeliveryItems(row.log.items)
-      const updated = normalized.map((it) => {
-        const qty = Number(it.qty ?? 0)
-        const rate = getPreferredRateForHouse(it.milkType)
-        return { ...it, rate, amount: qty * rate }
-      })
+      const logsForDate = row.allLogs ?? [row.log]
+      // Collect all unique shifts
+      const uniqueShifts = [...new Set(logsForDate.map(l => l.shift).filter(Boolean))]
+      setEditingDeliveryShifts(uniqueShifts)
+      setEditingDeliveryAllLogs(logsForDate)
+      const allItems = logsForDate.flatMap((log) =>
+        normalizeDeliveryItems(log.items).map((it) => {
+          const qty = Number(it.qty ?? 0)
+          const rate = getPreferredRateForHouse(it.milkType)
+          return { ...it, rate, amount: qty * rate }
+        })
+      )
       setEditDeliveryForm({
-        items: updated,
+        items: allItems,
         note: row.log.note,
       })
     } else {
@@ -1037,6 +1130,8 @@ export default function HousesPage() {
       const deliveryDate = new Date(year, month - 1, day)
       const primaryConfig = getHouseConfigWithAlerts(summaryHouse?.configs)
       const shift = primaryConfig?.shift || 'morning'
+      const activeProducts = getActiveProducts(productRates)
+      const firstProduct = activeProducts[0] || { name: '', rate: 0 }
       const newLog: DeliveryLog = {
         id: 0, // Temporary ID for new deliveries
         houseId: summaryHouse?.id ?? 0,
@@ -1052,7 +1147,10 @@ export default function HousesPage() {
         note: '',
       }
       setEditingDeliveryLog(newLog)
-      setEditDeliveryForm({ items: [], note: '' })
+      setEditDeliveryForm({
+        items: [{ milkType: firstProduct.name, qty: 0, rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
+        note: ''
+      })
     }
     setEditDeliveryDialogOpen(true)
   }
@@ -1063,38 +1161,64 @@ export default function HousesPage() {
     setEditDeliverySaving(true)
     try {
       const isNewDelivery = editingDeliveryLog.id === 0
+      // Old amount = sum across ALL logs for this date (not just the first)
       const oldAmount = isNewDelivery
         ? 0
-        : (editingDeliveryLog.items ?? []).reduce((sum, item) => sum + (item.amount ?? 0), 0)
-      const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (item.amount ?? 0), 0)
+        : editingDeliveryAllLogs.reduce(
+          (sum, log) => sum + (log.items ?? []).reduce((s, item) => s + (Number(item.amount) ?? 0), 0),
+          0
+        )
+      const newAmount = editDeliveryForm.items.reduce((sum, item) => sum + (Number(item.amount) ?? 0), 0)
       const amountDifference = newAmount - oldAmount
 
       // Save delivery changes (create or update)
       if (isNewDelivery) {
-        // Create new delivery (preserve the opened editor's delivery date)
-        const result = await deliveryLogsApi.create({
+        await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
           deliveredAt: editingDeliveryLog.deliveredAt,
         })
-        toast.success('Delivery created successfully')
       } else {
-        // Update existing delivery
+        // Update the primary log with all combined items
         await deliveryLogsApi.update(editingDeliveryLog.id, {
           items: editDeliveryForm.items,
           note: editDeliveryForm.note,
         })
-        toast.success('Delivery updated successfully')
+
+        // Delete all secondary logs for this date so no stale/duplicate data remains
+        const secondaryLogs = editingDeliveryAllLogs.filter(l => l.id !== editingDeliveryLog.id)
+        for (const log of secondaryLogs) {
+          try {
+            await deliveryLogsApi.delete(log.id)
+          } catch (err) {
+            console.warn(`Could not delete secondary log ${log.id}:`, err)
+          }
+        }
       }
 
-      // Reload logs to get updated data
+      toast.success('Delivery updated successfully')
+
+      // Update balance if amount changed
+      if (amountDifference !== 0) {
+        try {
+          const currentBalance = await balanceApi.get(summaryHouse.id)
+          await balanceApi.updateCurrent(summaryHouse.id, parseFloat(currentBalance.currentBalance) || 0)
+        } catch (error: unknown) {
+          console.error('Failed to update balance:', error)
+          toast.warning('Balance update failed — delivery saved but balance unchanged')
+        }
+      }
+
+      // Reload logs to get clean updated data
       const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
       setSummaryLogs(logs)
 
       setEditDeliveryDialogOpen(false)
       setEditingDeliveryLog(null)
+      setEditingDeliveryAllLogs([])
+      setEditingDeliveryShifts([])
       setEditDeliveryForm({ items: [], note: '' })
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))
@@ -1102,6 +1226,7 @@ export default function HousesPage() {
       setEditDeliverySaving(false)
     }
   }
+
 
   async function handleDeleteDeliveryLog() {
     if (!deletingDeliveryLog || !summaryHouse) return
@@ -1213,7 +1338,7 @@ export default function HousesPage() {
         String(house.houseNo),
         house.area || '-',
         house.phoneNo || '-',
-        house.balance?.previousBalance ? `₹${Number(house.balance.previousBalance).toLocaleString('en-IN')}` : '-',
+        house.balance ? `₹${(Number(house.balance.previousBalance) + Number(house.balance.currentBalance)).toLocaleString('en-IN')}` : '-',
       ]),
       styles: {
         font: 'helvetica',
@@ -1272,11 +1397,9 @@ export default function HousesPage() {
               <Building2 className="h-4 w-4" />
               <span className="hidden sm:inline">Export PDF</span>
             </Button>
-            {auth?.permissions?.canEditHouses && (
-              <Button onClick={openAdd} className="gap-2 sm:gap-2">
-                <Plus className="h-4 w-4" /> Add House
-              </Button>
-            )}
+            <Button onClick={openAdd} className="gap-2 sm:gap-2">
+              <Plus className="h-4 w-4" /> Add House
+            </Button>
           </div>
         </div>
       </div>
@@ -1455,8 +1578,8 @@ export default function HousesPage() {
                     </td>
                     <td className="px-2 py-2 sm:px-3">
                       {h.balance ? (
-                        <span className={`font-semibold ${Number(h.balance.previousBalance) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                          ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
+                        <span className={`font-semibold ${(Number(h.balance.previousBalance) + Number(h.balance.currentBalance)) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          ₹{(Number(h.balance.previousBalance) + Number(h.balance.currentBalance)).toLocaleString('en-IN')}
                         </span>
                       ) : '—'}
                     </td>
@@ -1468,12 +1591,10 @@ export default function HousesPage() {
                         <Button variant="ghost" size="icon" onClick={() => openSummary(h)} title="Summary">
                           <Rows3 className="h-4 w-4" />
                         </Button>
-                        {auth?.permissions?.canEditHouses && (
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {auth?.permissions?.canEditHouses && (h.active ? (
+                        <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        {h.active ? (
                           <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('deactivate-confirm') }} title="Deactivate" className="text-destructive hover:text-destructive">
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1481,7 +1602,7 @@ export default function HousesPage() {
                           <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('inactive-choice') }} title="Activate or delete permanently" className="text-green-600 hover:text-green-700">
                             <Save className="h-4 w-4" />
                           </Button>
-                        ))}
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1749,11 +1870,9 @@ export default function HousesPage() {
                 <div className="rounded-xl border border-border bg-muted/30 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">House Configs</p>
-                    {auth?.permissions?.canEditHouses && (
-                      <Button variant="outline" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse)}>
-                        <Settings2 className="h-3.5 w-3.5" /> {viewHouse.configs?.length ? 'Edit Config' : 'Add Config'}
-                      </Button>
-                    )}
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse)}>
+                      <Settings2 className="h-3.5 w-3.5" /> {viewHouse.configs?.length ? 'Edit Config' : 'Add Config'}
+                    </Button>
                   </div>
                   {viewHouse.configs && viewHouse.configs.length > 0 ? (
                     <div className="space-y-2">
@@ -1776,11 +1895,9 @@ export default function HousesPage() {
                                 return <span className="text-xs text-amber-700 dark:text-amber-400">{alertPreview}</span>
                               })()}
                             </div>
-                            {auth?.permissions?.canEditHouses && (
-                              <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
-                                <Pencil className="h-3.5 w-3.5" /> Edit
-                              </Button>
-                            )}
+                            <Button variant="ghost" size="sm" className="gap-2" onClick={() => openConfigDialog(viewHouse, config)}>
+                              <Pencil className="h-3.5 w-3.5" /> Edit
+                            </Button>
                           </div>
                         )
                       })()}
@@ -1827,11 +1944,9 @@ export default function HousesPage() {
               </div>
 
               <DialogFooter>
-                {auth?.permissions?.canEditHouses && (
-                  <Button variant="outline" onClick={() => { setViewHouse(null); openEdit(viewHouse) }}>
-                    <Pencil className="h-4 w-4 mr-2" /> Edit
-                  </Button>
-                )}
+                <Button variant="outline" onClick={() => { setViewHouse(null); openEdit(viewHouse) }}>
+                  <Pencil className="h-4 w-4 mr-2" /> Edit
+                </Button>
                 <Button onClick={() => setViewHouse(null)}>Close</Button>
               </DialogFooter>
             </>
@@ -1843,6 +1958,7 @@ export default function HousesPage() {
         setSummaryOpen(open)
         if (!open) {
           setSummaryHouse(null)
+          setSummaryBalance(null)
           setSummaryLogs([])
         }
       }}>
@@ -1879,6 +1995,122 @@ export default function HousesPage() {
               </div>
 
               <div className="space-y-6 py-2">
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex-1">
+                      <Label className="text-xs">From Date</Label>
+                      <Input type="date" value={summaryFromDate} onChange={e => setSummaryFromDate(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="flex-1">
+                      <Label className="text-xs">Upto Date</Label>
+                      <Input type="date" value={summaryToDate} onChange={e => setSummaryToDate(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    {hasDateRangeFilter && (
+                      <Button variant="ghost" size="sm" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }} className="h-8 self-end">
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : paymentSummaryRows.length === 0 ? (
+                      <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <History className="h-8 w-8 opacity-30" />
+                        <p className="text-sm">No received payments found</p>
+                        <p className="text-xs">This house has no recorded payment history yet.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/50">
+                                <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paymentSummaryRows.map((row, idx) => (
+                                <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                  <td className="px-4 py-3 font-medium text-foreground">
+                                    {new Date(row.paidAt).toLocaleDateString('en-IN', {
+                                      day: 'numeric',
+                                      month: 'short',
+                                      year: 'numeric',
+                                    })}
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                    ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="px-4 py-3 text-right text-red-500">
+                                    {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                <td className="px-4 py-3 text-foreground">Total Received</td>
+                                <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                                  ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-right text-red-500">
+                                  ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {matchingBill && (
+                  <div>
+                    <h3 className="mb-3 text-sm font-semibold">Generated Bill</h3>
+                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(matchingBill.items as BillItem[]).map((item, idx) => (
+                              <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">{cleanItemName(item.name ?? '')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                              <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                ₹{Number(matchingBill.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                              <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                              <td className="px-4 py-3 text-right text-primary">
+                                ₹{(Number(matchingBill.totalAmount) + Number(matchingBill.previousBalance)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Monthly Summary Grid */}
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-3">Monthly Product Summary</h3>
@@ -1909,7 +2141,7 @@ export default function HousesPage() {
                             </tr>
                           </thead>
                           <tbody>
-                              {monthlyProductSummary.map((row, idx) => {
+                            {monthlyProductSummary.map((row, idx) => {
                               const uniqueMonths = Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort()
                               const productTotal = summaryTotals.productTotals.find(p => p.product === row.product)
                               return (
@@ -1945,7 +2177,7 @@ export default function HousesPage() {
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryHouse?.balance?.previousBalance ?? 0)
+                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryBalance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
                                         ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -1956,7 +2188,7 @@ export default function HousesPage() {
                                 <tr className="border-t-2 border-border bg-muted/50 font-bold">
                                   <td className="px-4 py-3 text-foreground">Grand Total</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryHouse?.balance?.previousBalance ?? 0)
+                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryBalance?.previousBalance ?? 0)
                                     const grandTotal = summaryTotals.grandTotal + prevBal
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-primary">
@@ -1965,6 +2197,21 @@ export default function HousesPage() {
                                     )
                                   })}
                                 </tr>
+                                {/* {!hasDateRangeFilter && (
+                                  <tr className="border-t border-border bg-muted/50 font-semibold">
+                                    <td className="px-4 py-3">Pending Amount</td>
+                                    {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                      const totalReceived = paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0)
+                                      const prevBal = Number(summaryBalance?.previousBalance ?? 0)
+                                      const pending = Math.max(0, summaryTotals.grandTotal + prevBal - totalReceived)
+                                      return (
+                                        <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                          ₹{pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        </td>
+                                      )
+                                    })}
+                                  </tr>
+                                )} */}
                               </>
                             )}
                           </tbody>
@@ -1973,48 +2220,6 @@ export default function HousesPage() {
                     )}
                   </div>
                 </div>
-
-                {matchingBill && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bill</h3>
-                    <div className="rounded-xl border border-border bg-muted/30 p-4">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-muted/50">
-                              <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>).map((item, idx) => (
-                              <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                <td className="px-4 py-3 font-medium text-foreground">{cleanItemName(item.name ?? '')}</td>
-                                <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
-                                <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                                <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                              </tr>
-                            ))}
-                            <tr className="border-t border-border bg-muted/50 font-semibold">
-                              <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
-                              <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
-                                ₹{Number(matchingBill.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </td>
-                            </tr>
-                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
-                              <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
-                              <td className="px-4 py-3 text-right text-primary">
-                                ₹{(Number(matchingBill.totalAmount) + Number(matchingBill.previousBalance)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* Daily View */}
                 <div>
@@ -2042,7 +2247,7 @@ export default function HousesPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {summaryRows.map((row) => {
+                          {displaySummaryRows.map((row) => {
                             const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated || row.log?.isClosed)
                             const isPaid = Boolean(row.log?.billGenerated || row.log?.isClosed)
                             return (
@@ -2052,7 +2257,7 @@ export default function HousesPage() {
                                   {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  {auth?.permissions?.canEditItems && (
+                                  <div className="flex items-center justify-end gap-1">
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -2063,18 +2268,18 @@ export default function HousesPage() {
                                     >
                                       <Edit2 className="h-4 w-4" />
                                     </Button>
-                                  )}
-                                  {auth?.permissions?.canEditItems && !blocked && row.log && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => setDeletingDeliveryLog(row.log!)}
-                                      title="Delete delivery"
-                                      className="h-8 w-8 p-0"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  )}
+                                    {!blocked && row.log && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setDeletingDeliveryLog(row.log!)}
+                                        title="Delete delivery"
+                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             )
@@ -2094,25 +2299,6 @@ export default function HousesPage() {
               </DialogFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!deletingDeliveryLog} onOpenChange={(open) => !open && setDeletingDeliveryLog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Delivery Log</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this delivery for {deletingDeliveryLog && new Date(deletingDeliveryLog.deliveredAt).toLocaleDateString('en-IN')}?
-              This will deduct ₹{deletingDeliveryLog ? Number(deletingDeliveryLog.totalAmount).toLocaleString('en-IN') : 0} from the house balance.
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeletingDeliveryLog(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDeleteDeliveryLog} disabled={editDeliverySaving}>
-              {editDeliverySaving ? 'Deleting...' : 'Delete'}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -2186,7 +2372,7 @@ export default function HousesPage() {
       <Dialog open={editDeliveryDialogOpen} onOpenChange={setEditDeliveryDialogOpen}>
         <DialogContent className="max-w-md sm:max-w-xl lg:max-w-2xl max-h-[90vh] overflow-y-auto">
           {editingDeliveryLog && (
-            <>
+            <div>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Edit2 className="h-5 w-5 text-primary" />
@@ -2206,7 +2392,11 @@ export default function HousesPage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Shift</p>
-                    <p className="mt-1 text-sm font-semibold capitalize">{editingDeliveryLog.shift}</p>
+                    <p className="mt-1 text-sm font-semibold capitalize">
+                      {editingDeliveryShifts.length > 1
+                        ? editingDeliveryShifts.join(', ')
+                        : editingDeliveryShifts[0] ?? editingDeliveryLog.shift}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Supplier</p>
@@ -2258,11 +2448,10 @@ export default function HousesPage() {
                               <Select
                                 value={item.milkType || ''}
                                 onValueChange={(val) => {
-                                  const milkType = val
+                                  const newRate = getPreferredRateForHouse(val)
                                   const updated = [...editDeliveryForm.items]
                                   const newQty = updated[index].qty ?? 0
-                                  const newRate = getPreferredRateForHouse(milkType)
-                                  updated[index] = { ...updated[index], milkType, rate: newRate, amount: newQty * newRate }
+                                  updated[index] = { ...updated[index], milkType: val, rate: newRate, amount: newQty * newRate }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
                               >
@@ -2279,25 +2468,10 @@ export default function HousesPage() {
                                   ))}
                                 </SelectContent>
                               </Select>
-                              {/* compact: no extra product label to save space */}
                             </div>
 
-                            <div className="col-span-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                value={item.rate}
-                                onChange={(e) => {
-                                  const newRate = Number(e.target.value)
-                                  const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
-                                  updated[index] = { ...updated[index], rate: newRate, amount: newQty * newRate }
-                                  setEditDeliveryForm({ ...editDeliveryForm, items: updated })
-                                }}
-                                className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
-                                placeholder="Rate"
-                              />
+                            <div className="col-span-2 text-right">
+                              <p className="text-sm font-medium text-muted-foreground">₹{Number(item.rate).toLocaleString('en-IN')}</p>
                             </div>
 
                             <div className="col-span-2">
@@ -2371,8 +2545,27 @@ export default function HousesPage() {
                   </Button>
                 </DialogFooter>
               </div>
-            </>
+            </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deletingDeliveryLog} onOpenChange={(open) => !open && setDeletingDeliveryLog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Delivery Log</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this delivery for {deletingDeliveryLog && new Date(deletingDeliveryLog.deliveredAt).toLocaleDateString('en-IN')}?
+              This will deduct ₹{deletingDeliveryLog ? Number(deletingDeliveryLog.totalAmount).toLocaleString('en-IN') : 0} from the house balance.
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingDeliveryLog(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteDeliveryLog} disabled={editDeliverySaving}>
+              {editDeliverySaving ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
