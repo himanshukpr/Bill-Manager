@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, BadgeAlert, Clock3, RefreshCcw, GripVertical, Check, Calendar, Search, X } from 'lucide-react'
+import { ArrowRight, BadgeAlert, Clock3, RefreshCcw, GripVertical, Check, Calendar, Search, X, Pencil } from 'lucide-react'
 import {
     DndContext,
     MouseSensor,
@@ -77,6 +77,8 @@ export default function SupplierHousesPage() {
     const [modalPlacement, setModalPlacement] = useState<'before' | 'after'>('before')
     const [modalHouseNumber, setModalHouseNumber] = useState('')
     const [dropdownOpen, setDropdownOpen] = useState(false)
+    const [editingConfig, setEditingConfig] = useState<{ config: HouseConfig; shift: string; supplierId: string } | null>(null)
+    const [editSaving, setEditSaving] = useState(false)
     const moveAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const sensors = useSensors(
@@ -423,6 +425,30 @@ export default function SupplierHousesPage() {
         }
     }
 
+    async function handleEditConfigSave() {
+        if (!editingConfig) return
+        setEditSaving(true)
+        try {
+            await houseConfigApi.update(editingConfig.config.id, {
+                shift: editingConfig.shift as 'morning' | 'evening',
+                supplierId: editingConfig.supplierId || undefined,
+            })
+            toast.success('House config updated')
+            setEditingConfig(null)
+            if (auth) {
+                const data = await housesApi.list()
+                const configs = await houseConfigApi.list()
+                setAllHouses(data.filter((h) => h.active))
+                setAllConfigs(configs)
+                filterHousesByShift(data.filter((h) => h.active), configs, auth, selectedShift)
+            }
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Failed to update config')
+        } finally {
+            setEditSaving(false)
+        }
+    }
+
     const modalPlan = selectedShiftForModal === 'morning' ? morningPlan : eveningPlan
     const modalSelectedIndex = selectedItemId === null ? -1 : modalPlan.findIndex((config) => config.id === selectedItemId)
     const modalSelectedConfig = modalSelectedIndex >= 0 ? modalPlan[modalSelectedIndex] : null
@@ -592,28 +618,35 @@ export default function SupplierHousesPage() {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
                                                     const originalIndex = morningPlan.findIndex((item) => item.id === config.id)
                                                     return (
-                                                        <PlannerSortableItem
-                                                            key={config.id}
-                                                            id={config.id}
-                                                            idx={idx}
-                                                            displayIndex={originalIndex >= 0 ? originalIndex + 1 : idx + 1}
-                                                            title={`House ${house?.houseNo ?? config.houseId}`}
-                                                            area={house?.area}
-                                                            moveAnimation={moveAnimation}
-                                                            onMoveUp={() => movePlanItem('morning', idx, 'up')}
-                                                            onMoveDown={() => movePlanItem('morning', idx, 'down')}
-                                                            canMoveUp={idx > 0}
-                                                            canMoveDown={idx < filteredMorningPlan.length - 1}
-                                                            onMoveToPosition={() => {
-                                                                setSelectedItemId(config.id)
-                                                                setSelectedShiftForModal('morning')
-                                                                setModalOpen(true)
-                                                                setModalSearchMode('position')
-                                                                setModalPlacement('before')
-                                                                setModalHouseNumber('')
-                                                                setDropdownOpen(false)
-                                                            }}
-                                                        />
+                                                    <PlannerSortableItem
+                                                        key={config.id}
+                                                        id={config.id}
+                                                        idx={idx}
+                                                        displayIndex={originalIndex >= 0 ? originalIndex + 1 : idx + 1}
+                                                        title={`House ${house?.houseNo ?? config.houseId}`}
+                                                        area={house?.area}
+                                                        moveAnimation={moveAnimation}
+                                                        onMoveUp={() => movePlanItem('morning', idx, 'up')}
+                                                        onMoveDown={() => movePlanItem('morning', idx, 'down')}
+                                                        canMoveUp={idx > 0}
+                                                        canMoveDown={idx < filteredMorningPlan.length - 1}
+                                                        onMoveToPosition={() => {
+                                                            setSelectedItemId(config.id)
+                                                            setSelectedShiftForModal('morning')
+                                                            setModalOpen(true)
+                                                            setModalSearchMode('position')
+                                                            setModalPlacement('before')
+                                                            setModalHouseNumber('')
+                                                            setDropdownOpen(false)
+                                                        }}
+                                                        onEdit={() => {
+                                                            setEditingConfig({
+                                                                config,
+                                                                shift: config.shift,
+                                                                supplierId: config.supplierId ?? '',
+                                                            })
+                                                        }}
+                                                    />
                                                     )
                                                 })}
                                             </motion.div>
@@ -652,28 +685,35 @@ export default function SupplierHousesPage() {
                                                     const house = allHouses.find((h) => h.id === config.houseId)
                                                     const originalIndex = eveningPlan.findIndex((item) => item.id === config.id)
                                                     return (
-                                                        <PlannerSortableItem
-                                                            key={config.id}
-                                                            id={config.id}
-                                                            idx={idx}
-                                                            displayIndex={originalIndex >= 0 ? originalIndex + 1 : idx + 1}
-                                                            title={`House ${house?.houseNo ?? config.houseId}`}
-                                                            area={house?.area}
-                                                            moveAnimation={moveAnimation}
-                                                            onMoveUp={() => movePlanItem('evening', idx, 'up')}
-                                                            onMoveDown={() => movePlanItem('evening', idx, 'down')}
-                                                            canMoveUp={idx > 0}
-                                                            canMoveDown={idx < filteredEveningPlan.length - 1}
-                                                            onMoveToPosition={() => {
-                                                                setSelectedItemId(config.id)
-                                                                setSelectedShiftForModal('evening')
-                                                                setModalOpen(true)
-                                                                setModalSearchMode('position')
-                                                                setModalPlacement('before')
-                                                                setModalHouseNumber('')
-                                                                setDropdownOpen(false)
-                                                            }}
-                                                        />
+                                                    <PlannerSortableItem
+                                                        key={config.id}
+                                                        id={config.id}
+                                                        idx={idx}
+                                                        displayIndex={originalIndex >= 0 ? originalIndex + 1 : idx + 1}
+                                                        title={`House ${house?.houseNo ?? config.houseId}`}
+                                                        area={house?.area}
+                                                        moveAnimation={moveAnimation}
+                                                        onMoveUp={() => movePlanItem('evening', idx, 'up')}
+                                                        onMoveDown={() => movePlanItem('evening', idx, 'down')}
+                                                        canMoveUp={idx > 0}
+                                                        canMoveDown={idx < filteredEveningPlan.length - 1}
+                                                        onMoveToPosition={() => {
+                                                            setSelectedItemId(config.id)
+                                                            setSelectedShiftForModal('evening')
+                                                            setModalOpen(true)
+                                                            setModalSearchMode('position')
+                                                            setModalPlacement('before')
+                                                            setModalHouseNumber('')
+                                                            setDropdownOpen(false)
+                                                        }}
+                                                        onEdit={() => {
+                                                            setEditingConfig({
+                                                                config,
+                                                                shift: config.shift,
+                                                                supplierId: config.supplierId ?? '',
+                                                            })
+                                                        }}
+                                                    />
                                                     )
                                                 })}
                                             </motion.div>
@@ -890,6 +930,74 @@ export default function SupplierHousesPage() {
                 </div>
             )}
 
+            {editingConfig && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div className="fixed inset-0 z-[101] bg-black/60" onClick={() => setEditingConfig(null)} />
+                    <div className="relative z-[102] w-full max-w-sm rounded-2xl bg-popover p-5 text-popover-foreground shadow-xl ring-1 ring-foreground/5">
+                        <h3 className="mb-1 text-base font-semibold">
+                            Edit — House {(() => {
+                                const h = allHouses.find(item => item.id === editingConfig.config.houseId)
+                                return h?.houseNo ?? editingConfig.config.houseId
+                            })()}
+                        </h3>
+                        {(() => {
+                            const h = allHouses.find(item => item.id === editingConfig.config.houseId)
+                            return h?.area ? <p className="mb-4 text-xs text-muted-foreground">{h.area}</p> : null
+                        })()}
+                        <div className="space-y-4">
+                            <div>
+                                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Shift</label>
+                                <div className="inline-flex rounded-lg border border-border/70 bg-muted/30 p-0.5">
+                                    {(['morning', 'evening'] as const).map((s) => (
+                                        <button
+                                            key={s}
+                                            type="button"
+                                            onClick={() => setEditingConfig(prev => prev ? { ...prev, shift: s } : null)}
+                                            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${editingConfig.shift === s ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                        >
+                                            {s === 'morning' ? 'Morning' : 'Evening'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Supplier</label>
+                                <select
+                                    value={editingConfig.supplierId}
+                                    onChange={(e) => setEditingConfig(prev => prev ? { ...prev, supplierId: e.target.value } : null)}
+                                    className="h-9 w-full rounded-lg border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                >
+                                    <option value="">No supplier</option>
+                                    {suppliers.map((s) => (
+                                        <option key={s.uuid} value={s.uuid}>{s.username}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex gap-2 pt-1">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1"
+                                    onClick={() => setEditingConfig(null)}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    className="flex-1"
+                                    onClick={() => void handleEditConfigSave()}
+                                    disabled={editSaving}
+                                >
+                                    {editSaving ? 'Saving...' : 'Save'}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {hasUnsavedChanges ? (
                 <div className="fixed bottom-2 right-2 z-[90] sm:hidden">
                     {selectedShift === 'morning' ? (
@@ -943,6 +1051,7 @@ function PlannerSortableItem({
     canMoveUp,
     canMoveDown,
     onMoveToPosition,
+    onEdit,
 }: {
     id: number
     idx: number
@@ -955,6 +1064,7 @@ function PlannerSortableItem({
     canMoveUp: boolean
     canMoveDown: boolean
     onMoveToPosition: () => void
+    onEdit: () => void
 }) {
     const {
         attributes,
@@ -1091,7 +1201,7 @@ function PlannerSortableItem({
                                 {area ? <p className="text-[10px] text-muted-foreground break-words sm:text-[11px]">{area}</p> : null}
                             </div>
                         </div>
-                        <div className="grid grid-cols-3 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
+                        <div className="grid grid-cols-4 gap-1 px-2 sm:ml-auto sm:flex sm:w-auto sm:items-center sm:px-0 sm:pr-2">
                             <Button
                                 type="button"
                                 size="sm"
@@ -1102,6 +1212,18 @@ function PlannerSortableItem({
                                 onTouchStart={(event) => event.stopPropagation()}
                             >
                                 Move
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 px-1.5 text-xs"
+                                onClick={onEdit}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onTouchStart={(event) => event.stopPropagation()}
+                                title="Edit shift & supplier"
+                            >
+                                <Pencil className="h-3 w-3" />
                             </Button>
                             <Button
                                 type="button"
