@@ -11,6 +11,36 @@ Fix and maintain the Bill Manager app's billing, balance, payment, receipt displ
 
 ## Key Changes Made
 
+### 1. PDF Styling (bills/page.tsx) ... (unchanged)
+
+### 2. BuildPrintableBillItems ... (unchanged)
+
+[keep all existing sections 1-13 unchanged]
+
+### 14. Pending Houses dialog (bills/page.tsx)
+- Shift/Supplier information now shown in PDF column and dialog table
+- Houses grouped by shift+supplier with sticky section headers (Shop, Morning — SupplierName, Evening — SupplierName)
+- Sort order: Shop → Morning (A→Z by supplier) → Evening (A→Z by supplier), then by house number
+- Filters out deactivated houses (`h.active`)
+
+### 15. All Houses Summary PDF button (houses/page.tsx)
+- "All Summary" button next to Export PDF button in admin houses page header
+- Dialog with month/year selectors (defaults to current month)
+- Generates a single PDF with each active house on its own page
+- Each page contains: header (house no, shift/supplier, period, area), Received Payments table, Monthly Product Summary with Previous Balance + Grand Total rows, Daily Deliveries (two-column layout)
+- Uses `houses.filter(h => h.active)` — excludes deactivated houses
+- Handles missing balance records gracefully (falls back to zero defaults)
+
+### 16. Server balance methods now resilient to missing records (house-balance.service.ts)
+- `getBalance`: returns zero balance object instead of 404 when no balance record exists
+- `recordPayment`: auto-creates balance record if missing
+- `getPaymentHistory`: returns `[]` instead of 404
+- `updatePreviousBalance`: uses `upsert` (creates record if missing)
+- `updateCurrentBalance`: uses `upsert` (creates record if missing)
+
+### 17. Houses list Export PDF (houses/page.tsx)
+- Filters out deactivated houses from the exported PDF
+
 ### 1. PDF Styling (bills/page.tsx)
 - **Spacing reduced**: headerTextY (4.5→3.5), titleY (11.5→8.5), noteY (12), toY (14.5), tableTop (18) to tighten layout around DAIRY title
 - **Bolder text**: Table data cells now use `bold: true`, header info changed from italic→bolditalic, previous balance line uses bolditalic

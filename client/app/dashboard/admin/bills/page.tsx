@@ -507,11 +507,11 @@ export default function BillsPage() {
     const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
 
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(14)
+    doc.setFontSize(15)
     doc.text('Houses with Pending Balance', 14, 16)
 
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(10)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 14, 23)
 
     autoTable(doc, {
@@ -524,7 +524,7 @@ export default function BillsPage() {
         d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
         d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
       ]),
-      styles: { fontSize: 8, cellPadding: 2 },
+      styles: { fontSize: 9, cellPadding: 2, fontStyle: 'bold' },
       headStyles: { fillColor: [200, 200, 200] },
       margin: { left: 14, right: 14 },
       columnStyles: {
