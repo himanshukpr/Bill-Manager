@@ -1663,7 +1663,7 @@ export default function HousesPage() {
     autoTable(doc, {
       startY: 24,
       head: [['House No', 'Address', 'Phone No', 'Balance']],
-      body: filtered.map((house) => [
+      body: filtered.filter(h => h.active).map((house) => [
         String(house.houseNo),
         house.area || '-',
         house.phoneNo || '-',
