@@ -516,25 +516,36 @@ export default function BillsPage() {
 
     autoTable(doc, {
       startY: 30,
-      head: [['House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
-      body: pendingData.map(d => [
-        d.houseNo,
+      head: [['#', 'House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
+      body: pendingData.map((d, i) => [
+        i + 1,
+        `H.N - ${d.houseNo}`,
         d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
         d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
         d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
         d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
       ]),
-      styles: { fontSize: 9, cellPadding: 2, fontStyle: 'bold' },
-      headStyles: { fillColor: [200, 200, 200] },
+      styles: { fontSize: 9, cellPadding: 2, fontStyle: 'bold', textColor: [0, 0, 0] },
+      headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0] },
       margin: { left: 14, right: 14 },
       columnStyles: {
-        0: { cellWidth: 22 },
-        1: { cellWidth: 36 },
-        2: { cellWidth: 28 },
-        3: { cellWidth: 32 },
+        0: { cellWidth: 12 },
+        1: { cellWidth: 24 },
+        2: { cellWidth: 34 },
+        3: { cellWidth: 24 },
         4: { cellWidth: 28 },
+        5: { cellWidth: 26 },
       },
     })
+
+    // Page numbers
+    const pageCount = doc.getNumberOfPages()
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.text(`Page ${i} of ${pageCount}`, doc.internal.pageSize.getWidth() - 14, doc.internal.pageSize.getHeight() - 8, { align: 'right' })
+    }
 
     doc.save(`pending-houses-${new Date().toISOString().split('T')[0]}.pdf`)
   }, [pendingData])
