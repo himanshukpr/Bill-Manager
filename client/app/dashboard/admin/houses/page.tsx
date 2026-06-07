@@ -457,6 +457,10 @@ export default function HousesPage() {
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [allExportOpen, setAllExportOpen] = useState(false)
+  const [allExportMonth, setAllExportMonth] = useState(new Date().getMonth() + 1)
+  const [allExportYear, setAllExportYear] = useState(new Date().getFullYear())
+  const [allExportLoading, setAllExportLoading] = useState(false)
   const loading = !hydrated && (!cachedHouses || !cachedSuppliers)
 
   const filteredSummaryLogs = useMemo(() => {
@@ -843,6 +847,316 @@ export default function HousesPage() {
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
   }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
+
+  const handleExportAllHousesSummaryPdf = useCallback(async (month: number, year: number) => {
+    const activeHouses = houses.filter(h => h.active)
+    if (activeHouses.length === 0) {
+      toast.error('No active houses to export')
+      return
+    }
+
+    setAllExportLoading(true)
+    const toastId = toast.loading(`Generating summary for ${activeHouses.length} houses...`)
+
+    try {
+      const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const leftMargin = 14
+      const bottom = 10
+      const headerHeight = 9
+      const rowHeight = 8
+      const paddingX = 2
+      const lineHeight = 3.6
+
+      const toLines = (text: string, width: number): string[] => {
+        const lines = doc.splitTextToSize(text, Math.max(8, width - (paddingX * 2)))
+        return Array.isArray(lines) ? lines : [String(lines)]
+      }
+
+      const drawCell = (
+        x: number, y: number, width: number, height: number,
+        text: string | string[], align: 'left' | 'right' = 'left',
+        bold = false, fillColor: [number, number, number] = [255, 255, 255],
+        textColor: [number, number, number] = [17, 24, 39],
+      ) => {
+        doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
+        doc.setDrawColor(210, 214, 220)
+        doc.rect(x, y, width, height, 'FD')
+        doc.setFont('helvetica', bold ? 'bold' : 'normal')
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
+        const lines = Array.isArray(text) ? text : toLines(text, width)
+        const contentHeight = lines.length * lineHeight
+        const textY = y + Math.max(2, (height - contentHeight) / 2) + (lineHeight - 1)
+        const textX = align === 'right' ? x + width - paddingX : x + paddingX
+        doc.text(lines, textX, textY, { align })
+      }
+
+      let isFirst = true
+      for (const house of activeHouses) {
+        if (!isFirst) doc.addPage()
+        isFirst = false
+
+        const [balance, logs, bills, rates] = await Promise.all([
+          balanceApi.get(house.id),
+          deliveryLogsApi.list({ houseId: house.id }),
+          billsApi.list({ houseId: house.id }),
+          productRatesApi.list(),
+        ])
+
+        const period = { year, month: month - 1 }
+        const filteredLogs = logs.filter(log => {
+          const d = new Date(log.deliveredAt)
+          return d.getFullYear() === year && d.getMonth() === month - 1
+        })
+
+        const matchingBill = bills.find(b => b.year === year && b.month === month) ?? null
+
+        const summaryRowsData = buildHouseDeliverySummary(filteredLogs, year, month - 1)
+
+        const monthlyProdSummary: MonthlyProductSummary[] = matchingBill?.items?.length
+          ? Array.from(
+              ((items) => {
+                const map = new Map<string, number>()
+                for (const item of items) {
+                  if (item.name && item.qty > 0) {
+                    const product = cleanItemName(item.name)
+                    map.set(product, (map.get(product) ?? 0) + item.qty)
+                  }
+                }
+                return map
+              })(matchingBill.items as BillItem[])
+            ).map(([product, totalQty]) => ({
+              product,
+              months: [{ month: month - 1, year, quantity: totalQty }],
+              totalQuantity: totalQty,
+            })).sort((a, b) => b.totalQuantity - a.totalQuantity)
+          : buildMonthlyProductSummary(filteredLogs.filter(l => !l.billGenerated), year, month - 1)
+
+        const payments = [...(balance?.payments ?? [])].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        )
+        const baseOutstanding = Number(balance?.previousBalance ?? house.balance?.previousBalance ?? 0)
+        const totalApplied = payments.reduce((s, p) => s + Number(p.amount ?? 0) + Number(p.discount ?? 0), 0)
+        let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
+        const payRows: PaymentSummaryRow[] = payments.map(p => {
+          const paidAmount = Number(p.amount ?? 0)
+          const discount = Number(p.discount ?? 0)
+          remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
+          return { id: p.id, paidAt: p.paidAt || p.createdAt, paidAmount, discount, remainingAmount, note: p.note }
+        })
+
+        let productTotals: Array<{ product: string; quantity: number; amount: number }> = []
+        let grandTotal = 0
+        let previousBalance = 0
+        const pm = new Map<string, { qty: number; amount: number }>()
+
+        if (matchingBill) {
+          const items = (matchingBill.items as BillItem[]) ?? []
+          for (const item of items) {
+            if (item.name && item.qty > 0) {
+              const prod = cleanItemName(item.name)
+              const existing = pm.get(prod) ?? { qty: 0, amount: 0 }
+              pm.set(prod, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
+            }
+          }
+          productTotals = Array.from(pm.entries()).map(([p, d]) => ({ product: p, quantity: d.qty, amount: d.amount }))
+          grandTotal = Number(matchingBill.totalAmount)
+          previousBalance = Number(matchingBill.previousBalance ?? 0)
+        } else {
+          const ml = filteredLogs.filter(l => !l.billGenerated)
+          for (const log of ml) {
+            grandTotal += Number(log.totalAmount ?? 0)
+            for (const item of log.items ?? []) {
+              const prod = normalizeMilkType(item.milkType)
+              const qty = Number(item.qty ?? 0)
+              const amt = Number(item.amount ?? 0)
+              if (prod && qty > 0) {
+                const existing = pm.get(prod) ?? { qty: 0, amount: 0 }
+                pm.set(prod, { qty: existing.qty + qty, amount: existing.amount + amt })
+              }
+            }
+          }
+          productTotals = Array.from(pm.entries()).map(([p, d]) => ({ product: p, quantity: d.qty, amount: d.amount }))
+          previousBalance = Number(balance?.previousBalance ?? 0)
+        }
+
+        const monthLabel = `${MONTH_NAMES[month]} ${year}`
+        const config = house.configs?.[0]
+        const shiftLabel = config?.shift ? (config.shift === 'shop' ? 'Shop' : config.shift === 'morning' ? 'Morning' : 'Evening') : ''
+        const supplierName = config?.supplier?.username ?? ''
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(13)
+        doc.text(`House ${house.houseNo} — ${shiftLabel}${supplierName ? ` (${supplierName})` : ''}`, leftMargin, 14)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9)
+        doc.text(`Period: ${monthLabel}`, leftMargin, 21)
+        if (house.area) doc.text(`Area: ${house.area}`, leftMargin, 26)
+
+        let currentY = 30
+        const monthKeys = [`${year}-${String(month).padStart(2, '0')}`]
+        const monthLabels = [monthLabel]
+
+        const paymentsExist = payRows.length > 0
+        const splitX = 94
+        const rightSideX = paymentsExist ? splitX : leftMargin
+        const rightTableWidth = paymentsExist ? (pageWidth - leftMargin - splitX) : (pageWidth - leftMargin - leftMargin)
+        const productColWidth = Math.max(50, Math.min(68, rightTableWidth * 0.4))
+        const monthColWidth = (rightTableWidth - productColWidth)
+
+        let paymentsEndY = currentY
+        if (paymentsExist) {
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(9)
+          doc.text('Received Payments', leftMargin, currentY)
+          paymentsEndY = currentY + 4
+
+          const totalReceived = payRows.reduce((s, r) => s + r.paidAmount, 0)
+          const totalDiscount = payRows.reduce((s, r) => s + r.discount, 0)
+          autoTable(doc, {
+            startY: paymentsEndY,
+            head: [['Date', 'Paid (₹)', 'Discount (₹)']],
+            body: [
+              ...payRows.map(r => [
+                new Date(r.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+                r.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+                r.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+              ]),
+              ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+            ],
+            margin: { left: leftMargin, right: pageWidth - splitX + 4 },
+            styles: { fontSize: 7 },
+            headStyles: { fillColor: [200, 200, 200] },
+            columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 16 }, 2: { cellWidth: 16 } },
+          })
+          paymentsEndY = (doc as any).lastAutoTable.finalY + 4
+        }
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(10)
+        doc.setTextColor(17, 24, 39)
+        doc.text('Monthly Product Summary', rightSideX, currentY)
+
+        let summaryY = currentY + 4
+        drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+        monthLabels.forEach((label, idx) => {
+          drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+        })
+        summaryY += headerHeight
+
+        if (monthlyProdSummary.length === 0) {
+          drawCell(rightSideX, summaryY, rightTableWidth, rowHeight, 'No product data available', 'left')
+          summaryY += rowHeight
+        } else {
+          for (const row of monthlyProdSummary) {
+            if (summaryY > pageHeight - bottom - rowHeight) {
+              doc.addPage()
+              summaryY = 10
+              drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+              monthLabels.forEach((label, idx) => {
+                drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+              })
+              summaryY += headerHeight
+            }
+
+            const prodTotal = productTotals.find(pt => pt.product === row.product)
+            const rowValues = monthKeys.map(() => prodTotal ? `${row.totalQuantity.toLocaleString('en-IN')}L - Rs ${prodTotal.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-')
+
+            const prodLines = toLines(row.product, productColWidth)
+            const valLines = rowValues.map(v => toLines(v, monthColWidth))
+            const maxLines = Math.max(prodLines.length, ...valLines.map(l => l.length))
+            const cellHeight = Math.max(rowHeight, maxLines * lineHeight + 4)
+
+            drawCell(rightSideX, summaryY, productColWidth, cellHeight, prodLines, 'left')
+            valLines.forEach((lines, idx) => {
+              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, cellHeight, lines, 'right')
+            })
+            summaryY += cellHeight
+          }
+
+          if (summaryY > pageHeight - bottom - rowHeight) {
+            doc.addPage()
+            summaryY = 10
+            drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+            monthLabels.forEach((label, idx) => {
+              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+            })
+            summaryY += headerHeight
+          }
+
+          drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
+          monthLabels.forEach((_, idx) => {
+            drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+          })
+          summaryY += rowHeight
+
+          if (previousBalance > 0) {
+            drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
+            monthLabels.forEach((_, idx) => {
+              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
+            })
+            summaryY += rowHeight
+            const grandWithPrev = grandTotal + previousBalance
+            drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
+            monthLabels.forEach((_, idx) => {
+              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${grandWithPrev.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
+            })
+            summaryY += rowHeight
+          }
+        }
+
+        currentY = Math.max(paymentsEndY, summaryY) + 4
+
+        let deliveriesTitleY = currentY + 5
+        if (deliveriesTitleY > pageHeight - 16) {
+          doc.addPage()
+          deliveriesTitleY = 14
+        }
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(11)
+        doc.setTextColor(17, 24, 39)
+        doc.text('Daily Deliveries', leftMargin, deliveriesTitleY)
+
+        const daysLeft = summaryRowsData.slice(0, 15)
+        const daysRight = summaryRowsData.slice(15)
+        const deliveriesSplitX = 100
+        if (daysLeft.length > 0) {
+          autoTable(doc, {
+            startY: deliveriesTitleY + 4,
+            head: [['Date', 'Products']],
+            body: daysLeft.map(r => [r.dayLabel, r.hasDelivery ? r.productsLabel : '-']),
+            styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+            headStyles: { fillColor: [17, 24, 39], textColor: 255 },
+            columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            margin: { left: leftMargin, right: pageWidth - deliveriesSplitX + 4 },
+          })
+        }
+        if (daysRight.length > 0) {
+          autoTable(doc, {
+            startY: deliveriesTitleY + 4,
+            head: [['Date', 'Products']],
+            body: daysRight.map(r => [r.dayLabel, r.hasDelivery ? r.productsLabel : '-']),
+            styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+            headStyles: { fillColor: [17, 24, 39], textColor: 255 },
+            columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            margin: { left: deliveriesSplitX, right: leftMargin },
+          })
+        }
+      }
+
+      doc.save(`all-houses-summary-${month}-${year}.pdf`)
+      toast.success(`Exported ${activeHouses.length} house summaries`, { id: toastId })
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err), { id: toastId })
+    } finally {
+      setAllExportLoading(false)
+      setAllExportOpen(false)
+    }
+  }, [houses])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {
@@ -1411,6 +1725,21 @@ export default function HousesPage() {
             >
               <Building2 className="h-4 w-4" />
               <span className="hidden sm:inline">Export PDF</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                setAllExportMonth(new Date().getMonth() + 1)
+                setAllExportYear(new Date().getFullYear())
+                setAllExportOpen(true)
+              }}
+              disabled={filtered.length === 0}
+              className="h-9 w-9 rounded-lg sm:w-auto sm:size-auto sm:gap-2"
+              title="Export all houses summary PDF"
+            >
+              <CalendarDays className="h-4 w-4" />
+              <span className="hidden sm:inline">All Summary</span>
             </Button>
             <Button onClick={openAdd} className="gap-2 sm:gap-2">
               <Plus className="h-4 w-4" /> Add House
@@ -2584,6 +2913,51 @@ export default function HousesPage() {
         </DialogContent>
       </Dialog>
 
+      {/* All Houses Summary Export Dialog */}
+      <Dialog open={allExportOpen} onOpenChange={setAllExportOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Export All Houses Summary</DialogTitle>
+            <DialogDescription>
+              Select the month and year to generate a single PDF with all house summaries.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Month</Label>
+              <Select value={String(allExportMonth)} onValueChange={v => setAllExportMonth(Number(v))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MONTH_NAMES.slice(1).map((name, idx) => (
+                    <SelectItem key={idx + 1} value={String(idx + 1)}>{name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Year</Label>
+              <Select value={String(allExportYear)} onValueChange={v => setAllExportYear(Number(v))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => (
+                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAllExportOpen(false)}>Cancel</Button>
+            <Button onClick={() => handleExportAllHousesSummaryPdf(allExportMonth, allExportYear)} disabled={allExportLoading}>
+              {allExportLoading ? 'Generating...' : 'Export PDF'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
