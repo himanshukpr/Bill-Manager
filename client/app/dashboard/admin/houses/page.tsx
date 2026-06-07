@@ -897,8 +897,8 @@ export default function HousesPage() {
         if (!isFirst) doc.addPage()
         isFirst = false
 
-        const [balance, logs, bills, rates] = await Promise.all([
-          balanceApi.get(house.id),
+        const [balanceResult, logs, bills, rates] = await Promise.all([
+          balanceApi.get(house.id).catch(() => ({ id: 0, houseId: house.id, previousBalance: '0', currentBalance: '0' } as HouseBalance)),
           deliveryLogsApi.list({ houseId: house.id }),
           billsApi.list({ houseId: house.id }),
           productRatesApi.list(),
@@ -933,10 +933,10 @@ export default function HousesPage() {
             })).sort((a, b) => b.totalQuantity - a.totalQuantity)
           : buildMonthlyProductSummary(filteredLogs.filter(l => !l.billGenerated), year, month - 1)
 
-        const payments = [...(balance?.payments ?? [])].sort(
+        const payments = [...(balanceResult?.payments ?? [])].sort(
           (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
         )
-        const baseOutstanding = Number(balance?.previousBalance ?? house.balance?.previousBalance ?? 0)
+        const baseOutstanding = Number(balanceResult?.previousBalance ?? house.balance?.previousBalance ?? 0)
         const totalApplied = payments.reduce((s, p) => s + Number(p.amount ?? 0) + Number(p.discount ?? 0), 0)
         let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
         const payRows: PaymentSummaryRow[] = payments.map(p => {
@@ -978,7 +978,7 @@ export default function HousesPage() {
             }
           }
           productTotals = Array.from(pm.entries()).map(([p, d]) => ({ product: p, quantity: d.qty, amount: d.amount }))
-          previousBalance = Number(balance?.previousBalance ?? 0)
+          previousBalance = Number(balanceResult?.previousBalance ?? 0)
         }
 
         const monthLabel = `${MONTH_NAMES[month]} ${year}`

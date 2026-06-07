@@ -23,18 +23,26 @@ export class HouseBalanceService {
       },
     });
     if (!balance)
-      throw new NotFoundException(`Balance for house #${houseId} not found`);
+      return {
+        id: 0,
+        houseId,
+        previousBalance: 0,
+        currentBalance: 0,
+        updatedAt: new Date(),
+        payments: [],
+      };
     return balance;
   }
 
   async recordPayment(dto: RecordPaymentDto) {
-    const balance = await this.prisma.houseBalance.findUnique({
+    let balance = await this.prisma.houseBalance.findUnique({
       where: { houseId: dto.houseId },
     });
-    if (!balance)
-      throw new NotFoundException(
-        `Balance for house #${dto.houseId} not found`,
-      );
+    if (!balance) {
+      balance = await this.prisma.houseBalance.create({
+        data: { houseId: dto.houseId },
+      });
+    }
 
     // Calculate total amount including discount
     const totalAmount = dto.amount + (dto.discount || 0);
@@ -90,8 +98,7 @@ export class HouseBalanceService {
     const balance = await this.prisma.houseBalance.findUnique({
       where: { houseId },
     });
-    if (!balance)
-      throw new NotFoundException(`Balance for house #${houseId} not found`);
+    if (!balance) return [];
 
     return this.prisma.paymentHistory.findMany({
       where: { balanceRef: balance.id },
@@ -113,32 +120,18 @@ export class HouseBalanceService {
   }
 
   async updatePreviousBalance(houseId: number, previousBalance: number) {
-    const balance = await this.prisma.houseBalance.findUnique({
+    return this.prisma.houseBalance.upsert({
       where: { houseId },
-      select: { id: true },
-    });
-
-    if (!balance)
-      throw new NotFoundException(`Balance for house #${houseId} not found`);
-
-    return this.prisma.houseBalance.update({
-      where: { houseId },
-      data: { previousBalance },
+      create: { houseId, previousBalance },
+      update: { previousBalance },
     });
   }
 
   async updateCurrentBalance(houseId: number, currentBalance: number) {
-    const balance = await this.prisma.houseBalance.findUnique({
+    return this.prisma.houseBalance.upsert({
       where: { houseId },
-      select: { id: true },
-    });
-
-    if (!balance)
-      throw new NotFoundException(`Balance for house #${houseId} not found`);
-
-    return this.prisma.houseBalance.update({
-      where: { houseId },
-      data: { currentBalance },
+      create: { houseId, currentBalance },
+      update: { currentBalance },
     });
   }
 
