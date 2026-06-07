@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import jsPDF from 'jspdf'
-import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download } from 'lucide-react'
-import { billsApi, deliveryLogsApi, housesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog } from '@/lib/api'
+import autoTable from 'jspdf-autotable'
+import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download, AlertTriangle } from 'lucide-react'
+import { billsApi, deliveryLogsApi, housesApi, balanceApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -275,6 +276,9 @@ export default function BillsPage() {
   const [filterYear, setFilterYear] = useState<string>(String(CURRENT_YEAR))
   const [printMonth, setPrintMonth] = useState<string>(String(new Date().getMonth() + 1))
   const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
+  const [pendingOpen, setPendingOpen] = useState(false)
+  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string }>>([])
+  const [pendingLoading, setPendingLoading] = useState(false)
   const [generateOpen, setGenerateOpen] = useState(false)
   const [viewBill, setViewBill] = useState<Bill | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
@@ -448,6 +452,92 @@ export default function BillsPage() {
       cancelled = true
     }
   }, [houses, printMonth, printRange.fromDate, printRange.toDate, printYear])
+
+  const handleOpenPending = useCallback(async () => {
+    setPendingLoading(true)
+    setPendingOpen(true)
+    try {
+      const [allHouses, allPayments] = await Promise.all([
+        housesApi.list(),
+        balanceApi.allPayments(),
+      ])
+
+      const latestPaymentByHouse = new Map<number, { amount: number; date: string }>()
+      for (const p of allPayments) {
+        const houseId = p.balance?.house?.id
+        if (houseId == null) continue
+        const existing = latestPaymentByHouse.get(houseId)
+        const pDate = new Date(p.paidAt || p.createdAt)
+        if (!existing || pDate > new Date(existing.date)) {
+          latestPaymentByHouse.set(houseId, {
+            amount: Number(p.amount ?? 0),
+            date: p.paidAt || p.createdAt,
+          })
+        }
+      }
+
+      const data = allHouses
+        .filter(h => Number(h.balance?.previousBalance ?? 0) > 0)
+        .map(h => {
+          const config = h.configs?.[0]
+          const shift = config?.shift ?? ''
+          const supplier = config?.supplier?.username ?? ''
+          return {
+            houseNo: h.houseNo,
+            previousBalance: Number(h.balance?.previousBalance ?? 0),
+            latestPayment: latestPaymentByHouse.get(h.id) ?? null,
+            shift,
+            supplier,
+            _sortKey: `${shift === 'shop' ? '0' : shift === 'morning' ? '1' : '2'}_${supplier}_${h.houseNo.padStart(5, '0')}`,
+          }
+        })
+        .sort((a, b) => a._sortKey.localeCompare(b._sortKey))
+
+      setPendingData(data)
+    } catch {
+      setPendingData([])
+      toast.error('Failed to load pending houses')
+    } finally {
+      setPendingLoading(false)
+    }
+  }, [])
+
+  const handleExportPendingPdf = useCallback(() => {
+    if (pendingData.length === 0) return
+    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(14)
+    doc.text('Houses with Pending Balance', 14, 16)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 14, 23)
+
+    autoTable(doc, {
+      startY: 30,
+      head: [['House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
+      body: pendingData.map(d => [
+        d.houseNo,
+        d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
+        d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+        d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
+        d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
+      ]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [200, 200, 200] },
+      margin: { left: 14, right: 14 },
+      columnStyles: {
+        0: { cellWidth: 22 },
+        1: { cellWidth: 36 },
+        2: { cellWidth: 28 },
+        3: { cellWidth: 32 },
+        4: { cellWidth: 28 },
+      },
+    })
+
+    doc.save(`pending-houses-${new Date().toISOString().split('T')[0]}.pdf`)
+  }, [pendingData])
 
   const handleExportBalancePdf = useCallback(async () => {
     if (exportingBalancePdf) return
@@ -845,6 +935,15 @@ export default function BillsPage() {
           </div>
           <Button
             variant="outline"
+            onClick={handleOpenPending}
+            disabled={pendingLoading}
+            className="gap-2 self-start sm:self-auto"
+          >
+            <AlertTriangle className="h-4 w-4" />
+            {pendingLoading ? 'Loading...' : 'Pending Houses'}
+          </Button>
+          <Button
+            variant="outline"
             onClick={handleExportBalancePdf}
             disabled={exportingBalancePdf || loading || printLoading || printBills.length === 0}
             className="gap-2 self-start sm:self-auto"
@@ -1229,6 +1328,81 @@ export default function BillsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Pending Houses Dialog */}
+      <Dialog open={pendingOpen} onOpenChange={open => { if (!open) setPendingOpen(false) }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Houses with Pending Balance</DialogTitle>
+            <DialogDescription>
+              Houses that have a previous balance outstanding
+            </DialogDescription>
+          </DialogHeader>
+          {pendingLoading ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              <span className="text-sm">Loading...</span>
+            </div>
+          ) : pendingData.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+              <Check className="h-8 w-8" />
+              <p className="text-sm">No houses with pending balance</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-96">
+              {(() => {
+                const groups = new Map<string, typeof pendingData>()
+                for (const d of pendingData) {
+                  const key = d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : `Evening — ${d.supplier || 'No Supplier'}`
+                  const group = groups.get(key) ?? []
+                  group.push(d)
+                  groups.set(key, group)
+                }
+                return Array.from(groups.entries()).map(([groupName, rows]) => (
+                  <div key={groupName}>
+                    <div className="sticky top-0 bg-muted/80 px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
+                      {groupName}
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          <th className="px-4 py-2 text-left font-semibold text-foreground">House</th>
+                          <th className="px-4 py-2 text-right font-semibold text-foreground">Pre Bal (₹)</th>
+                          <th className="px-4 py-2 text-right font-semibold text-foreground">Latest Payment (₹)</th>
+                          <th className="px-4 py-2 text-right font-semibold text-foreground">Payment Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((d) => (
+                          <tr key={d.houseNo} className="border-b border-border">
+                            <td className="px-4 py-2 font-medium text-foreground">{d.houseNo}</td>
+                            <td className="px-4 py-2 text-right text-foreground">
+                              {d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-4 py-2 text-right text-foreground">
+                              {d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-'}
+                            </td>
+                            <td className="px-4 py-2 text-right text-foreground">
+                              {d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))
+              })()}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {pendingData.length > 0 && (
+              <Button variant="outline" onClick={handleExportPendingPdf} className="gap-2">
+                <Download className="h-4 w-4" /> Export PDF
+              </Button>
+            )}
+            <Button onClick={() => setPendingOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

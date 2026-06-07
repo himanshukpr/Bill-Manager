@@ -337,12 +337,12 @@ function serializeAlerts(alerts: HouseAlert[]): string | undefined {
 type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
-  shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string; previousBalance: string;
+  shift: 'morning' | 'evening' | 'shop'; supplierId: string; position: string; dailyAlerts: string; previousBalance: string;
 }
 
 type HouseConfigForm = {
   houseId: string
-  shift: 'morning' | 'evening'
+  shift: 'morning' | 'evening' | 'shop'
   supplierId: string
   position: string
   dailyAlerts: string
@@ -368,7 +368,7 @@ type HouseStatusFilter = 'activated' | 'deactivated' | 'all'
 type HouseToggleAction = 'deactivate' | 'reactivate' | 'delete'
 type ToggleDialogMode = 'deactivate-confirm' | 'inactive-choice' | null
 
-function getHouseShift(house: House): 'morning' | 'evening' {
+function getHouseShift(house: House): 'morning' | 'evening' | 'shop' {
   return house.configs?.[0]?.shift ?? 'evening'
 }
 

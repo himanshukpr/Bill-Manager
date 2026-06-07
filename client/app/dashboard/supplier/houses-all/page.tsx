@@ -330,12 +330,12 @@ function serializeAlerts(alerts: HouseAlert[]): string | undefined {
 type HouseForm = {
   houseNo: string; area: string; phoneNo: string; alternativePhone: string;
   description: string; rate1Type: string; rate1: string; rate2Type: string; rate2: string;
-  shift: 'morning' | 'evening'; supplierId: string; position: string; dailyAlerts: string; previousBalance: string;
+  shift: 'morning' | 'evening' | 'shop'; supplierId: string; position: string; dailyAlerts: string; previousBalance: string;
 }
 
 type HouseConfigForm = {
   houseId: string
-  shift: 'morning' | 'evening'
+  shift: 'morning' | 'evening' | 'shop'
   supplierId: string
   position: string
   dailyAlerts: string
@@ -385,7 +385,7 @@ function getFilteredHouses(houses: House[], query: string): House[] {
   return [...exactMatches, ...partialMatches]
 }
 
-function getHouseShift(house: House): 'morning' | 'evening' {
+function getHouseShift(house: House): 'morning' | 'evening' | 'shop' {
   return house.configs?.[0]?.shift ?? 'evening'
 }
 
@@ -1609,7 +1609,7 @@ export default function HousesPage() {
               <div className="grid grid-cols-2 gap-2 sm:gap-4">
                 <div className="space-y-1.5">
                   <Label>Shift</Label>
-                  <Select value={form.shift} onValueChange={v => setForm(f => ({ ...f, shift: v as 'morning' | 'evening', supplierId: v === 'evening' ? '' : f.supplierId }))}>
+                  <Select value={form.shift} onValueChange={v => setForm(f => ({ ...f, shift: v as 'morning' | 'evening' | 'shop', supplierId: v === 'evening' ? '' : f.supplierId }))}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select shift" />
                     </SelectTrigger>

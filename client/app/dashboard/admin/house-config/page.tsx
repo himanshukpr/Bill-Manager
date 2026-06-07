@@ -27,7 +27,7 @@ import { useHouseConfigs } from '@/hooks/use-house-configs'
 
 type RowConfigForm = {
   configId: number | null
-  shift: 'morning' | 'evening'
+  shift: 'morning' | 'evening' | 'shop'
   supplierId: string
 }
 
@@ -37,7 +37,7 @@ type HouseRowProps = {
   house: House
   draft: RowConfigForm
   suppliers: User[]
-  onUpdateShift: (houseId: number, shift: 'morning' | 'evening') => void
+  onUpdateShift: (houseId: number, shift: 'morning' | 'evening' | 'shop') => void
   onUpdateSupplier: (houseId: number, supplierId: string) => void
   isLast: boolean
 }
@@ -65,7 +65,7 @@ const HouseRow = React.memo(({ house, draft, suppliers, onUpdateShift, onUpdateS
       <td className="px-2 py-2 align-top sm:px-3">
         <Select
           value={draft.shift}
-          onValueChange={(value) => onUpdateShift(house.id, value as 'morning' | 'evening')}
+          onValueChange={(value) => onUpdateShift(house.id, value as 'morning' | 'evening' | 'shop')}
         >
           <SelectTrigger className="h-9 w-28 sm:w-32">
             <SelectValue placeholder="Select shift" />
@@ -288,7 +288,7 @@ export default function AdminHouseConfigPage() {
     setDebouncedSearch('')
   }, [])
 
-  const updateShift = useCallback(async (houseId: number, shift: 'morning' | 'evening') => {
+  const updateShift = useCallback(async (houseId: number, shift: 'morning' | 'evening' | 'shop') => {
     const current = drafts[houseId]
     if (!current) return
 

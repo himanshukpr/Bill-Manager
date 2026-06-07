@@ -378,7 +378,7 @@ export type House = {
 export type HouseConfig = {
   id: number;
   houseId: number;
-  shift: 'morning' | 'evening';
+  shift: 'morning' | 'evening' | 'shop';
   supplierId?: string;
   position: number;
   dailyAlerts?: string;
@@ -1626,7 +1626,7 @@ export const productRatesApi = {
 // ─── Delivery Logs ───────────────────────────────────────────────────────────
 
 export const deliveryLogsApi = {
-  list: (params?: { houseId?: number; shift?: 'morning' | 'evening'; fromDate?: string; toDate?: string }) => {
+  list: (params?: { houseId?: number; shift?: 'morning' | 'evening' | 'shop'; fromDate?: string; toDate?: string }) => {
     if (params?.houseId && params.houseId < 0) {
       return Promise.resolve([] as DeliveryLog[]);
     }
