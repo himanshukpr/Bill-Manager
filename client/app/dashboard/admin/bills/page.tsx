@@ -477,7 +477,7 @@ export default function BillsPage() {
       }
 
       const data = allHouses
-        .filter(h => Number(h.balance?.previousBalance ?? 0) > 0)
+        .filter(h => h.active && Number(h.balance?.previousBalance ?? 0) > 0)
         .map(h => {
           const config = h.configs?.[0]
           const shift = config?.shift ?? ''
