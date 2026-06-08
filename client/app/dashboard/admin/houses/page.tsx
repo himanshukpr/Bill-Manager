@@ -845,6 +845,16 @@ export default function HousesPage() {
     makeDeliveriesTable(daysLeft, 14, pageWidth - deliveriesSplitX + 4)
     makeDeliveriesTable(daysRight, deliveriesSplitX, 14)
 
+    // Add page numbers
+    const pageCount = doc.getNumberOfPages()
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.setTextColor(100, 100, 100)
+      doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
+    }
+
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
   }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
@@ -1127,7 +1137,7 @@ export default function HousesPage() {
             startY: deliveriesTitleY + 4,
             head: [['Date', 'Products']],
             body: daysLeft.map(r => [r.dayLabel, r.hasDelivery ? r.productsLabel : '-']),
-            styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+            styles: { font: 'helvetica', fontSize: 10, cellPadding: 1.5, overflow: 'linebreak' },
             headStyles: { fillColor: [17, 24, 39], textColor: 255 },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
             alternateRowStyles: { fillColor: [248, 250, 252] },
@@ -1139,13 +1149,23 @@ export default function HousesPage() {
             startY: deliveriesTitleY + 4,
             head: [['Date', 'Products']],
             body: daysRight.map(r => [r.dayLabel, r.hasDelivery ? r.productsLabel : '-']),
-            styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+            styles: { font: 'helvetica', fontSize: 10, cellPadding: 1.5, overflow: 'linebreak' },
             headStyles: { fillColor: [17, 24, 39], textColor: 255 },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
             alternateRowStyles: { fillColor: [248, 250, 252] },
             margin: { left: deliveriesSplitX, right: leftMargin },
           })
         }
+      }
+
+      // Add page numbers
+      const pageCount = doc.getNumberOfPages()
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9)
+        doc.setTextColor(100, 100, 100)
+        doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
       }
 
       doc.save(`all-houses-summary-${month}-${year}.pdf`)
