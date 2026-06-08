@@ -47,6 +47,7 @@ import {
 } from '@/lib/api'
 import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
+import { db } from '@/lib/db'
 import {
     Select,
     SelectContent,
@@ -563,13 +564,20 @@ export default function DeliveryPage() {
         const logs = await deliveryLogsApi.list({ shift: selectedShift })
         const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
+        // Only count server-confirmed logs (positive IDs) for completed status.
+        // TempLogs (negative IDs) are local-only and should not show "delivered"
+        // until the server confirms them.
+        const serverLogs = deliveredForSelectedDate.filter((log) => log.id > 0)
+
         const nextProducts: Record<number, Map<string, number>> = {}
         const overallProducts = new Map<string, number>()
         const nextCompleted = new Set<number>()
 
-        for (const log of deliveredForSelectedDate) {
+        for (const log of serverLogs) {
             nextCompleted.add(log.houseId)
+        }
 
+        for (const log of deliveredForSelectedDate) {
             if (!nextProducts[log.houseId]) {
                 nextProducts[log.houseId] = new Map<string, number>()
             }
@@ -647,6 +655,8 @@ export default function DeliveryPage() {
         setCurrentHouseLogs([])
         setHouseLogsCache({})
         setLoadedHouseLogIds(new Set())
+        // Clear queryCache so fresh logs are fetched from server for new date
+        void db.queryCache.where('key').startsWith('GET:/delivery-logs').delete()
         void loadSelectedDateDeliveredSummary()
     }, [selectedDateKey, selectedShift, loadSelectedDateDeliveredSummary])
 
@@ -690,12 +700,6 @@ export default function DeliveryPage() {
                 [houseId]: selectedDateLogs,
             }))
             setLoadedHouseLogIds((prev) => new Set([...prev, houseId]))
-            setCompletedHouses((prev) => {
-                const next = new Set(prev)
-                if (selectedDateLogs.length > 0) next.add(houseId)
-                else next.delete(houseId)
-                return next
-            })
         } catch {
             // Keep swipe smooth even if a neighbor preload fails.
         } finally {
@@ -739,15 +743,6 @@ export default function DeliveryPage() {
                     [currentHouse.id]: selectedDateLogs,
                 }))
                 setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
-                if (selectedDateLogs.length > 0) {
-                    setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
-                } else {
-                    setCompletedHouses((prev) => {
-                        const next = new Set(prev)
-                        next.delete(currentHouse.id)
-                        return next
-                    })
-                }
             } catch (err) {
                 if (active) toast.error(err instanceof Error ? err.message : String(err))
             } finally {
@@ -1342,12 +1337,18 @@ export default function DeliveryPage() {
 
             setCurrentHouseLogs([created.log])
             setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [created.log] }))
-            setLoadedHouseLogIds((prev) => new Set([...prev, currentHouse.id]))
 
             updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)
             toast.success(`${currentHouse.houseNo} delivered!`)
-            setTimeout(() => handleNext(), 200)
         }
+
+        // Invalidate cache so next visit to this house fetches fresh logs from API
+        setLoadedHouseLogIds((prev) => {
+            const next = new Set(prev)
+            next.delete(currentHouse.id)
+            return next
+        })
+        setTimeout(() => handleNext(), 200)
     }
 
     // SHIFT SELECTOR

@@ -133,11 +133,14 @@ async function readCache<T>(cacheKey: string): Promise<T | null> {
 async function writeCache<T>(cacheKey: string, data: T): Promise<void> {
   if (!isBrowser()) return;
 
-  await db.queryCache.put({
-    key: cacheKey,
-    payload: JSON.stringify(data),
-    updatedAt: Date.now(),
+  qcWriteQueue = qcWriteQueue.then(async () => {
+    await db.queryCache.put({
+      key: cacheKey,
+      payload: JSON.stringify(data),
+      updatedAt: Date.now(),
+    });
   });
+  return qcWriteQueue;
 }
 
 async function applyOnDataIfChanged<T>(
@@ -176,16 +179,60 @@ export async function invalidateCache(path: string): Promise<void> {
   const prefixes = CACHE_INVALIDATION[resource] ?? [`/${resource}`];
   const activeRefreshes: Array<Promise<void>> = [];
 
-  for (const prefix of prefixes) {
-    await db.queryCache.where('key').startsWith(`GET:${prefix}`).delete();
+  // Serialize on the same queue as queryCache writes to prevent race conditions
+  qcWriteQueue = qcWriteQueue.then(async () => {
+    for (const prefix of prefixes) {
+      await db.queryCache.where('key').startsWith(`GET:${prefix}`).delete();
 
-    for (const [cacheKey, query] of activeGetQueries.entries()) {
-      if (!cacheKey.startsWith(`GET:${prefix}`) && !query.path.startsWith(prefix)) continue;
-      activeRefreshes.push(revalidateGet<unknown>(query.path, cacheKey, query.onData));
+      for (const [cacheKey, query] of activeGetQueries.entries()) {
+        if (!cacheKey.startsWith(`GET:${prefix}`) && !query.path.startsWith(prefix)) continue;
+        activeRefreshes.push(revalidateGet<unknown>(query.path, cacheKey, query.onData));
+      }
     }
-  }
+  });
+  await qcWriteQueue;
 
   await Promise.all(activeRefreshes);
+}
+
+// ─── Serialized queryCache updates ────────────────────────────────────────────
+let qcWriteQueue: Promise<void> = Promise.resolve();
+
+/** Must be awaited before any queryCache write to avoid race conditions. */
+export function awaitQCWriteQueue(): Promise<void> {
+  return qcWriteQueue;
+}
+
+async function enqueueQCUpdate<T>(
+  matches: (cacheKey: string) => boolean,
+  update: (data: T) => T | null,
+): Promise<void> {
+  qcWriteQueue = qcWriteQueue.then(async () => {
+    const entries = await db.queryCache.toArray();
+    const targets = entries.filter((entry) => entry.key.startsWith('GET:') && matches(entry.key));
+
+    await Promise.all(
+      targets.map(async (entry) => {
+        try {
+          const data = JSON.parse(entry.payload) as T;
+          const next = update(data);
+          if (next === null) {
+            await db.queryCache.delete(entry.key);
+            return;
+          }
+
+          await db.queryCache.put({
+            key: entry.key,
+            payload: JSON.stringify(next),
+            updatedAt: Date.now(),
+          });
+        } catch {
+          await db.queryCache.delete(entry.key);
+        }
+      }),
+    );
+  });
+  return qcWriteQueue;
 }
 
 async function updateCachedQueries<T>(
@@ -193,30 +240,7 @@ async function updateCachedQueries<T>(
   update: (data: T) => T | null,
 ): Promise<void> {
   if (!isBrowser()) return;
-
-  const entries = await db.queryCache.toArray();
-  const targets = entries.filter((entry) => entry.key.startsWith('GET:') && matches(entry.key));
-
-  await Promise.all(
-    targets.map(async (entry) => {
-      try {
-        const data = JSON.parse(entry.payload) as T;
-        const next = update(data);
-        if (next === null) {
-          await db.queryCache.delete(entry.key);
-          return;
-        }
-
-        await db.queryCache.put({
-          key: entry.key,
-          payload: JSON.stringify(next),
-          updatedAt: Date.now(),
-        });
-      } catch {
-        await db.queryCache.delete(entry.key);
-      }
-    }),
-  );
+  return enqueueQCUpdate(matches, update);
 }
 
 // ─── Generic fetch helpers ────────────────────────────────────────────────────
@@ -1623,23 +1647,23 @@ export const productRatesApi = {
   },
 };
 
-// ─── Delivery Logs ───────────────────────────────────────────────────────────
+// ─── Delivery Logs (IndexedDB-first) ─────────────────────────────────────────
+
+import {
+  getDeliveryLogs as _getDeliveryLogs,
+  pullDeliveryLogs as _pullDeliveryLogs,
+  createDeliveryLog as _createDeliveryLog,
+  updateDeliveryLog as _updateDeliveryLog,
+  deleteDeliveryLog as _deleteDeliveryLog,
+  processDeliveryQueue,
+} from './delivery-storage';
 
 export const deliveryLogsApi = {
   list: (params?: { houseId?: number; shift?: 'morning' | 'evening' | 'shop'; fromDate?: string; toDate?: string }) => {
     if (params?.houseId && params.houseId < 0) {
       return Promise.resolve([] as DeliveryLog[]);
     }
-    const q = new URLSearchParams();
-    if (params?.houseId) q.set('houseId', String(params.houseId));
-    if (params?.shift) q.set('shift', params.shift);
-    if (params?.fromDate) q.set('fromDate', params.fromDate);
-    if (params?.toDate) q.set('toDate', params.toDate);
-    return apiGet<DeliveryLog[]>(`/delivery-logs${q.toString() ? `?${q}` : ''}`, {
-      onData: async (data) => {
-        if (isBrowser()) await db.deliveryLogs.bulkPut(data);
-      },
-    });
+    return _pullDeliveryLogs(params);
   },
   create: async (data: {
     houseId: number;
@@ -1649,84 +1673,8 @@ export const deliveryLogsApi = {
     billGenerated?: boolean;
     deliveredAt?: string;
   }) => {
-    if (data.houseId < 0) {
-      const tempLog: DeliveryLog = {
-        id: -Math.floor(Math.random() * 100000),
-        ...data,
-        createdAt: new Date().toISOString(),
-      } as unknown as DeliveryLog;
-      if (isBrowser()) await db.deliveryLogs.put(tempLog);
-      return { log: tempLog, balance: { id: 0, houseId: data.houseId, currentBalance: '0', previousBalance: '0' } };
-    }
-
-    const tempId = -Math.floor(Math.random() * 100000);
-    const totalAmount = data.items.reduce((sum, item) => sum + item.amount, 0);
-    const now = new Date().toISOString();
-
-    const tempLog: DeliveryLog = {
-      id: tempId,
-      houseId: data.houseId,
-      shift: data.shift,
-      items: data.items,
-      totalAmount: String(totalAmount),
-      openingBalance: '0',
-      closingBalance: '0',
-      billGenerated: false,
-      isClosed: false,
-      note: data.note,
-      deliveredAt: data.deliveredAt || now,
-      createdAt: now,
-    };
-
-    if (isBrowser()) {
-      await db.deliveryLogs.put(tempLog);
-      await updateCachedQueries<DeliveryLog[]>(
-        (key) => key.startsWith('GET:/delivery-logs'),
-        (cached) => {
-          if (!Array.isArray(cached)) return cached;
-          const filtered = cached.filter(
-            (l) => !(l.houseId === data.houseId && l.deliveredAt?.startsWith(data.deliveredAt?.slice(0, 10) ?? '')),
-          );
-          return [...filtered, tempLog];
-        },
-      );
-
-      try {
-        const res = await apiPost<{ log: DeliveryLog; balance: HouseBalance }>('/delivery-logs', data);
-        if (isBrowser()) {
-          await db.deliveryLogs.delete(tempId);
-          await db.deliveryLogs.put(res.log);
-          await updateCachedQueries<DeliveryLog[]>(
-            (key) => key.startsWith('GET:/delivery-logs'),
-            (cached) => {
-              if (!Array.isArray(cached)) return cached;
-              return cached.map((log) => (log.id === tempId ? res.log : log));
-            },
-          );
-          await invalidateCache('/house-balance');
-          await invalidateCache('/bills');
-        }
-
-        return res;
-      } catch {
-        if (isBrowser()) {
-          await db.deliveryLogs.delete(tempId);
-          await updateCachedQueries<DeliveryLog[]>(
-            (key) => key.startsWith('GET:/delivery-logs'),
-            (cached) => {
-              if (!Array.isArray(cached)) return cached;
-              return cached.filter((log) => log.id !== tempId);
-            },
-          );
-        }
-
-        void syncEngine.enqueue('/delivery-logs', 'POST', data);
-      }
-    } else {
-      void syncEngine.enqueue('/delivery-logs', 'POST', data);
-    }
-
-    return { log: tempLog, balance: null as unknown as HouseBalance };
+    const result = await _createDeliveryLog(data);
+    return result;
   },
   update: async (
     id: number,
@@ -1736,91 +1684,10 @@ export const deliveryLogsApi = {
       billGenerated?: boolean;
     },
   ) => {
-    let optimistic: DeliveryLog | null = null;
-
-    if (isBrowser()) {
-      const existing = await db.deliveryLogs.get(id);
-      if (existing) {
-        const nextItems = data.items ?? existing.items;
-        const nextTotalAmount = nextItems.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
-        const optimisticLog = {
-          ...existing,
-          ...data,
-          items: nextItems,
-          totalAmount: String(nextTotalAmount),
-          closingBalance: String(Number(existing.openingBalance ?? 0) + nextTotalAmount),
-        } as DeliveryLog;
-        optimistic = optimisticLog;
-
-        await db.deliveryLogs.put(optimisticLog);
-        await updateCachedQueries<DeliveryLog[]>(
-          (key) => key.startsWith('GET:/delivery-logs'),
-          (cached) => {
-            if (!Array.isArray(cached)) return cached;
-            return cached.map((log) => (log.id === id ? optimisticLog : log));
-          },
-        );
-      }
-    }
-
-    if (isOnline()) {
-      try {
-        const res = await apiPatch<DeliveryLog>(`/delivery-logs/${id}`, data);
-        if (isBrowser()) {
-          await db.deliveryLogs.put(res);
-          await updateCachedQueries<DeliveryLog[]>(
-            (key) => key.startsWith('GET:/delivery-logs'),
-            (cached) => {
-              if (!Array.isArray(cached)) return cached;
-              return cached.map((log) => (log.id === id ? res : log));
-            },
-          );
-          await invalidateCache('/house-balance');
-        }
-
-        return res;
-      } catch {
-        void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
-      }
-
-      return optimistic ?? ({ id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog);
-    }
-
-    if (isBrowser()) {
-      void syncEngine.enqueue(`/delivery-logs/${id}`, 'PATCH', data);
-    }
-
-    return optimistic ?? ({ id, ...(data as Record<string, unknown>) } as unknown as DeliveryLog);
+    return _updateDeliveryLog(id, data);
   },
   delete: async (id: number) => {
-    if (isBrowser()) {
-      await db.deliveryLogs.delete(id);
-      await updateCachedQueries<DeliveryLog[]>(
-        (key) => key.startsWith('GET:/delivery-logs'),
-        (cached) => {
-          if (!Array.isArray(cached)) return cached;
-          return cached.filter((log) => log.id !== id);
-        },
-      );
-    }
-
-    if (isOnline()) {
-      try {
-        await apiDelete(`/delivery-logs/${id}`);
-        if (isBrowser()) {
-          await invalidateCache('/delivery-logs');
-          await invalidateCache('/house-balance');
-        }
-      } catch {
-        void syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
-      }
-      return null;
-    }
-
-    if (isBrowser()) {
-      void syncEngine.enqueue(`/delivery-logs/${id}`, 'DELETE');
-    }
-
+    await _deleteDeliveryLog(id);
     return null;
   },
 };

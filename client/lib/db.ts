@@ -19,6 +19,20 @@ export type QueryCacheEntry = {
   updatedAt: number;
 };
 
+export type DeliveryQueueEntry = {
+  id?: number;
+  op: 'create' | 'update' | 'delete';
+  tempId?: number;
+  serverId?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: any;
+  createdAt: number;
+  attempts: number;
+  nextRetryAt: number;
+  lastError?: string;
+  status: 'pending' | 'completed' | 'failed';
+};
+
 export class BillManagerDB extends Dexie {
   houses!: Table<House, number>;
   houseConfigs!: Table<HouseConfig, number>;
@@ -27,10 +41,11 @@ export class BillManagerDB extends Dexie {
   users!: Table<User, string>; // uuid is string
   syncQueue!: Table<SyncAction, number>;
   queryCache!: Table<QueryCacheEntry, string>;
+  deliveryQueue!: Table<DeliveryQueueEntry, number>;
 
   constructor() {
     super('BillManagerDB');
-    this.version(2).stores({
+    this.version(3).stores({
       houses: 'id, houseNo, phoneNo',
       houseConfigs: 'id, houseId, shift, supplierId',
       deliveryLogs: 'id, houseId, supplierId, shift, deliveredAt',
@@ -38,6 +53,7 @@ export class BillManagerDB extends Dexie {
       users: 'uuid, username, role',
       syncQueue: '++id, createdAt, nextRetryAt',
       queryCache: 'key, updatedAt',
+      deliveryQueue: '++id, op, status, createdAt, nextRetryAt, tempId, serverId',
     });
   }
 }
