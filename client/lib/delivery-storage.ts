@@ -17,6 +17,30 @@ function tempId() {
   return -Math.floor(Math.random() * 1_000_000_000);
 }
 
+// ─── Stale-while-revalidate cache ─────────────────────────────────────────────
+// Returns IDB data instantly if fresh enough, fetches server in background.
+
+const STALE_MS = 30_000; // 30 seconds
+const lastSyncAt = new Map<string, number>();
+
+function cacheKey(params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string }): string {
+  return `${params?.houseId ?? ''}:${params?.shift ?? ''}:${params?.fromDate ?? ''}:${params?.toDate ?? ''}`;
+}
+
+function isFresh(params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string }): boolean {
+  const key = cacheKey(params);
+  const ts = lastSyncAt.get(key);
+  return ts !== undefined && Date.now() - ts < STALE_MS;
+}
+
+function markSynced(params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string }): void {
+  lastSyncAt.set(cacheKey(params), Date.now());
+}
+
+function invalidateSyncCache(): void {
+  lastSyncAt.clear();
+}
+
 // ─── Read from IndexedDB ──────────────────────────────────────────────────────
 
 export async function getDeliveryLogs(params?: {
@@ -47,13 +71,13 @@ export async function getDeliveryLogs(params?: {
 
 // ─── Pull from server into IndexedDB ──────────────────────────────────────────
 
-export async function pullDeliveryLogs(params?: {
+async function fetchAndMerge(params?: {
   houseId?: number;
   shift?: string;
   fromDate?: string;
   toDate?: string;
-}): Promise<DeliveryLog[]> {
-  if (!isOnline()) return getDeliveryLogs(params);
+}): Promise<void> {
+  if (!isOnline()) return;
 
   const q = new URLSearchParams();
   if (params?.houseId) q.set('houseId', String(params.houseId));
@@ -66,48 +90,79 @@ export async function pullDeliveryLogs(params?: {
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
   });
 
-  if (!res.ok) return getDeliveryLogs(params);
+  if (!res.ok) return;
 
   const serverLogs: DeliveryLog[] = await res.json();
-  await mergeServerLogsIntoIDB(serverLogs);
+  await mergeServerLogsIntoIDB(serverLogs, params);
+  markSynced(params);
+}
+
+export async function pullDeliveryLogs(params?: {
+  houseId?: number;
+  shift?: string;
+  fromDate?: string;
+  toDate?: string;
+}): Promise<DeliveryLog[]> {
+  const idbData = await getDeliveryLogs(params);
+
+  // If IDB has data and it's fresh, return instantly — no server call
+  if (idbData.length > 0 && isFresh(params)) {
+    return idbData;
+  }
+
+  // If IDB has data but is stale, return IDB data now, refresh in background
+  if (idbData.length > 0 && isOnline()) {
+    void fetchAndMerge(params);
+    return idbData;
+  }
+
+  // If IDB is empty or offline, do a blocking fetch
+  if (!isOnline()) return idbData;
+
+  await fetchAndMerge(params);
   return getDeliveryLogs(params);
 }
 
-async function mergeServerLogsIntoIDB(serverLogs: DeliveryLog[]): Promise<void> {
-  if (serverLogs.length === 0) return;
+async function mergeServerLogsIntoIDB(
+  serverLogs: DeliveryLog[],
+  params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string },
+): Promise<void> {
+  const serverIds = new Set(serverLogs.map((l) => l.id));
 
-  await db.deliveryLogs.bulkPut(serverLogs);
-
-  // Delete tempLogs that have a matching server log (server log replaces them)
-  const tempIds = await db.deliveryLogs
-    .where('id')
-    .below(0)
-    .filter((l) => {
-      const hasServerLog = serverLogs.some(
-        (s) => s.houseId === l.houseId && s.shift === l.shift && s.deliveredAt?.slice(0, 10) === l.deliveredAt?.slice(0, 10),
-      );
-      return hasServerLog;
-    })
-    .primaryKeys();
-
-  if (tempIds.length > 0) {
-    await db.deliveryLogs.bulkDelete(tempIds as number[]);
+  // Put server logs into IDB (creates or updates)
+  if (serverLogs.length > 0) {
+    await db.deliveryLogs.bulkPut(serverLogs);
   }
 
-  // Delete orphaned tempLogs: no matching server log AND no pending queue entry
+  // Collect all pending queue tempIds so we don't delete logs still being synced
   const pendingTempIds = new Set(
     (await db.deliveryQueue.where('status').equals('pending').toArray())
       .map((e) => e.tempId)
       .filter((id): id is number => typeof id === 'number'),
   );
 
-  const allTempLogs = await db.deliveryLogs.where('id').below(0).toArray();
-  const orphanIds = allTempLogs
-    .filter((l) => !pendingTempIds.has(l.id))
-    .map((l) => l.id!);
+  // Delete ALL IDB logs that are NOT in the server response but match the query scope.
+  // These are stale — they were deleted from the server by another user or action.
+  // Keep logs outside the query scope (different houseId/shift) and logs with pending queue entries.
+  let candidates = db.deliveryLogs.toCollection();
 
-  if (orphanIds.length > 0) {
-    await db.deliveryLogs.bulkDelete(orphanIds);
+  if (params?.houseId) {
+    candidates = db.deliveryLogs.where('houseId').equals(params.houseId) as any;
+  } else if (params?.shift) {
+    candidates = db.deliveryLogs.where('shift').equals(params.shift) as any;
+  }
+
+  const idbLogs = await candidates.toArray();
+  const staleIds: number[] = [];
+
+  for (const log of idbLogs) {
+    if (serverIds.has(log.id)) continue; // server still has it
+    if (log.id < 0 && pendingTempIds.has(log.id)) continue; // tempLog being synced
+    staleIds.push(log.id);
+  }
+
+  if (staleIds.length > 0) {
+    await db.deliveryLogs.bulkDelete(staleIds);
   }
 }
 
@@ -159,6 +214,7 @@ export async function createDeliveryLog(data: {
         await db.deliveryLogs.put(realLog);
 
         await invalidateCache('/delivery-logs');
+        invalidateSyncCache();
         return { log: realLog, balance };
       }
     } catch {
@@ -204,6 +260,7 @@ export async function updateDeliveryLog(
         const realLog: DeliveryLog = await res.json();
         await db.deliveryLogs.put(realLog);
         await invalidateCache('/delivery-logs');
+        invalidateSyncCache();
         return realLog;
       }
     } catch {
@@ -232,6 +289,7 @@ export async function deleteDeliveryLog(id: number): Promise<void> {
 
       if (res.ok) {
         await invalidateCache('/delivery-logs');
+        invalidateSyncCache();
         return;
       }
     } catch {
@@ -298,6 +356,7 @@ export async function processDeliveryQueue(): Promise<void> {
             await db.deliveryLogs.put(realLog);
             await db.deliveryQueue.update(action.id, { status: 'completed' });
             await invalidateCache('/delivery-logs');
+            invalidateSyncCache();
           } else if (res.status >= 400 && res.status < 500 && res.status !== 401) {
             await db.deliveryQueue.update(action.id, { status: 'failed', lastError: `HTTP ${res.status}` });
           } else {
@@ -315,6 +374,7 @@ export async function processDeliveryQueue(): Promise<void> {
             await db.deliveryLogs.put(realLog);
             await db.deliveryQueue.update(action.id, { status: 'completed' });
             await invalidateCache('/delivery-logs');
+            invalidateSyncCache();
           } else if (res.status >= 400 && res.status < 500 && res.status !== 401) {
             await db.deliveryQueue.update(action.id, { status: 'failed', lastError: `HTTP ${res.status}` });
           } else {
@@ -328,7 +388,10 @@ export async function processDeliveryQueue(): Promise<void> {
 
           if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 401)) {
             await db.deliveryQueue.update(action.id, { status: 'completed' });
-            if (res.ok) await invalidateCache('/delivery-logs');
+            if (res.ok) {
+              await invalidateCache('/delivery-logs');
+              invalidateSyncCache();
+            }
           } else {
             await bumpRetry(action);
           }

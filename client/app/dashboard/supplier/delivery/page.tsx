@@ -795,16 +795,7 @@ export default function DeliveryPage() {
             delete next[currentHouse.id]
             return next
         })
-        setHouseLogsCache((prev) => {
-            const next = { ...prev }
-            delete next[currentHouse.id]
-            return next
-        })
-        setLoadedHouseLogIds((prev) => {
-            const next = new Set(prev)
-            next.delete(currentHouse.id)
-            return next
-        })
+        setDeliveryItems([{ ...emptyDeliveryItem }])
 
         const deletedProducts = new Map<string, number>()
         for (const log of toDelete) {
@@ -827,9 +818,19 @@ export default function DeliveryPage() {
                 .sort((a, b) => b.qty - a.qty)
         })
 
-        setDeliveryItems([{ ...emptyDeliveryItem }])
-
+        // Delete from server first, THEN clear cache so re-fetch gets empty result
         await Promise.all(toDelete.map((log) => deliveryLogsApi.delete(log.id)))
+
+        setHouseLogsCache((prev) => {
+            const next = { ...prev }
+            delete next[currentHouse.id]
+            return next
+        })
+        setLoadedHouseLogIds((prev) => {
+            const next = new Set(prev)
+            next.delete(currentHouse.id)
+            return next
+        })
 
         toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
         setClearTodayDialogOpen(false)

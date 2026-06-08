@@ -82,7 +82,7 @@ export class DeliveryLogsService {
       this.prisma.houseBalance.update({
         where: { houseId: dto.houseId },
         data: {
-          currentBalance: closingBalance,
+          currentBalance: { increment: computedTotal },
         },
       }),
 
