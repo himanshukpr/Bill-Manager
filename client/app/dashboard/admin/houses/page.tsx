@@ -1080,7 +1080,7 @@ export default function HousesPage() {
               ]),
               ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
             ],
-            margin: { left: leftMargin, right: pageWidth - splitX + 4 },
+            margin: { left: leftMargin, right: leftMargin + 65 },
             styles: { fontSize: 7 },
             headStyles: { fillColor: [200, 200, 200] },
             columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 16 }, 2: { cellWidth: 16 } },
@@ -1203,18 +1203,16 @@ export default function HousesPage() {
         }
       }
 
-      // Add page numbers to all house pages
+      // Create index with max 2 pages, 2 columns (Page No and House No only)
       const housePageCount = doc.getNumberOfPages()
-      for (let pi = 1; pi <= housePageCount; pi++) {
-        doc.setPage(pi)
-        doc.setFont('helvetica', 'normal')
-        doc.setFontSize(9)
-        doc.setTextColor(100, 100, 100)
-        doc.text(`Page ${pi + 1} of ${housePageCount + 1}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
-      }
-
-      // Insert index page at beginning
       const totalPages = housePageCount + 1
+      
+      const indexBody = sortedHouses.map((house, idx) => [
+        String(houseStartPages[idx] + 1),
+        String(house.houseNo),
+      ])
+      
+      // Insert index page 1 with table
       doc.insertPage(1)
       doc.setPage(1)
       doc.setFont('helvetica', 'bold')
@@ -1224,28 +1222,48 @@ export default function HousesPage() {
       doc.setFontSize(9)
       doc.text(`Period: ${MONTH_NAMES[month]} ${year}`, leftMargin, 24)
       
-      const indexBody = sortedHouses.map((house, idx) => {
-        const config = house.configs?.[0]
-        const shiftLabel = config?.shift ? (config.shift === 'shop' ? 'Shop' : config.shift === 'morning' ? 'Morning' : 'Evening') : ''
-        const supplierName = config?.supplier?.username ?? ''
-        return [`${idx + 1}`, String(house.houseNo), shiftLabel, supplierName || '-', String(houseStartPages[idx] + 1)]
-      })
+      // First page: 35 rows (single column for clarity)
       autoTable(doc, {
         startY: 32,
-        head: [['Sr', 'House No', 'Shift', 'Supplier', 'Page']],
-        body: indexBody,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [17, 24, 39], textColor: 255 },
-        columnStyles: { 0: { cellWidth: 12 }, 1: { cellWidth: 28 }, 2: { cellWidth: 22 }, 3: { cellWidth: 30 }, 4: { cellWidth: 15 } },
+        head: [['Page', 'House No']],
+        body: indexBody.slice(0, 35),
+        styles: { font: 'helvetica', fontSize: 10, cellPadding: 2 },
+        headStyles: { fillColor: [17, 24, 39], textColor: 255, fontStyle: 'bold' },
+        columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 40 } },
+        theme: 'grid',
         margin: { left: leftMargin, right: 14 },
       })
 
-      // Update page numbers for all pages (including index)
-      doc.setPage(1)
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(9)
-      doc.setTextColor(100, 100, 100)
-      doc.text(`Page 1 of ${totalPages}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
+      // Add index page 2 if needed (houses 36-70)
+      if (indexBody.length > 35) {
+        doc.addPage()
+        doc.setPage(2)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(16)
+        doc.text(`All Houses Summary - Index (contd.)`, leftMargin, 16)
+        
+        autoTable(doc, {
+          startY: 32,
+          head: [['Page', 'House No']],
+          body: indexBody.slice(35, 70),
+          styles: { font: 'helvetica', fontSize: 10, cellPadding: 2 },
+          headStyles: { fillColor: [17, 24, 39], textColor: 255, fontStyle: 'bold' },
+          columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 40 } },
+          theme: 'grid',
+          margin: { left: leftMargin, right: 14 },
+        })
+      }
+
+      // Add page numbers to all pages
+      const finalPageCount = doc.getNumberOfPages()
+      const indexPages = indexBody.length > 35 ? 2 : 1
+      for (let pi = 1; pi <= finalPageCount; pi++) {
+        doc.setPage(pi)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9)
+        doc.setTextColor(100, 100, 100)
+        doc.text(`Page ${pi} of ${totalPages + indexPages - 1}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
+      }
 
       doc.save(`all-houses-summary-${month}-${year}.pdf`)
        toast.success(`Exported ${sortedHouses.length} house summaries`, { id: toastId })
