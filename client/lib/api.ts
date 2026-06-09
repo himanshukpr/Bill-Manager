@@ -1652,6 +1652,7 @@ export const productRatesApi = {
 import {
   getDeliveryLogs as _getDeliveryLogs,
   pullDeliveryLogs as _pullDeliveryLogs,
+  forceRefreshDeliveryLogs as _forceRefreshDeliveryLogs,
   createDeliveryLog as _createDeliveryLog,
   updateDeliveryLog as _updateDeliveryLog,
   deleteDeliveryLog as _deleteDeliveryLog,
@@ -1659,9 +1660,12 @@ import {
 } from './delivery-storage';
 
 export const deliveryLogsApi = {
-  list: (params?: { houseId?: number; shift?: 'morning' | 'evening' | 'shop'; fromDate?: string; toDate?: string }) => {
+  list: (params?: { houseId?: number; shift?: 'morning' | 'evening' | 'shop'; fromDate?: string; toDate?: string }, forceFresh = false) => {
     if (params?.houseId && params.houseId < 0) {
       return Promise.resolve([] as DeliveryLog[]);
+    }
+    if (forceFresh) {
+      return _forceRefreshDeliveryLogs(params);
     }
     return _pullDeliveryLogs(params);
   },

@@ -558,11 +558,11 @@ export default function DeliveryPage() {
             })
     }, [visibleHouses, houseSearch, allocatedHouseProducts])
 
-    const loadSelectedDateDeliveredSummary = useCallback(async () => {
-        if (!auth || !selectedShift) return
+const loadSelectedDateDeliveredSummary = useCallback(async () => {
+         if (!auth || !selectedShift) return
 
-        const logs = await deliveryLogsApi.list({ shift: selectedShift })
-        const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
+         const logs = await deliveryLogsApi.list({ shift: selectedShift }, true) // Force fresh on load
+         const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         // Only count server-confirmed logs (positive IDs) for completed status.
         // TempLogs (negative IDs) are local-only and should not show "delivered"
@@ -691,7 +691,7 @@ export default function DeliveryPage() {
             const logs = await deliveryLogsApi.list({
                 houseId,
                 shift: selectedShift,
-            })
+            }, true) // Force fresh from server on page load
 
             const selectedDateLogs = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
@@ -722,13 +722,13 @@ export default function DeliveryPage() {
 
         let active = true
 
-        const loadCurrentHouseLogs = async () => {
-            try {
-                setLogsLoading(true)
-                const logs = await deliveryLogsApi.list({
-                    houseId: currentHouse.id,
-                    shift: selectedShift,
-                })
+const loadCurrentHouseLogs = async () => {
+             try {
+                 setLogsLoading(true)
+                 const logs = await deliveryLogsApi.list({
+                     houseId: currentHouse.id,
+                     shift: selectedShift,
+                 }, true) // Force fresh from server on page load
 
                 const selectedDateLogs = logs.filter((log) => {
                     const deliveredAt = new Date(log.deliveredAt)

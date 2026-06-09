@@ -123,6 +123,44 @@ export async function pullDeliveryLogs(params?: {
   return getDeliveryLogs(params);
 }
 
+// Force fresh data - clear IDB and fetch from server
+export async function forceRefreshDeliveryLogs(params?: {
+  houseId?: number;
+  shift?: string;
+  fromDate?: string;
+  toDate?: string;
+}): Promise<DeliveryLog[]> {
+  // Clear IDB for the specific query scope
+  if (params?.houseId) {
+    await db.deliveryLogs.where('houseId').equals(params.houseId).delete();
+  } else if (params?.shift) {
+    await db.deliveryLogs.where('shift').equals(params.shift).delete();
+  } else {
+    await db.deliveryLogs.clear();
+  }
+  
+  // Fetch fresh from server
+  if (!isOnline()) return [];
+  
+  const q = new URLSearchParams();
+  if (params?.houseId) q.set('houseId', String(params.houseId));
+  if (params?.shift) q.set('shift', params.shift);
+  if (params?.fromDate) q.set('fromDate', params.fromDate);
+  if (params?.toDate) q.set('toDate', params.toDate);
+
+  const path = `/delivery-logs${q.toString() ? `?${q}` : ''}`;
+  const res = await fetchApi(path, {
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+  });
+
+  if (!res.ok) return [];
+
+  const serverLogs: DeliveryLog[] = await res.json();
+  await db.deliveryLogs.bulkPut(serverLogs);
+  markSynced(params);
+  return serverLogs;
+}
+
 async function mergeServerLogsIntoIDB(
   serverLogs: DeliveryLog[],
   params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string },
