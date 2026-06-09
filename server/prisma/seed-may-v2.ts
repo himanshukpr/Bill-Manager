@@ -51,20 +51,51 @@ async function main() {
   console.log('  ✓ Users created');
 
   // ─── Houses ──────────────────────────────────────────
-  const housesData = [
-    { houseNo: 'A-101', area: 'Sector A', phoneNo: '9876543210', rate1Type: 'Cow Milk', rate1: 55, rate2Type: 'Buffalo Milk', rate2: 70, location: '28.6129,77.2295', description: 'Corner house near park' },
-    { houseNo: 'A-102', area: 'Sector A', phoneNo: '9876543211', rate1Type: 'Cow Milk', rate1: 55, rate2Type: null, rate2: null, location: '28.6130,77.2296', description: null },
-    { houseNo: 'A-103', area: 'Sector A', phoneNo: '9876543212', rate1Type: 'Buffalo Milk', rate1: 70, rate2Type: 'Curd', rate2: 40, location: '28.6131,77.2297', description: 'Near temple' },
-    { houseNo: 'B-201', area: 'Sector B', phoneNo: '9876543213', rate1Type: 'Cow Milk', rate1: 55, rate2Type: null, rate2: null, location: '28.6140,77.2300', description: null },
-    { houseNo: 'B-202', area: 'Sector B', phoneNo: '9876543214', alternativePhone: '9876543215', rate1Type: 'Cow Milk', rate1: 60, rate2Type: 'Buttermilk', rate2: 30, location: '28.6141,77.2301', description: 'Two-storey building' },
-    { houseNo: 'B-203', area: 'Sector B', phoneNo: '9876543216', rate1Type: 'Buffalo Milk', rate1: 70, rate2Type: null, rate2: null, location: '28.6142,77.2302', description: 'Red gate' },
-    { houseNo: 'C-301', area: 'Sector C', phoneNo: '9876543217', rate1Type: 'Cow Milk', rate1: 55, rate2Type: 'Curd', rate2: 40, location: '28.6150,77.2310', description: null },
-    { houseNo: 'C-302', area: 'Sector C', phoneNo: '9876543218', rate1Type: 'Cow Milk', rate1: 55, rate2Type: 'Buffalo Milk', rate2: 70, location: '28.6151,77.2311', description: 'Opposite school' },
-    { houseNo: 'C-303', area: 'Sector C', phoneNo: '9876543219', rate1Type: 'Cow Milk', rate1: 55, rate2Type: null, rate2: null, location: '28.6152,77.2312', description: null },
-    { houseNo: 'D-401', area: 'Sector D', phoneNo: '9876543220', rate1Type: 'Buffalo Milk', rate1: 70, rate2Type: 'Buttermilk', rate2: 30, location: '28.6160,77.2320', description: 'Near water tank' },
-    { houseNo: 'D-402', area: 'Sector D', phoneNo: '9876543221', rate1Type: 'Cow Milk', rate1: 55, rate2Type: null, rate2: null, location: '28.6161,77.2321', description: null },
-    { houseNo: 'E-501', area: 'Sector E', phoneNo: '9876543222', rate1Type: 'Cow Milk', rate1: 55, rate2Type: 'Curd', rate2: 40, location: '28.6170,77.2330', description: 'Last house on street' },
-  ];
+  const housesData: any[] = [];
+  
+  // Generate 200 houses across different sectors and shifts
+  // Rajesh: Morning (70 houses)
+  // Amit: Morning (70 houses)
+  // Suresh: Evening (60 houses)
+  
+  for (let i = 1; i <= 70; i++) {
+    housesData.push({ 
+      houseNo: `R-${String(i).padStart(3, '0')}`, 
+      area: 'Rajesh Sector', 
+      phoneNo: `987650${String(i).padStart(4, '0')}`, 
+      rate1Type: 'Cow Milk', rate1: 55, 
+      rate2Type: i % 3 === 0 ? 'Buffalo Milk' : i % 3 === 1 ? 'Curd' : null, 
+      rate2: i % 3 === 0 ? 70 : i % 3 === 1 ? 40 : null,
+      location: '28.6129,77.2295',
+      description: `Rajesh house ${i}`
+    });
+  }
+  
+  for (let i = 1; i <= 70; i++) {
+    housesData.push({ 
+      houseNo: `A-${String(i).padStart(3, '0')}`, 
+      area: 'Amit Sector', 
+      phoneNo: `987660${String(i).padStart(4, '0')}`, 
+      rate1Type: 'Cow Milk', rate1: 55, 
+      rate2Type: i % 4 === 0 ? 'Buffalo Milk' : i % 4 === 1 ? 'Buttermilk' : null, 
+      rate2: i % 4 === 0 ? 70 : i % 4 === 1 ? 30 : null,
+      location: '28.6140,77.2300',
+      description: `Amit house ${i}`
+    });
+  }
+  
+  for (let i = 1; i <= 60; i++) {
+    housesData.push({ 
+      houseNo: `S-${String(i).padStart(3, '0')}`, 
+      area: 'Suresh Sector', 
+      phoneNo: `987670${String(i).padStart(4, '0')}`, 
+      rate1Type: 'Buffalo Milk', rate1: 70, 
+      rate2Type: i % 5 === 0 ? 'Curd' : null, 
+      rate2: i % 5 === 0 ? 40 : null,
+      location: '28.6160,77.2320',
+      description: `Suresh house ${i}`
+    });
+  }
 
   const houses: any[] = [];
   for (const h of housesData) {
@@ -88,20 +119,22 @@ async function main() {
   console.log('  ✓ Product rates created');
 
   // ─── House Configs ───────────────────────────────────
-  const configData = [
-    { house: houses[0], shift: Shift.morning, supplier: raj, position: 0 },
-    { house: houses[1], shift: Shift.morning, supplier: raj, position: 1 },
-    { house: houses[2], shift: Shift.morning, supplier: raj, position: 2 },
-    { house: houses[3], shift: Shift.morning, supplier: raj, position: 3 },
-    { house: houses[4], shift: Shift.morning, supplier: raj, position: 4 },
-    { house: houses[5], shift: Shift.morning, supplier: amit, position: 5 },
-    { house: houses[6], shift: Shift.morning, supplier: amit, position: 6 },
-    { house: houses[7], shift: Shift.morning, supplier: amit, position: 7 },
-    { house: houses[8], shift: Shift.evening, supplier: suresh, position: 0 },
-    { house: houses[9], shift: Shift.evening, supplier: suresh, position: 1 },
-    { house: houses[10], shift: Shift.shop, supplier: amit, position: 0 },
-    { house: houses[11], shift: Shift.shop, supplier: amit, position: 1 },
-  ];
+  const configData: any[] = [];
+  
+  // Rajesh: Morning (houses 0-69)
+  for (let i = 0; i < 70; i++) {
+    configData.push({ house: houses[i], shift: Shift.morning, supplier: raj, position: i });
+  }
+  
+  // Amit: Morning (houses 70-139)
+  for (let i = 70; i < 140; i++) {
+    configData.push({ house: houses[i], shift: Shift.morning, supplier: amit, position: i - 70 });
+  }
+  
+  // Suresh: Evening (houses 140-199)
+  for (let i = 140; i < 200; i++) {
+    configData.push({ house: houses[i], shift: Shift.evening, supplier: suresh, position: i - 140 });
+  }
 
   for (const c of configData) {
     await prisma.houseConfig.create({
@@ -111,20 +144,14 @@ async function main() {
   console.log('  ✓ House configs created');
 
   // ─── House Balances (both previous & current) ────────
-  const balanceData = [
-    { houseId: houses[0].id, previousBalance: 1200, currentBalance: 1850 },
-    { houseId: houses[1].id, previousBalance: 0, currentBalance: 550 },
-    { houseId: houses[2].id, previousBalance: 750, currentBalance: 1320 },
-    { houseId: houses[3].id, previousBalance: 340, currentBalance: 890 },
-    { houseId: houses[4].id, previousBalance: 2100, currentBalance: 2560 },
-    { houseId: houses[5].id, previousBalance: 0, currentBalance: 420 },
-    { houseId: houses[6].id, previousBalance: 560, currentBalance: 1110 },
-    { houseId: houses[7].id, previousBalance: 1800, currentBalance: 2350 },
-    { houseId: houses[8].id, previousBalance: 0, currentBalance: 670 },
-    { houseId: houses[9].id, previousBalance: 920, currentBalance: 1480 },
-    { houseId: houses[10].id, previousBalance: 450, currentBalance: 790 },
-    { houseId: houses[11].id, previousBalance: 1500, currentBalance: 2030 },
-  ];
+  const balanceData: any[] = [];
+  for (let i = 0; i < houses.length; i++) {
+    balanceData.push({ 
+      houseId: houses[i].id, 
+      previousBalance: 100 + Math.floor(Math.random() * 2000), 
+      currentBalance: 0 // Will be synced with delivery totals later
+    });
+  }
 
   for (const b of balanceData) {
     await prisma.houseBalance.create({ data: b });

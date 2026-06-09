@@ -945,6 +945,15 @@ export default function HousesPage() {
       // Track page numbers for each house (index 0 = index page, then house pages)
       const houseStartPages: number[] = []
 
+      // Pre-fetch all data for all houses in parallel to speed up generation
+      const allHouseIds = sortedHouses.map(h => h.id)
+      const [allBalances, allLogs, allBills, rates] = await Promise.all([
+        Promise.all(allHouseIds.map(id => balanceApi.get(id).catch(() => ({ id: 0, houseId: id, previousBalance: '0', currentBalance: '0' } as HouseBalance)))),
+        Promise.all(allHouseIds.map(id => deliveryLogsApi.list({ houseId: id }))),
+        Promise.all(allHouseIds.map(id => billsApi.list({ houseId: id }))),
+        productRatesApi.list(),
+      ])
+
       // Generate house pages
       for (let i = 0; i < sortedHouses.length; i++) {
         houseStartPages.push(doc.getNumberOfPages() + 1)
@@ -952,12 +961,9 @@ export default function HousesPage() {
         const house = sortedHouses[i]
 
         const houseIndex = i + 1
-        const [balanceResult, logs, bills, rates] = await Promise.all([
-          balanceApi.get(house.id).catch(() => ({ id: 0, houseId: house.id, previousBalance: '0', currentBalance: '0' } as HouseBalance)),
-          deliveryLogsApi.list({ houseId: house.id }),
-          billsApi.list({ houseId: house.id }),
-          productRatesApi.list(),
-        ])
+        const balanceResult = allBalances[i]
+        const logs = allLogs[i]
+        const bills = allBills[i]
 
         const period = { year, month: month - 1 }
         const filteredLogs = logs.filter(log => {
@@ -1054,10 +1060,10 @@ export default function HousesPage() {
         const monthLabels = [monthLabel]
 
         const paymentsExist = payRows.length > 0
-        const splitX = 94
+        const splitX = 90
         const rightSideX = paymentsExist ? splitX : leftMargin
         const rightTableWidth = paymentsExist ? (pageWidth - leftMargin - splitX) : (pageWidth - leftMargin - leftMargin)
-        const productColWidth = Math.max(50, Math.min(68, rightTableWidth * 0.4))
+        const productColWidth = Math.max(45, Math.min(65, rightTableWidth * 0.4))
         const monthColWidth = (rightTableWidth - productColWidth)
 
         let paymentsEndY = currentY
@@ -1071,19 +1077,19 @@ export default function HousesPage() {
           const totalDiscount = payRows.reduce((s, r) => s + r.discount, 0)
           autoTable(doc, {
             startY: paymentsEndY,
-            head: [['Date', 'Paid (₹)', 'Discount (₹)']],
+            head: [['Date', 'Paid (₹)', 'Disc (₹)']],
             body: [
               ...payRows.map(r => [
                 new Date(r.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
                 r.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
                 r.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
               ]),
-              ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+              ['Total', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
             ],
-            margin: { left: leftMargin, right: leftMargin + 65 },
-            styles: { fontSize: 7 },
+            margin: { left: leftMargin, right: pageWidth - splitX + 2 },
+            styles: { fontSize: 7, cellPadding: 1.5 },
             headStyles: { fillColor: [200, 200, 200] },
-            columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 16 }, 2: { cellWidth: 16 } },
+            columnStyles: { 0: { cellWidth: 24 }, 1: { cellWidth: 15 }, 2: { cellWidth: 15 } },
           })
           paymentsEndY = (doc as any).lastAutoTable.finalY + 4
         }
@@ -1186,7 +1192,7 @@ export default function HousesPage() {
             headStyles: { fillColor: [17, 24, 39], textColor: 255 },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
             alternateRowStyles: { fillColor: [248, 250, 252] },
-            margin: { left: leftMargin, right: pageWidth - deliveriesSplitX + 4 },
+            margin: { left: leftMargin, right: pageWidth - deliveriesSplitX + 2 },
           })
         }
         if (daysRight.length > 0) {
@@ -1198,71 +1204,77 @@ export default function HousesPage() {
             headStyles: { fillColor: [17, 24, 39], textColor: 255 },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
             alternateRowStyles: { fillColor: [248, 250, 252] },
-            margin: { left: deliveriesSplitX, right: leftMargin },
+            margin: { left: deliveriesSplitX, right: leftMargin + 2 },
           })
         }
       }
 
-      // Create index with max 2 pages, 2 columns (Page No and House No only)
+      // Calculate house page numbers AFTER determining index page count
       const housePageCount = doc.getNumberOfPages()
-      const totalPages = housePageCount + 1
+      const housesPerIndexPage = 200
+      const indexPageCount = Math.ceil(sortedHouses.length / housesPerIndexPage)
       
-      const indexBody = sortedHouses.map((house, idx) => [
-        String(houseStartPages[idx] + 1),
-        String(house.houseNo),
-      ])
+      // Insert all index pages at the beginning (this shifts all house pages by indexPageCount)
+      for (let i = 0; i < indexPageCount; i++) {
+        doc.insertPage(1)
+      }
       
-      // Insert index page 1 with table
-      doc.insertPage(1)
-      doc.setPage(1)
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(16)
-      doc.text(`All Houses Summary - Index`, leftMargin, 16)
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(9)
-      doc.text(`Period: ${MONTH_NAMES[month]} ${year}`, leftMargin, 24)
+      // Build index entries with correct page numbers (offset by indexPageCount)
+      const indexBody = sortedHouses.map((house, idx) => ({
+        page: houseStartPages[idx] + indexPageCount,
+        houseNo: String(house.houseNo),
+      }))
       
-      // First page: 35 rows (single column for clarity)
-      autoTable(doc, {
-        startY: 32,
-        head: [['Page', 'House No']],
-        body: indexBody.slice(0, 35),
-        styles: { font: 'helvetica', fontSize: 10, cellPadding: 2 },
-        headStyles: { fillColor: [17, 24, 39], textColor: 255, fontStyle: 'bold' },
-        columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 40 } },
-        theme: 'grid',
-        margin: { left: leftMargin, right: 14 },
-      })
-
-      // Add index page 2 if needed (houses 36-70)
-      if (indexBody.length > 35) {
-        doc.addPage()
-        doc.setPage(2)
-        doc.setFont('helvetica', 'bold')
-        doc.setFontSize(16)
-        doc.text(`All Houses Summary - Index (contd.)`, leftMargin, 16)
-        
-        autoTable(doc, {
-          startY: 32,
-          head: [['Page', 'House No']],
-          body: indexBody.slice(35, 70),
-          styles: { font: 'helvetica', fontSize: 10, cellPadding: 2 },
+      const buildIndexTable = (data: Array<{ page: number; houseNo: string }>, startY: number) => {
+        const cols = 5
+        const perCol = 40
+        const rows = []
+        for (let r = 0; r < perCol; r++) {
+          const row = []
+          for (let c = 0; c < cols; c++) {
+            const entry = data[r + c * perCol]
+            if (entry) { row.push(String(entry.page), entry.houseNo) }
+            else { row.push('', '') }
+          }
+          rows.push(row)
+        }
+        return autoTable(doc, {
+          startY,
+          head: [['Pg', 'House', 'Pg', 'House', 'Pg', 'House', 'Pg', 'House', 'Pg', 'House']],
+          body: rows,
+          styles: { font: 'helvetica', fontSize: 10, cellPadding: 1 },
           headStyles: { fillColor: [17, 24, 39], textColor: 255, fontStyle: 'bold' },
-          columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 40 } },
+          columnStyles: { 0: { cellWidth: 13 }, 1: { cellWidth: 25 }, 2: { cellWidth: 13 }, 3: { cellWidth: 25 }, 4: { cellWidth: 13 }, 5: { cellWidth: 25 }, 6: { cellWidth: 13 }, 7: { cellWidth: 25 }, 8: { cellWidth: 13 }, 9: { cellWidth: 25 } },
           theme: 'grid',
-          margin: { left: leftMargin, right: 14 },
+          margin: { left: 10, right: 10 },
         })
       }
-
+      
+      const indexPagesList: Array<Array<{ page: number; houseNo: string }>> = []
+      for (let i = 0; i < indexBody.length; i += housesPerIndexPage) {
+        indexPagesList.push(indexBody.slice(i, i + housesPerIndexPage))
+      }
+      
+      // Add content to each index page
+      for (let i = 0; i < indexPageCount; i++) {
+        doc.setPage(i + 1)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(16)
+        doc.text(i === 0 ? `All Houses Summary - Index` : `All Houses Summary - Index (${i + 1})`, leftMargin, 16)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9)
+        doc.text(`Period: ${MONTH_NAMES[month]} ${year}`, leftMargin, 24)
+        buildIndexTable(indexPagesList[i], 30)
+      }
+      
       // Add page numbers to all pages
       const finalPageCount = doc.getNumberOfPages()
-      const indexPages = indexBody.length > 35 ? 2 : 1
       for (let pi = 1; pi <= finalPageCount; pi++) {
         doc.setPage(pi)
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(9)
         doc.setTextColor(100, 100, 100)
-        doc.text(`Page ${pi} of ${totalPages + indexPages - 1}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
+        doc.text(`Page ${pi} of ${finalPageCount}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
       }
 
       doc.save(`all-houses-summary-${month}-${year}.pdf`)
