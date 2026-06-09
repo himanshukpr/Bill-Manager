@@ -1211,7 +1211,7 @@ export default function HousesPage() {
 
       // Calculate house page numbers AFTER determining index page count
       const housePageCount = doc.getNumberOfPages()
-      const housesPerIndexPage = 200
+      const housesPerIndexPage = 180
       const indexPageCount = Math.ceil(sortedHouses.length / housesPerIndexPage)
       
       // Insert all index pages at the beginning (this shifts all house pages by indexPageCount)
@@ -1227,7 +1227,7 @@ export default function HousesPage() {
       
       const buildIndexTable = (data: Array<{ page: number; houseNo: string }>, startY: number) => {
         const cols = 5
-        const perCol = 40
+        const perCol = 36
         const rows = []
         for (let r = 0; r < perCol; r++) {
           const row = []
