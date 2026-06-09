@@ -865,8 +865,48 @@ export default function HousesPage() {
       return
     }
 
+    // Sort: shop → evening → morning (morning grouped by supplier)
+    const sortedHouses = [...activeHouses].sort((a, b) => {
+      const aConfig = a.configs?.[0]
+      const bConfig = b.configs?.[0]
+      const aShift = aConfig?.shift
+      const bShift = bConfig?.shift
+      const aPosition = aConfig?.position ?? 999
+      const bPosition = bConfig?.position ?? 999
+
+      // Shop first
+      if (aShift === 'shop' && bShift !== 'shop') return -1
+      if (aShift !== 'shop' && bShift === 'shop') return 1
+
+      // Then evening
+      if (aShift === 'evening' && bShift === 'morning') return -1
+      if (aShift === 'morning' && bShift === 'evening') return 1
+
+      // Same shift
+      if (aShift === 'evening' && bShift === 'evening') {
+        // Evening: sort by position
+        if (aPosition !== bPosition) return aPosition - bPosition
+        return Number(a.houseNo) - Number(b.houseNo)
+      }
+
+      // Morning: sort by supplier (alphabetically), then by position
+      if (aShift === 'morning' && bShift === 'morning') {
+        const aSupplier = aConfig?.supplierId ? suppliers.find(s => s.uuid === aConfig.supplierId) : null
+        const bSupplier = bConfig?.supplierId ? suppliers.find(s => s.uuid === bConfig.supplierId) : null
+
+        const aSupplierName = aSupplier?.username ?? 'ZZZ'
+        const bSupplierName = bSupplier?.username ?? 'ZZZ'
+
+        if (aSupplierName !== bSupplierName) return aSupplierName.localeCompare(bSupplierName)
+        if (aPosition !== bPosition) return aPosition - bPosition
+        return Number(a.houseNo) - Number(b.houseNo)
+      }
+
+      return 0
+    })
+
     setAllExportLoading(true)
-    const toastId = toast.loading(`Generating summary for ${activeHouses.length} houses...`)
+    const toastId = toast.loading(`Generating summary for ${sortedHouses.length} houses...`)
 
     try {
       const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
@@ -902,11 +942,16 @@ export default function HousesPage() {
         doc.text(lines, textX, textY, { align })
       }
 
-      let isFirst = true
-      for (const house of activeHouses) {
-        if (!isFirst) doc.addPage()
-        isFirst = false
+      // Track page numbers for each house (index 0 = index page, then house pages)
+      const houseStartPages: number[] = []
 
+      // Generate house pages
+      for (let i = 0; i < sortedHouses.length; i++) {
+        houseStartPages.push(doc.getNumberOfPages() + 1)
+        doc.addPage()
+        const house = sortedHouses[i]
+
+        const houseIndex = i + 1
         const [balanceResult, logs, bills, rates] = await Promise.all([
           balanceApi.get(house.id).catch(() => ({ id: 0, houseId: house.id, previousBalance: '0', currentBalance: '0' } as HouseBalance)),
           deliveryLogsApi.list({ houseId: house.id }),
@@ -998,7 +1043,7 @@ export default function HousesPage() {
 
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(13)
-        doc.text(`House ${house.houseNo} — ${shiftLabel}${supplierName ? ` (${supplierName})` : ''}`, leftMargin, 14)
+        doc.text(`${houseIndex}. House ${house.houseNo} — ${shiftLabel}${supplierName ? ` (${supplierName})` : ''}`, leftMargin, 14)
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(9)
         doc.text(`Period: ${monthLabel}`, leftMargin, 21)
@@ -1158,25 +1203,59 @@ export default function HousesPage() {
         }
       }
 
-      // Add page numbers
-      const pageCount = doc.getNumberOfPages()
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i)
+      // Add page numbers to all house pages
+      const housePageCount = doc.getNumberOfPages()
+      for (let pi = 1; pi <= housePageCount; pi++) {
+        doc.setPage(pi)
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(9)
         doc.setTextColor(100, 100, 100)
-        doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
+        doc.text(`Page ${pi + 1} of ${housePageCount + 1}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
       }
 
+      // Insert index page at beginning
+      const totalPages = housePageCount + 1
+      doc.insertPage(1)
+      doc.setPage(1)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(16)
+      doc.text(`All Houses Summary - Index`, leftMargin, 16)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.text(`Period: ${MONTH_NAMES[month]} ${year}`, leftMargin, 24)
+      
+      const indexBody = sortedHouses.map((house, idx) => {
+        const config = house.configs?.[0]
+        const shiftLabel = config?.shift ? (config.shift === 'shop' ? 'Shop' : config.shift === 'morning' ? 'Morning' : 'Evening') : ''
+        const supplierName = config?.supplier?.username ?? ''
+        return [`${idx + 1}`, String(house.houseNo), shiftLabel, supplierName || '-', String(houseStartPages[idx] + 1)]
+      })
+      autoTable(doc, {
+        startY: 32,
+        head: [['Sr', 'House No', 'Shift', 'Supplier', 'Page']],
+        body: indexBody,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [17, 24, 39], textColor: 255 },
+        columnStyles: { 0: { cellWidth: 12 }, 1: { cellWidth: 28 }, 2: { cellWidth: 22 }, 3: { cellWidth: 30 }, 4: { cellWidth: 15 } },
+        margin: { left: leftMargin, right: 14 },
+      })
+
+      // Update page numbers for all pages (including index)
+      doc.setPage(1)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.setTextColor(100, 100, 100)
+      doc.text(`Page 1 of ${totalPages}`, pageWidth - 14, pageHeight - 5, { align: 'right' })
+
       doc.save(`all-houses-summary-${month}-${year}.pdf`)
-      toast.success(`Exported ${activeHouses.length} house summaries`, { id: toastId })
-    } catch (err: unknown) {
-      toast.error(getErrorMessage(err), { id: toastId })
-    } finally {
-      setAllExportLoading(false)
-      setAllExportOpen(false)
-    }
-  }, [houses])
+       toast.success(`Exported ${sortedHouses.length} house summaries`, { id: toastId })
+     } catch (err: unknown) {
+       toast.error(getErrorMessage(err), { id: toastId })
+     } finally {
+       setAllExportLoading(false)
+       setAllExportOpen(false)
+     }
+   }, [houses, suppliers])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {

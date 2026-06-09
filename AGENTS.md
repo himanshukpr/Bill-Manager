@@ -17,30 +17,6 @@ Fix and maintain the Bill Manager app's billing, balance, payment, receipt displ
 
 [keep all existing sections 1-13 unchanged]
 
-### 14. Pending Houses dialog (bills/page.tsx)
-- Shift/Supplier information now shown in PDF column and dialog table
-- Houses grouped by shift+supplier with sticky section headers (Shop, Morning — SupplierName, Evening — SupplierName)
-- Sort order: Shop → Morning (A→Z by supplier) → Evening (A→Z by supplier), then by house number
-- Filters out deactivated houses (`h.active`)
-
-### 15. All Houses Summary PDF button (houses/page.tsx)
-- "All Summary" button next to Export PDF button in admin houses page header
-- Dialog with month/year selectors (defaults to current month)
-- Generates a single PDF with each active house on its own page
-- Each page contains: header (house no, shift/supplier, period, area), Received Payments table, Monthly Product Summary with Previous Balance + Grand Total rows, Daily Deliveries (two-column layout)
-- Uses `houses.filter(h => h.active)` — excludes deactivated houses
-- Handles missing balance records gracefully (falls back to zero defaults)
-
-### 16. Server balance methods now resilient to missing records (house-balance.service.ts)
-- `getBalance`: returns zero balance object instead of 404 when no balance record exists
-- `recordPayment`: auto-creates balance record if missing
-- `getPaymentHistory`: returns `[]` instead of 404
-- `updatePreviousBalance`: uses `upsert` (creates record if missing)
-- `updateCurrentBalance`: uses `upsert` (creates record if missing)
-
-### 17. Houses list Export PDF (houses/page.tsx)
-- Filters out deactivated houses from the exported PDF
-
 ### 1. PDF Styling (bills/page.tsx)
 - **Spacing reduced**: headerTextY (4.5→3.5), titleY (11.5→8.5), noteY (12), toY (14.5), tableTop (18) to tighten layout around DAIRY title
 - **Bolder text**: Table data cells now use `bold: true`, header info changed from italic→bolditalic, previous balance line uses bolditalic
@@ -115,6 +91,25 @@ None.
 - `billItemProduct` in `buildItemsFromDeliveryLogs` (server-side) may need similar precise matching if reused elsewhere.
 
 ## Next Steps
-- Test PDF output for item categorization and formatting
-- Verify houses summary product names
-- Verify receipt page house selection and amount auto-fill
+- Test stale-while-revalidate caching for delivery logs
+- Verify PDF page numbers render correctly
+
+## Key Changes Made (Recent)
+
+### 18. Stale-while-revalidate caching for delivery logs (`delivery-storage.ts`)
+- `pullDeliveryLogs` now implements 3-path caching:
+  1. **IDB has data + fresh (<30s)**: returns IDB instantly, no server call
+  2. **IDB has data + stale (>30s)**: returns IDB instantly, server fetch runs in background
+  3. **IDB empty**: blocking server fetch, then returns fresh data
+- `invalidateSyncCache()` called after every mutation (create/update/delete) and after queue sync operations
+- `lastSyncAt` is an in-memory `Map<string, key>` keyed by `{houseId}:{shift}:{fromDate}:{toDate}`
+
+### 19. Page numbers in PDF exports (`houses/page.tsx`)
+- Added "Page X of Y" footer to individual house summary PDF
+- Added "Page X of Y" footer to all-houses summary PDF
+
+### 20. All Houses Summary sort order (`houses/page.tsx`)
+- Modified `handleExportAllHousesSummaryPdf` to sort houses as: Shop → Evening → Morning
+- Morning houses sorted by supplier (alphabetically by username), then by house number
+- Evening houses sorted by supplier, then by house number
+- Added `suppliers` to dependency array
