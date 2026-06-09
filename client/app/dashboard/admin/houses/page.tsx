@@ -835,10 +835,9 @@ export default function HousesPage() {
         startY: deliveriesTitleY + 4,
         head: [['Date', 'Products']],
         body: rows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
-        styles: { font: 'helvetica', fontSize:11, cellPadding: 1.5, overflow: 'linebreak' },
+        styles: { font: 'helvetica', fontSize:11, cellPadding: 1.5, overflow: 'linebreak', textColor: [0, 0, 0] },
         headStyles: { fillColor: [17, 24, 39], textColor: 255 },
         columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 'auto' } },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
         margin: { left: marginLeft, right: marginRight },
       })
     }
@@ -1188,10 +1187,9 @@ export default function HousesPage() {
             startY: deliveriesTitleY + 4,
             head: [['Date', 'Products']],
             body: daysLeft.map(r => [r.dayLabel, r.hasDelivery ? r.productsLabel : '-']),
-            styles: { font: 'helvetica', fontSize: 9, cellPadding: 1.5, overflow: 'linebreak' },
+            styles: { font: 'helvetica', fontSize: 9, cellPadding: 1.5, overflow: 'linebreak', textColor: [0, 0, 0] },
             headStyles: { fillColor: [17, 24, 39], textColor: 255 },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
-            alternateRowStyles: { fillColor: [248, 250, 252] },
             margin: { left: leftMargin, right: pageWidth - deliveriesSplitX + 2 },
           })
         }
@@ -1200,10 +1198,9 @@ export default function HousesPage() {
             startY: deliveriesTitleY + 4,
             head: [['Date', 'Products']],
             body: daysRight.map(r => [r.dayLabel, r.hasDelivery ? r.productsLabel : '-']),
-            styles: { font: 'helvetica', fontSize: 9, cellPadding: 1.5, overflow: 'linebreak' },
+            styles: { font: 'helvetica', fontSize: 9, cellPadding: 1.5, overflow: 'linebreak', textColor: [0, 0, 0] },
             headStyles: { fillColor: [17, 24, 39], textColor: 255 },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 'auto' } },
-            alternateRowStyles: { fillColor: [248, 250, 252] },
             margin: { left: deliveriesSplitX, right: leftMargin + 2 },
           })
         }
@@ -1242,7 +1239,7 @@ export default function HousesPage() {
           startY,
           head: [['Pg', 'House', 'Pg', 'House', 'Pg', 'House', 'Pg', 'House', 'Pg', 'House']],
           body: rows,
-          styles: { font: 'helvetica', fontSize: 10, cellPadding: 1 },
+          styles: { font: 'helvetica', fontSize: 10, cellPadding: 1, textColor: [0, 0, 0] },
           headStyles: { fillColor: [17, 24, 39], textColor: 255, fontStyle: 'bold' },
           columnStyles: { 0: { cellWidth: 13 }, 1: { cellWidth: 25 }, 2: { cellWidth: 13 }, 3: { cellWidth: 25 }, 4: { cellWidth: 13 }, 5: { cellWidth: 25 }, 6: { cellWidth: 13 }, 7: { cellWidth: 25 }, 8: { cellWidth: 13 }, 9: { cellWidth: 25 } },
           theme: 'grid',
@@ -1258,6 +1255,7 @@ export default function HousesPage() {
       // Add content to each index page
       for (let i = 0; i < indexPageCount; i++) {
         doc.setPage(i + 1)
+        doc.setTextColor(0, 0, 0)
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(16)
         doc.text(i === 0 ? `All Houses Summary - Index` : `All Houses Summary - Index (${i + 1})`, leftMargin, 16)
