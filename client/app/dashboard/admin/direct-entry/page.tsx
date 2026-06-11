@@ -310,7 +310,7 @@ export default function DeliveryEntryPage() {
   }, [rates, selectedHouse])
 
   const shopLogs = useMemo(
-    () => logs.filter((log) => log.shift === 'shop'),
+    () => [...logs.filter((log) => log.shift === 'shop')].sort((a, b) => new Date(b.deliveredAt).getTime() - new Date(a.deliveredAt).getTime()),
     [logs],
   )
 
