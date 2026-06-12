@@ -151,6 +151,53 @@ function formatDateTime(value: string) {
     }).format(new Date(value))
 }
 
+const DIRECT_ENTRY_CACHE_TTL_MS = 5 * 60 * 1000
+const DIRECT_ENTRY_HOUSES_CACHE_KEY = 'direct-entry:supplier:houses:v1'
+const DIRECT_ENTRY_RATES_CACHE_KEY = 'direct-entry:supplier:rates:v1'
+
+function isBrowser() {
+    return typeof window !== 'undefined'
+}
+
+function readDirectEntryCache<T>(key: string): T | null {
+    if (!isBrowser()) return null
+
+    try {
+        const raw = window.localStorage.getItem(key)
+        if (!raw) return null
+
+        const parsed = JSON.parse(raw) as { value: T; updatedAt: number }
+        if (Date.now() - parsed.updatedAt > DIRECT_ENTRY_CACHE_TTL_MS) return null
+
+        return parsed.value
+    } catch {
+        return null
+    }
+}
+
+function writeDirectEntryCache<T>(key: string, value: T) {
+    if (!isBrowser()) return
+
+    try {
+        window.localStorage.setItem(key, JSON.stringify({ value, updatedAt: Date.now() }))
+    } catch {
+    }
+}
+
+function getDateRangeForDateKey(dateKey: string) {
+    const [year, month, day] = dateKey.split('-').map(Number)
+    const start = new Date(year, month - 1, day, 0, 0, 0, 0).toISOString()
+    const end = new Date(year, month - 1, day, 23, 59, 59, 999).toISOString()
+    return { fromDate: start, toDate: end }
+}
+
+function getHouseSearchText(house: House) {
+    return [house.houseNo, house.area, house.phoneNo, house.alternativePhone, house.description]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+}
+
 export default function SupplierDirectEntryPage() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -162,8 +209,12 @@ export default function SupplierDirectEntryPage() {
     const [houseSearch, setHouseSearch] = useState('')
     const [shift, setShift] = useState<'morning' | 'evening' | 'shop'>('shop')
     const [deliveryDate, setDeliveryDate] = useState(() => getTodayDateKey())
+    const [logDate, setLogDate] = useState(() => getTodayDateKey())
+    const [logHouseSearch, setLogHouseSearch] = useState('')
+    const [logLoading, setLogLoading] = useState(false)
+    const [productPickerOpen, setProductPickerOpen] = useState(false)
     const [note, setNote] = useState('')
-    const [rows, setRows] = useState<DeliveryEntryRow[]>([createRow()])
+    const [rows, setRows] = useState<DeliveryEntryRow[]>([])
     const newRowIdRef = useRef<string | null>(null)
 
     useEffect(() => {
@@ -177,23 +228,68 @@ export default function SupplierDirectEntryPage() {
       }
     })
 
+    async function loadCached<T>(
+        key: string,
+        fetcher: () => Promise<T>,
+        setter: (value: T) => void,
+    ): Promise<T> {
+        const cached = readDirectEntryCache<T>(key)
+
+        if (cached) {
+            void fetcher()
+                .then((data) => {
+                    setter(data)
+                    writeDirectEntryCache(key, data)
+                })
+                .catch(() => undefined)
+            return cached
+        }
+
+        const data = await fetcher()
+        setter(data)
+        writeDirectEntryCache(key, data)
+        return data
+    }
+
+    async function loadLogsForDate(dateKey: string) {
+        if (!dateKey) return
+
+        const key = `direct-entry:supplier:logs:${dateKey}`
+        const cached = readDirectEntryCache<DeliveryLog[]>(key)
+
+        if (cached) {
+            setLogs(cached)
+            void deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey) })
+                .then((data) => {
+                    setLogs(data)
+                    writeDirectEntryCache(key, data)
+                })
+                .catch(() => undefined)
+            return
+        }
+
+        const data = await deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey) })
+        setLogs(data)
+        writeDirectEntryCache(key, data)
+    }
+
     useEffect(() => {
         let active = true
 
         const load = async () => {
             try {
                 setLoading(true)
-                const [houseData, rateData, logData] = await Promise.all([
-                    housesApi.list(),
-                    productRatesApi.list(),
-                    deliveryLogsApi.list(),
+                const today = getTodayDateKey()
+                const [houseData, rateData] = await Promise.all([
+                    loadCached(DIRECT_ENTRY_HOUSES_CACHE_KEY, housesApi.list, setHouses),
+                    loadCached(DIRECT_ENTRY_RATES_CACHE_KEY, productRatesApi.list, setRates),
                 ])
 
+                await loadLogsForDate(today)
+
                 if (!active) return
-                // Hide deactivated houses from supplier direct-entry
                 setHouses(houseData.filter((h) => h.active))
                 setRates(rateData)
-                setLogs(logData)
             } catch (error) {
                 toast.error(error instanceof Error ? error.message : 'Failed to load delivery entry data')
             } finally {
@@ -221,29 +317,32 @@ export default function SupplierDirectEntryPage() {
         return map
     }, [rates])
 
+    const houseSearchIndex = useMemo(() => {
+        return houses.map((house) => ({ house, searchText: getHouseSearchText(house) }))
+    }, [houses])
+
     const filteredHouses = useMemo(() => {
         const q = houseSearch.trim().toLowerCase()
-        if (!q) return houses.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
+        if (!q) return houseSearchIndex.slice(0, 20).map((item) => item.house)
 
-        const exactMatches: typeof houses = []
-        const partialMatches: typeof houses = []
+        const exactMatches: House[] = []
+        const partialMatches: House[] = []
 
-        houses.forEach((house) => {
-          const houseNo = house.houseNo.toLowerCase()
-          const area = (house.area || '').toLowerCase()
+        houseSearchIndex.forEach(({ house, searchText }) => {
+            const houseNo = house.houseNo.toLowerCase()
 
-          if (houseNo === q || area === q) {
-            exactMatches.push(house)
-          } else if (houseNo.includes(q) || area.includes(q)) {
-            partialMatches.push(house)
-          }
+            if (houseNo === q || searchText === q) {
+                exactMatches.push(house)
+            } else if (searchText.includes(q)) {
+                partialMatches.push(house)
+            }
         })
 
         exactMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
         partialMatches.sort((a, b) => a.houseNo.localeCompare(b.houseNo))
 
-        return [...exactMatches, ...partialMatches]
-    }, [houses, houseSearch])
+        return [...exactMatches, ...partialMatches].slice(0, 30)
+    }, [houseSearch, houseSearchIndex])
 
     const items = useMemo(() => {
         return rows
@@ -270,10 +369,15 @@ export default function SupplierDirectEntryPage() {
         [items],
     )
 
-    const totalQuantity = useMemo(
-        () => items.reduce((sum, item) => sum + item.qty, 0),
-        [items],
-    )
+        const totalQuantity = useMemo(
+            () => items.reduce((sum, item) => sum + item.qty, 0),
+            [items],
+        )
+
+        const itemSummary = useMemo(
+            () => items.map((item) => `${item.milkType}: ${item.qty}`).join(', '),
+            [items],
+        )
 
     useEffect(() => {
         setRows((current) =>
@@ -298,8 +402,25 @@ export default function SupplierDirectEntryPage() {
     }, [rates, selectedHouse])
 
     const shopLogs = useMemo(
-        () => [...logs.filter((log) => log.shift === 'shop')].sort((a, b) => new Date(b.deliveredAt).getTime() - new Date(a.deliveredAt).getTime()),
-        [logs],
+        () => {
+            const safeLogDate = logDate || getTodayDateKey()
+            const { fromDate, toDate } = getDateRangeForDateKey(safeLogDate)
+            const q = logHouseSearch.trim().toLowerCase()
+
+            return [...logs]
+                .filter((log) => log.shift === 'shop')
+                .filter((log) => log.deliveredAt >= fromDate && log.deliveredAt <= toDate)
+                .filter((log) => {
+                    if (!q) return true
+
+                    const houseNo = (log.house?.houseNo ?? '').toLowerCase()
+                    const area = (log.house?.area ?? '').toLowerCase()
+                    const text = [String(log.houseId), houseNo, area].join(' ').toLowerCase()
+                    return text.includes(q)
+                })
+                .sort((a, b) => new Date(b.deliveredAt).getTime() - new Date(a.deliveredAt).getTime())
+        },
+        [logs, logDate, logHouseSearch],
     )
 
     function updateRowQty(id: string, qty: string) {
@@ -355,14 +476,29 @@ export default function SupplierDirectEntryPage() {
         )
     }
 
-    function addBlankRow() {
-        const newRow = createRow()
+    function addRowWithProduct(milkType: string) {
+        const resolvedRate = getResolvedRateByProductName(selectedHouse, rates, milkType)
+        const newRow: DeliveryEntryRow = {
+            ...createRow(),
+            milkType,
+            rate: resolvedRate,
+        }
+
         newRowIdRef.current = newRow.id
         setRows((current) => [...current, newRow])
+        setProductPickerOpen(false)
+
+        requestAnimationFrame(() => {
+            document.getElementById(`qty-${newRow.id}`)?.focus()
+        })
+    }
+
+    function addBlankRow() {
+        setProductPickerOpen((current) => !current)
     }
 
     function removeRow(id: string) {
-        setRows((current) => (current.length > 1 ? current.filter((row) => row.id !== id) : current))
+        setRows((current) => current.filter((row) => row.id !== id))
     }
 
     function resetForm() {
@@ -370,7 +506,8 @@ export default function SupplierDirectEntryPage() {
         setHouseSearch('')
         setShift('shop')
         setNote('')
-        setRows([createRow()])
+        setRows([])
+        setProductPickerOpen(false)
     }
 
     async function handleSave() {
@@ -395,7 +532,13 @@ export default function SupplierDirectEntryPage() {
                 deliveredAt: buildDeliveredAtForDate(deliveryDate),
             })
 
-            setLogs((current) => [response.log, ...current])
+            const { fromDate, toDate } = getDateRangeForDateKey(logDate || getTodayDateKey())
+            const nextLogs = response.log.deliveredAt >= fromDate && response.log.deliveredAt <= toDate
+                ? [response.log, ...logs.filter((log) => log.id !== response.log.id)]
+                : logs.filter((log) => log.id !== response.log.id)
+
+            setLogs(nextLogs)
+            writeDirectEntryCache(`direct-entry:supplier:logs:${logDate}`, nextLogs)
             toast.success('Delivery entry saved successfully')
             resetForm()
         } catch (error) {
@@ -434,10 +577,30 @@ export default function SupplierDirectEntryPage() {
                                                 className="pl-9"
                                             />
                                         </div>
-                                        <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
-                                            <Plus className="h-3.5 w-3.5" />
-                                            Add blank row
-                                        </Button>
+                                        <div className="relative">
+                                            <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
+                                                <Plus className="h-3.5 w-3.5" />
+                                                Add new item
+                                            </Button>
+
+                                            {productPickerOpen && (
+                                                <div className="absolute right-0 top-full z-40 mt-2 w-72 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+                                                    <div className="max-h-72 overflow-y-auto p-2">
+                                                        {rates.filter((rate) => rate.isActive).map((rate) => (
+                                                            <button
+                                                                key={rate.id}
+                                                                type="button"
+                                                                onClick={() => addRowWithProduct(rate.name)}
+                                                                className="w-full text-left px-3 py-2.5 text-sm rounded-lg transition-colors hover:bg-muted/70"
+                                                            >
+                                                                <p className="font-medium">{rate.name}</p>
+                                                                <p className="text-xs text-muted-foreground">₹{Number(rate.rate).toLocaleString('en-IN')} / {rate.unit}</p>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
 
                                     {houseSearch && filteredHouses.length > 0 && (
@@ -487,6 +650,11 @@ export default function SupplierDirectEntryPage() {
                                 </div>
 
                                 <div className="space-y-4">
+                                    {rows.length === 0 ? (
+                                        <div className="rounded-2xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
+                                            No items added yet. Click <span className="font-medium text-foreground">Add new item</span> and choose a product.
+                                        </div>
+                                    ) : null}
                                     {rows.map((row, index) => {
                                         const { amount: rowAmount } = getRowValues(row)
 
@@ -503,7 +671,7 @@ export default function SupplierDirectEntryPage() {
                                                         size="sm"
                                                         className="gap-1.5 text-muted-foreground"
                                                         onClick={() => removeRow(row.id)}
-                                                        disabled={rows.length === 1}
+                                                        disabled={false}
                                                     >
                                                         <Trash2 className="h-3.5 w-3.5" />
                                                         Remove
@@ -595,9 +763,9 @@ export default function SupplierDirectEntryPage() {
                                                         : 'Select a house to continue'}
                                                 </p>
 
-                                                {totalQuantity > 0 && (
+                                                {itemSummary && (
                                                     <p className="mt-1 text-xs text-muted-foreground">
-                                                        Total Qty: {totalQuantity}
+                                                        {itemSummary}
                                                     </p>
                                                 )}
                                             </div>
@@ -646,12 +814,53 @@ export default function SupplierDirectEntryPage() {
                     <CardHeader className="border-b border-border px-5 py-4">
                         <CardTitle>Recent delivery logs</CardTitle>
                         <CardDescription>
-                            Latest entries recorded through the admin or supplier flow.
+                            Today’s entries. Change date or search a house.
                         </CardDescription>
                     </CardHeader>
 
                     <CardContent className="px-0 py-0">
-                        {loading ? (
+                        <div className="flex flex-col gap-3 border-b border-border p-5 sm:flex-row sm:items-end">
+                            <div className="space-y-1.5 flex-1">
+                                <Label htmlFor="log-date">Date</Label>
+                                <Input
+                                    id="log-date"
+                                    type="date"
+                                    value={logDate}
+                                    onChange={(event) => {
+                                        const nextDate = event.target.value
+                                        setLogDate(nextDate)
+                                        void loadLogsForDate(nextDate)
+                                    }}
+                                />
+                            </div>
+
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                                <Input
+                                    id="log-house-search"
+                                    placeholder="Search house number or area..."
+                                    value={logHouseSearch}
+                                    onChange={(event) => setLogHouseSearch(event.target.value)}
+                                    className="pl-9"
+                                />
+                            </div>
+
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    const today = getTodayDateKey()
+                                    setLogDate(today)
+                                    setLogHouseSearch('')
+                                    void loadLogsForDate(today)
+                                }}
+                            >
+                                Today
+                            </Button>
+                        </div>
+
+                        {loading || logLoading ? (
                             <div className="space-y-3 p-5">
                                 {[...Array(4)].map((_, index) => (
                                     <Skeleton key={index} className="h-20 w-full rounded-2xl" />
