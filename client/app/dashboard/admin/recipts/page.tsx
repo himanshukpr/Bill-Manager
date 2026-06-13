@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2, Eye } from 'lucide-react'
+import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2, Eye, Calendar } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, invalidateCache, type PaymentHistory, type House, type HouseBalance, type Bill, type BillItem, type DeliveryLog, type ProductRate } from '@/lib/api'
@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
@@ -25,6 +26,7 @@ import {
 } from '@/components/ui/alert-dialog'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+let paymentDateCache = ''
 
 type HouseDeliverySummaryRow = {
   dateKey: string
@@ -282,7 +284,7 @@ export default function ReceiptsPage() {
 
   // Form
   const [formHouseId, setFormHouseId] = useState('')
-  const [formPaidAt, setFormPaidAt] = useState('')
+  const [formPaidAt, setFormPaidAt] = useState(paymentDateCache)
   const [formAmount, setFormAmount] = useState('')
   const [formNote, setFormNote] = useState('')
   const [formHouseQuery, setFormHouseQuery] = useState('')
@@ -296,6 +298,7 @@ export default function ReceiptsPage() {
   const [formDiscount, setFormDiscount] = useState('')
   const [formPaymentMode, setFormPaymentMode] = useState<'all' | 'selected'>('all')
   const [formClosePeriod, setFormClosePeriod] = useState(false)
+  const [showNote, setShowNote] = useState(false)
   const [formFromDate, setFormFromDate] = useState<string>('')
   const [formToDate, setFormToDate] = useState<string>('')
   const [periodSummary, setPeriodSummary] = useState<{
@@ -336,6 +339,11 @@ export default function ReceiptsPage() {
   })
   const [summaryFromDate, setSummaryFromDate] = useState<string>('')
   const [summaryToDate, setSummaryToDate] = useState<string>('')
+
+  const setCachedFormPaidAt = useCallback((value: string) => {
+    paymentDateCache = value
+    setFormPaidAt(value)
+  }, [])
 
   const filteredSummaryLogs = useMemo(() => {
     if (!summaryFromDate || !summaryToDate) return summaryLogs
@@ -1250,6 +1258,7 @@ export default function ReceiptsPage() {
       setFormDiscount('')
       setFormPaidAt('')
       setFormClosePeriod(false)
+      setShowNote(false)
       setFormFromDate('')
       setFormToDate('')
       load()
@@ -1451,6 +1460,11 @@ export default function ReceiptsPage() {
           setFormHouseSelected(false)
           setFormHouseQuery('')
           setFormDiscount('')
+          setFormPaidAt('')
+          setFormClosePeriod(false)
+          setShowNote(false)
+          setFormFromDate('')
+          setFormToDate('')
         }
       }}>
         <DialogContent className="max-w-lg max-h-[90vh] max-sm:max-h-[95vh] overflow-y-auto">
@@ -1535,251 +1549,227 @@ export default function ReceiptsPage() {
 
             {formHouseSelected && (
               <>
-                <div className="grid grid-cols-2 gap-1 sm:gap-2 sm:grid-cols-4">
-                  <div className="space-y-0.5 sm:space-y-1">
-                    <p className="text-xs text-foreground">Area</p>
-                    <p className="break-words text-sm font-semibold text-foreground sm:text-base">
-                      {formArea || '—'}
-                    </p>
-                  </div>
-                  <div className="space-y-0.5 sm:space-y-1">
-                    <p className="text-xs text-foreground">Phone</p>
-                    <p className="break-words text-sm font-semibold text-foreground sm:text-base">
-                      {formPhone || '—'}
-                    </p>
-                  </div>
-                  <div className="col-span-2 space-y-0.5 sm:space-y-1 sm:col-span-2 flex items-end justify-end">
-                    {lastSelectedBill && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setViewBillDialogOpen(true)}
-                        className="h-8 text-xs gap-1"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        View Last Bill
-                      </Button>
-                    )}
-                  </div>
-                  <div className="col-span-2 space-y-0.5 sm:space-y-1 sm:col-span-2">
-                    <Label htmlFor="receipt-amount">Amount (₹) <span className="text-destructive">*</span></Label>
+                <Card size="sm" className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30">
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Area & Phone</p>
+                        <p className="text-sm font-semibold">{formArea || '—'}{formPhone ? ` · ${formPhone}` : ''}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {lastSelectedBill && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setViewBillDialogOpen(true)}
+                            className="h-7 text-xs gap-1"
+                          >
+                            <Eye className="h-3 w-3" /> Last Bill
+                          </Button>
+                        )}
+                        <div className="text-right">
+                          <p className="text-xs text-muted-foreground">Pending</p>
+                          <p className="text-sm font-bold text-amber-600 dark:text-amber-400">
+                            ₹{amountHelperAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <div className="space-y-1">
+                    <Label htmlFor="receipt-amount" className="text-xs">Amount (₹) <span className="text-destructive">*</span></Label>
                     <div className="relative">
                       <Input
                         id="receipt-amount"
                         type="number"
                         min="0.01"
                         step="0.01"
-                        placeholder="e.g. 1500"
+                        placeholder="0"
                         value={formAmount}
                         onChange={e => setFormAmount(e.target.value)}
-                        className="pr-11"
                       />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="absolute right-1 top-1/2 -translate-y-1/2"
-                        aria-label={amountHelperLabel}
-                        title={amountHelperLabel}
-                        onClick={() => setFormAmount(String(amountHelperAmount))}
-                      >
-                        <History className="h-4 w-4" />
-                      </Button>
                     </div>
                   </div>
-                </div>
-
-                {/* Discount Section */}
-                <div className="grid grid-cols-2 gap-1 sm:gap-2 sm:grid-cols-4">
-                  <div className="space-y-0.5 sm:space-y-1">
-                    <Label htmlFor="receipt-discount" className="text-xs sm:text-sm">Discount (₹) <span className="text-muted-foreground text-[10px] sm:text-xs">(Optional)</span></Label>
-                    <Input id="receipt-discount" type="number" min="0" step="0.01" placeholder="e.g. 50" value={formDiscount}
+                  <div className="space-y-1">
+                    <Label htmlFor="receipt-discount" className="text-xs">Discount (₹)</Label>
+                    <Input id="receipt-discount" type="number" min="0" step="0.01" placeholder="0" value={formDiscount}
                       onChange={e => setFormDiscount(e.target.value)} />
                   </div>
-                  <div className="col-span-1 space-y-0.5 sm:space-y-1 sm:col-span-3">
-                    <div className="pt-1 sm:pl-4">
-                      <p className="text-xs sm:text-sm text-foreground">Total Settlement (₹)</p>
-                      <p className="text-lg sm:text-2xl font-bold text-green-600 dark:text-green-400">
-                        ₹{((parseFloat(formAmount) || 0) + (parseFloat(formDiscount) || 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                      </p>
-                    </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground shrink-0"
+                    title={amountHelperLabel}
+                    onClick={() => setFormAmount(String(amountHelperAmount))}
+                  >
+                    <History className="h-3.5 w-3.5" /> Fill
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between rounded-md bg-muted/30 px-3 py-2">
+                  <span className="text-xs text-muted-foreground">Total Settlement</span>
+                  <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                    ₹{((parseFloat(formAmount) || 0) + (parseFloat(formDiscount) || 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="receipt-date" className="text-xs">Payment Date</Label>
+                  <div className="relative flex gap-1">
+                    <Input id="receipt-date" type="date"
+                      value={formPaidAt}
+                      onChange={e => setCachedFormPaidAt(e.target.value)}
+                      className="flex-1" />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 px-2 shrink-0"
+                      onClick={() => setCachedFormPaidAt(getLocalDateKey())}
+                      title="Set to today"
+                    >
+                      <Calendar className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
 
-                {/* Payment Date */}
-                <div className="space-y-0.5 sm:space-y-1">
-                  <Label htmlFor="receipt-date" className="text-xs sm:text-sm">Payment Date <span className="text-muted-foreground text-[10px] sm:text-xs">(Optional)</span></Label>
-                  <Input id="receipt-date" type="date"
-                    value={formPaidAt}
-                    onChange={e => setFormPaidAt(e.target.value)} />
-                </div>
-
-                {/* Bills Selection */}
                 {loadingBills ? (
                   <div className="space-y-2">
-                    {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
+                    {[...Array(2)].map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
                   </div>
                 ) : formBills.length > 0 ? (
-                  <div className="space-y-1 border border-border rounded-lg p-2 bg-muted/30">
-                    <div className="flex items-center justify-between mb-1">
-                      <Label className="text-xs sm:text-sm font-semibold">Bills to Pay</Label>
-                      <Select value={formPaymentMode} onValueChange={(v: "all" | "selected") => {
-                        setFormPaymentMode(v)
-                        if (v === 'all') {
-                          setFormSelectedBillIds(formBills.map(b => b.id))
-                          const total = formBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
-                          setFormAmount(String(total))
-                        }
-                      }}>
-                        <SelectTrigger className="w-36">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Bills</SelectItem>
-                          <SelectItem value="selected">Selected</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <details open className="rounded-lg border border-border overflow-hidden">
+                    <summary className="flex items-center justify-between px-3 py-2 bg-muted/30 cursor-pointer select-none text-xs font-semibold">
+                      <span>Bills to Pay ({formSelectedBillIds.length}/{formBills.length})</span>
+                      <ChevronDown className="h-3.5 w-3.5 transition-transform open:rotate-180" />
+                    </summary>
+                    <div className="p-2 space-y-1 border-t border-border">
+                      <div className="flex justify-end mb-1">
+                        <Select value={formPaymentMode} onValueChange={(v: "all" | "selected") => {
+                          setFormPaymentMode(v)
+                          if (v === 'all') {
+                            setFormSelectedBillIds(formBills.map(b => b.id))
+                            const total = formBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
+                            setFormAmount(String(total))
+                          }
+                        }}>
+                          <SelectTrigger className="w-28 h-7 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Bills</SelectItem>
+                            <SelectItem value="selected">Selected</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                    <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                      {formBills.map(bill => {
-                        const daysInMonth = new Date(bill.year, bill.month, 0).getDate()
-                        const calculatedDateRange = `1 - ${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
-                        const actualDateRange = bill.fromDate && bill.toDate
-                          ? `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
-                          : calculatedDateRange
-                        return (
-                          <div key={bill.id} className={`flex items-center gap-1 p-1.5 rounded border text-xs ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
-                            {formPaymentMode === 'selected' && (
-                              <Checkbox
-                                checked={formSelectedBillIds.includes(bill.id)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setFormSelectedBillIds([...formSelectedBillIds, bill.id])
-                                  } else {
-                                    setFormSelectedBillIds(formSelectedBillIds.filter(id => id !== bill.id))
-                                  }
-                                  // Update amount based on selected bills
-                                  const selected = formPaymentMode === 'selected'
-                                    ? (checked ? [...formSelectedBillIds, bill.id] : formSelectedBillIds.filter(id => id !== bill.id))
-                                    : formSelectedBillIds
-                                  const total = formBills
-                                    .filter(b => selected.includes(b.id))
-                                    .reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
-                                  setFormAmount(String(total))
-                                }}
-                              />
-                            )}
-                            <div className="flex-1 text-xs">
-                              <div className="font-medium">{actualDateRange}</div>
-                              <div className="text-muted-foreground">₹{Number(bill.totalAmount).toLocaleString('en-IN')}</div>
-                            </div>
-                            <div className={`text-right font-semibold text-xs ${bill.isClosed ? 'text-emerald-600' : 'text-amber-600'}`}>
-                              {bill.isClosed ? (
-                                <div className="flex items-center gap-1"><Check className="h-3 w-3" /> Closed</div>
-                              ) : (
-                                <div>Pending: ₹{(Number(bill.totalAmount ?? 0) + Number(bill.previousBalance ?? 0)).toLocaleString('en-IN')}</div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                        {formBills.map(bill => {
+                          const daysInMonth = new Date(bill.year, bill.month, 0).getDate()
+                          const calculatedDateRange = `1-${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
+                          const actualDateRange = bill.fromDate && bill.toDate
+                            ? `${new Date(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${new Date(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
+                            : calculatedDateRange
+                          return (
+                            <div key={bill.id} className={`flex items-center gap-1.5 p-1.5 rounded border text-xs ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
+                              {formPaymentMode === 'selected' && (
+                                <Checkbox
+                                  checked={formSelectedBillIds.includes(bill.id)}
+                                  onCheckedChange={(checked) => {
+                                    if (checked) {
+                                      setFormSelectedBillIds([...formSelectedBillIds, bill.id])
+                                    } else {
+                                      setFormSelectedBillIds(formSelectedBillIds.filter(id => id !== bill.id))
+                                    }
+                                    const selected = checked ? [...formSelectedBillIds, bill.id] : formSelectedBillIds.filter(id => id !== bill.id)
+                                    const total = formBills
+                                      .filter(b => selected.includes(b.id))
+                                      .reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
+                                    setFormAmount(String(total))
+                                  }}
+                                />
                               )}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium truncate">{actualDateRange}</div>
+                              </div>
+                              <div className={`text-right font-semibold text-[11px] ${bill.isClosed ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                {bill.isClosed ? 'Closed' : `₹${(Number(bill.totalAmount ?? 0) + Number(bill.previousBalance ?? 0)).toLocaleString('en-IN')}`}
+                              </div>
                             </div>
-                          </div>
-                        )
-                      })}
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  </details>
                 ) : (
-                  <div className="text-center py-2 text-xs text-muted-foreground">
-                    No bills found for this house
+                  <p className="text-xs text-muted-foreground text-center py-1">No pending bills</p>
+                )}
+
+                <details className="rounded-lg border border-border overflow-hidden">
+                  <summary className="flex items-center justify-between px-3 py-2 bg-muted/30 cursor-pointer select-none text-xs font-semibold">
+                    <span>Advanced: Close Period</span>
+                    <ChevronDown className="h-3.5 w-3.5 transition-transform open:rotate-180" />
+                  </summary>
+                  <div className="p-2 space-y-2 border-t border-border">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">From Date</Label>
+                        <Input type="date" value={formFromDate} onChange={(e) => setFormFromDate(e.target.value)} className="h-8 text-xs" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Upto Date</Label>
+                        <Input type="date" value={formToDate} onChange={(e) => setFormToDate(e.target.value)} className="h-8 text-xs" />
+                      </div>
+                    </div>
+                    {formFromDate && formToDate && (
+                      <div className="flex items-center gap-1.5">
+                        <Checkbox checked={formClosePeriod} onCheckedChange={(v) => setFormClosePeriod(Boolean(v))} />
+                        <Label className="text-xs">Mark deliveries as closed for this period</Label>
+                      </div>
+                    )}
+                    {periodSummary && !periodSummary.loading && (
+                      <div className="rounded border border-border bg-muted/30 p-2 text-xs space-y-1">
+                        {periodSummary.isAlreadyClosed && (
+                          <p className="text-destructive font-medium">{periodSummary.alreadyClosedMessage ?? 'Period already closed.'}</p>
+                        )}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div><span className="text-muted-foreground">Prev</span> <span className="font-bold">₹{periodSummary.previousBalance.toLocaleString('en-IN')}</span></div>
+                          <div><span className="text-muted-foreground">Period</span> <span className="font-bold">₹{periodSummary.total.toLocaleString('en-IN')}</span></div>
+                          <div><span className="text-muted-foreground">Current</span> <span className="font-bold text-emerald-600">₹{periodSummary.currentBalance.toLocaleString('en-IN')}</span></div>
+                        </div>
+                      </div>
+                    )}
+                    {periodDeliveryLogs.length > 0 && (
+                      <Button variant="outline" size="sm" className="w-full text-xs h-7" onClick={() => setShowDeliveryLogsModal(true)}>
+                        View {periodDeliveryLogs.length} Delivery Logs
+                      </Button>
+                    )}
+                  </div>
+                </details>
+
+                {!showNote ? (
+                  <Button type="button" variant="ghost" size="sm" className="w-full text-xs text-muted-foreground h-7" onClick={() => setShowNote(true)}>
+                    + Add Note
+                  </Button>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="receipt-note" className="text-xs">Note</Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-5 px-1 text-[10px] text-muted-foreground" onClick={() => { setShowNote(false); setFormNote('') }}>
+                        Remove
+                      </Button>
+                    </div>
+                    <Textarea id="receipt-note" placeholder="Optional note" value={formNote}
+                      onChange={e => setFormNote(e.target.value)} rows={1} className="min-h-8" />
                   </div>
                 )}
               </>
             )}
-
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <Checkbox checked={formClosePeriod} onCheckedChange={(v) => setFormClosePeriod(Boolean(v))} />
-                <Label className="text-xs sm:text-sm">Close specific period (mark deliveries as paid)</Label>
-              </div>
-              {formClosePeriod && (
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-1 gap-1.5 sm:gap-2 sm:grid-cols-2">
-                    <div className="space-y-0.5 sm:space-y-1">
-                      <Label className="text-xs sm:text-sm">From Date</Label>
-                      <Input type="date" value={formFromDate} onChange={(e) => setFormFromDate(e.target.value)} />
-                    </div>
-                    <div className="space-y-0.5 sm:space-y-1">
-                      <Label className="text-xs sm:text-sm">Upto Date</Label>
-                      <Input type="date" value={formToDate} onChange={(e) => setFormToDate(e.target.value)} />
-                    </div>
-                  </div>
-
-                  {/* Balance Summary for Period */}
-                  {periodSummary && !periodSummary.loading ? (
-                    <div className="rounded-lg border border-border bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 p-2 space-y-1">
-                      {periodSummary.isAlreadyClosed && (
-                        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs sm:text-sm text-destructive">
-                          {periodSummary.alreadyClosedMessage ?? 'This period is already closed.'}
-                        </div>
-                      )}
-                      <div className="grid grid-cols-1 gap-0.5 sm:gap-1 sm:grid-cols-3">
-                        <div className="space-y-0">
-                          <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Prev Balance</p>
-                          <p className="text-xs sm:text-sm font-bold text-blue-600 dark:text-blue-400">
-                            ₹{periodSummary.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                          </p>
-                        </div>
-                        <div className="space-y-0">
-                          <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Period Total</p>
-                          <p className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">
-                            ₹{periodSummary.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                          </p>
-                          <p className="text-[8px] sm:text-[10px] text-muted-foreground">{periodSummary.logCount} deliveries</p>
-                        </div>
-                        <div className="space-y-0">
-                          <p className="text-[8px] sm:text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Current Balance</p>
-                          <p className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                            ₹{periodSummary.currentBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : periodSummary?.loading ? (
-                    <div className="rounded-lg border border-border bg-muted/30 p-2">
-                      <div className="flex gap-2 items-center">
-                        <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
-                        <p className="text-[10px] sm:text-xs text-muted-foreground">Loading period summary...</p>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* Delivery Logs Button */}
-                  {periodDeliveryLogs.length > 0 ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full text-xs"
-                      onClick={() => setShowDeliveryLogsModal(true)}
-                    >
-                      View Delivery Logs ({periodDeliveryLogs.length})
-                    </Button>
-                  ) : loadingDeliveryLogs ? (
-                    <div className="rounded-lg border border-border bg-muted/30 p-2">
-                      <div className="flex gap-2 items-center justify-center">
-                        <div className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin" />
-                        <p className="text-[10px] sm:text-xs text-muted-foreground">Loading delivery logs...</p>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-            </div>
-
-            <div className="space-y-0.5 sm:space-y-1">
-              <Label htmlFor="receipt-note" className="text-xs sm:text-sm">Note (Optional)</Label>
-              <Textarea id="receipt-note" placeholder="e.g. Cash received on 1st April" value={formNote}
-                onChange={e => setFormNote(e.target.value)} rows={1} className="min-h-8 sm:min-h-10" />
-            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
@@ -2003,6 +1993,7 @@ export default function ReceiptsPage() {
                   </div>
                 )}
 
+                {!matchingBill && (
                 <div>
                   <h3 className="mb-3 text-sm font-semibold">Monthly Product Summary</h3>
                   <div className="rounded-xl border border-border bg-muted/30 p-4">
@@ -2105,6 +2096,7 @@ export default function ReceiptsPage() {
                     )}
                   </div>
                 </div>
+                )}
 
                 <div>
                   <h3 className="mb-3 text-sm font-semibold">Daily Deliveries</h3>

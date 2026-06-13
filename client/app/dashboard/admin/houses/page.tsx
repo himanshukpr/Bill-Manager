@@ -2583,6 +2583,7 @@ export default function HousesPage() {
                 )}
 
                 {/* Monthly Summary Grid */}
+                {!matchingBill && (
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-3">Monthly Product Summary</h3>
                   <div className="rounded-xl border border-border bg-muted/30 p-4">
@@ -2648,7 +2649,7 @@ export default function HousesPage() {
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryBalance?.previousBalance ?? 0)
+                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
                                         ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -2659,7 +2660,7 @@ export default function HousesPage() {
                                 <tr className="border-t-2 border-border bg-muted/50 font-bold">
                                   <td className="px-4 py-3 text-foreground">Grand Total</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryBalance?.previousBalance ?? 0)
+                                    const prevBal = Number(summaryBalance?.previousBalance ?? 0)
                                     const grandTotal = summaryTotals.grandTotal + prevBal
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-primary">
@@ -2691,6 +2692,7 @@ export default function HousesPage() {
                     )}
                   </div>
                 </div>
+                )}
 
                 {/* Daily View */}
                 <div>
