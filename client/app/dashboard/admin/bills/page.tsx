@@ -277,8 +277,9 @@ export default function BillsPage() {
   const [printMonth, setPrintMonth] = useState<string>(String(new Date().getMonth() + 1))
   const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
   const [pendingOpen, setPendingOpen] = useState(false)
-  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string }>>([])
+  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string; receiptedThisMonth: boolean; _sortKey: string }>>([])
   const [pendingLoading, setPendingLoading] = useState(false)
+  const [skipReceiptedThisMonth, setSkipReceiptedThisMonth] = useState(false)
   const [generateOpen, setGenerateOpen] = useState(false)
   const [viewBill, setViewBill] = useState<Bill | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
@@ -456,6 +457,7 @@ export default function BillsPage() {
   const handleOpenPending = useCallback(async () => {
     setPendingLoading(true)
     setPendingOpen(true)
+    setSkipReceiptedThisMonth(false)
     try {
       const [allHouses, allPayments] = await Promise.all([
         housesApi.list(),
@@ -463,11 +465,19 @@ export default function BillsPage() {
       ])
 
       const latestPaymentByHouse = new Map<number, { amount: number; date: string }>()
+      const receiptedThisMonthHouseIds = new Set<number>()
+      const now = new Date()
+      const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+      const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+
       for (const p of allPayments) {
         const houseId = p.balance?.house?.id
         if (houseId == null) continue
-        const existing = latestPaymentByHouse.get(houseId)
         const pDate = new Date(p.paidAt || p.createdAt)
+        if (pDate >= currentMonthStart && pDate < nextMonthStart) {
+          receiptedThisMonthHouseIds.add(houseId)
+        }
+        const existing = latestPaymentByHouse.get(houseId)
         if (!existing || pDate > new Date(existing.date)) {
           latestPaymentByHouse.set(houseId, {
             amount: Number(p.amount ?? 0),
@@ -477,20 +487,24 @@ export default function BillsPage() {
       }
 
       const data = allHouses
-        .filter(h => h.active && Number(h.balance?.previousBalance ?? 0) > 0)
+        .filter(h => h.active)
         .map(h => {
           const config = h.configs?.[0]
           const shift = config?.shift ?? ''
           const supplier = config?.supplier?.username ?? ''
+          const previousBalance = Number(h.balance?.previousBalance ?? 0)
+          const receiptedThisMonth = receiptedThisMonthHouseIds.has(h.id)
           return {
             houseNo: h.houseNo,
-            previousBalance: Number(h.balance?.previousBalance ?? 0),
+            previousBalance,
             latestPayment: latestPaymentByHouse.get(h.id) ?? null,
             shift,
             supplier,
+            receiptedThisMonth,
             _sortKey: `${shift === 'shop' ? '0' : shift === 'morning' ? '1' : '2'}_${supplier}_${h.houseNo.padStart(5, '0')}`,
           }
         })
+        .filter(d => d.previousBalance > 0 || d.receiptedThisMonth)
         .sort((a, b) => a._sortKey.localeCompare(b._sortKey))
 
       setPendingData(data)
@@ -502,8 +516,14 @@ export default function BillsPage() {
     }
   }, [])
 
+  const pendingDisplayData = useMemo(() => (
+    skipReceiptedThisMonth
+      ? pendingData.filter((d) => !d.receiptedThisMonth)
+      : pendingData
+  ), [pendingData, skipReceiptedThisMonth])
+
   const handleExportPendingPdf = useCallback(() => {
-    if (pendingData.length === 0) return
+    if (pendingDisplayData.length === 0) return
     const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
 
     doc.setFont('helvetica', 'bold')
@@ -517,7 +537,7 @@ export default function BillsPage() {
     autoTable(doc, {
       startY: 30,
       head: [['#', 'House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
-      body: pendingData.map((d, i) => [
+      body: pendingDisplayData.map((d, i) => [
         i + 1,
         `HN - ${d.houseNo}`,
         d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
@@ -548,7 +568,7 @@ export default function BillsPage() {
     }
 
     doc.save(`pending-houses-${new Date().toISOString().split('T')[0]}.pdf`)
-  }, [pendingData])
+  }, [pendingDisplayData])
 
   const handleExportBalancePdf = useCallback(async () => {
     if (exportingBalancePdf) return
@@ -1346,23 +1366,52 @@ export default function BillsPage() {
           <DialogHeader>
             <DialogTitle>Houses with Pending Balance</DialogTitle>
             <DialogDescription>
-              Houses that have a previous balance outstanding
+              Houses with previous balance or payment receipted this month
             </DialogDescription>
           </DialogHeader>
+          <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/20 p-3">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Skip receipted this month</p>
+                <p className="text-xs text-muted-foreground">
+                  {skipReceiptedThisMonth
+                    ? `Showing ${pendingDisplayData.length} of ${pendingData.length} houses`
+                    : `Showing ${pendingData.length} houses`}
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={skipReceiptedThisMonth}
+                onChange={(e) => setSkipReceiptedThisMonth(e.target.checked)}
+                className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+              />
+            </label>
+            {pendingData.some((d) => d.receiptedThisMonth) && (
+              <p className="text-xs text-muted-foreground">
+                {pendingData.filter((d) => d.receiptedThisMonth).length} house{pendingData.filter((d) => d.receiptedThisMonth).length > 1 ? 's' : ''} had payment receipted in {new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}.
+              </p>
+            )}
+          </div>
           {pendingLoading ? (
             <div className="flex items-center justify-center py-8 text-muted-foreground">
               <span className="text-sm">Loading...</span>
             </div>
-          ) : pendingData.length === 0 ? (
+          ) : pendingDisplayData.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
               <Check className="h-8 w-8" />
-              <p className="text-sm">No houses with pending balance</p>
+              <p className="text-sm">
+                {pendingData.length === 0
+                  ? 'No houses with pending balance'
+                  : skipReceiptedThisMonth
+                    ? 'All receipted houses are hidden'
+                    : 'No houses with pending balance'}
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto max-h-96">
               {(() => {
-                const groups = new Map<string, typeof pendingData>()
-                for (const d of pendingData) {
+                const groups = new Map<string, typeof pendingDisplayData>()
+                for (const d of pendingDisplayData) {
                   const key = d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : `Evening — ${d.supplier || 'No Supplier'}`
                   const group = groups.get(key) ?? []
                   group.push(d)
@@ -1385,7 +1434,16 @@ export default function BillsPage() {
                       <tbody>
                         {rows.map((d) => (
                           <tr key={d.houseNo} className="border-b border-border">
-                            <td className="px-4 py-2 font-medium text-foreground">{d.houseNo}</td>
+                            <td className="px-4 py-2 font-medium text-foreground">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span>{d.houseNo}</span>
+                                {d.receiptedThisMonth && (
+                                  <Badge variant="secondary" className="h-5 px-2 text-[10px]">
+                                    Receipted this month
+                                  </Badge>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-4 py-2 text-right text-foreground">
                               {d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                             </td>
@@ -1405,7 +1463,7 @@ export default function BillsPage() {
             </div>
           )}
           <DialogFooter className="gap-2">
-            {pendingData.length > 0 && (
+            {pendingDisplayData.length > 0 && (
               <Button variant="outline" onClick={handleExportPendingPdf} className="gap-2">
                 <Download className="h-4 w-4" /> Export PDF
               </Button>

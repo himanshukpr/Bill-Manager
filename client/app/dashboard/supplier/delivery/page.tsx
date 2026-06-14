@@ -11,6 +11,7 @@ import {
     Phone,
     Rows3,
     Plus,
+    Sparkles,
     Trash2,
     Map as MapIcon,
 } from 'lucide-react'
@@ -64,7 +65,8 @@ import {
     TableRow,
 } from '@/components/ui/table'
 import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
-import { getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, getAuthHeader, type SessionAuth } from '@/lib/auth'
+import { fetchApi as directFetch } from '@/lib/api-base'
 import { toast } from 'sonner'
 
 type DeliveryItemForm = {
@@ -1966,9 +1968,63 @@ const loadCurrentHouseLogs = async () => {
                             </div>
 
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                                <Button onClick={addItem} size="sm" className="text-xs">
-                                    <Plus className="mr-1 h-3 w-3" /> Add Item
-                                </Button>
+                                <div className="flex items-center gap-2">
+                                    <Button onClick={addItem} size="sm" className="text-xs">
+                                        <Plus className="mr-1 h-3 w-3" /> Add Item
+                                    </Button>
+                                    {!isCompleted && (
+                                        <Button
+                                            onClick={async () => {
+                                                if (!currentHouse || !selectedShift) return
+                                                try {
+                                                    const sevenDaysAgo = new Date()
+                                                    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+                                                    sevenDaysAgo.setHours(0, 0, 0, 0)
+                                                    const fromDate = sevenDaysAgo.toISOString()
+
+                                                    const res = await directFetch(
+                                                        `/delivery-logs?houseId=${currentHouse.id}&shift=${selectedShift}&fromDate=${fromDate}`,
+                                                        { headers: { 'Content-Type': 'application/json', ...getAuthHeader() } },
+                                                    )
+                                                    if (!res.ok) return
+                                                    const logs: DeliveryLog[] = await res.json()
+
+                                                    const freq = new Map<string, Map<number, number>>()
+                                                    for (const log of logs) {
+                                                        for (const item of log.items) {
+                                                            const product = String(item.milkType ?? '').trim()
+                                                            if (!product) continue
+                                                            const qty = Number(item.qty)
+                                                            if (!qty || qty <= 0) continue
+                                                            const qm = freq.get(product) ?? new Map()
+                                                            qm.set(qty, (qm.get(qty) ?? 0) + 1)
+                                                            freq.set(product, qm)
+                                                        }
+                                                    }
+
+                                                    const recs: Array<{ milkType: string; qty: number }> = []
+                                                    for (const [product, qm] of freq) {
+                                                        const best = Array.from(qm.entries()).sort((a, b) => b[1] - a[1])[0]
+                                                        if (best) recs.push({ milkType: product, qty: best[0] })
+                                                    }
+
+                                                    if (recs.length === 0) return
+
+                                                    setDeliveryItems(recs.map((r) => ({ milkType: r.milkType, qty: String(r.qty) })))
+                                                    setHasUnsavedChanges(true)
+                                                    setSaveStatus('idle')
+                                                } catch {
+                                                    // non-critical
+                                                }
+                                            }}
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-xs"
+                                        >
+                                            <Sparkles className="mr-1 h-3 w-3" /> Recommend
+                                        </Button>
+                                    )}
+                                </div>
                                 <div className="text-sm font-bold">
                                     Total: ₹{currentDeliveryTotal.toLocaleString('en-IN')}
                                 </div>

@@ -38,6 +38,7 @@ export default function UsersPage() {
 
   const [newPassword, setNewPassword] = useState('')
   const [addingSaving, setAddSaving] = useState(false)
+  const [roleChangingUuid, setRoleChangingUuid] = useState<string | null>(null)
   const [privilegeSaving, setPrivilegeSaving] = useState(false)
   const [permEditItems, setPermEditItems] = useState(false)
   const [permEditHouses, setPermEditHouses] = useState(false)
@@ -72,6 +73,24 @@ export default function UsersPage() {
     }
   }
 
+  async function handleRoleChange(u: User, role: User['role']) {
+    if (role === u.role) return
+    if (getSessionAuth()?.uuid === u.uuid) {
+      toast.error('You cannot change your own role')
+      return
+    }
+    setRoleChangingUuid(u.uuid)
+    try {
+      await usersApi.changeRole(u.uuid, role)
+      toast.success(`${u.username} role changed to ${role}`)
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRoleChangingUuid(null)
+    }
+  }
+
   async function handleAddUser() {
     if (!newUsername || !newPassword) {
       toast.error('Username and password are required')
@@ -99,6 +118,10 @@ export default function UsersPage() {
 
   async function handleChangeRole() {
     if (!selectedUser) return
+    if (getSessionAuth()?.uuid === selectedUser.uuid) {
+      toast.error('You cannot change your own role')
+      return
+    }
     setPrivilegeSaving(true)
     try {
       await Promise.all([
@@ -186,6 +209,7 @@ export default function UsersPage() {
             title="All Users"
             users={filtered}
             onToggleVerify={toggleVerify}
+            onRoleChange={handleRoleChange}
             onChangeRole={(u) => {
               setSelectedUser(u)
               setNewRole(u.role as 'admin' | 'supplier')
@@ -324,14 +348,17 @@ export default function UsersPage() {
 }
 
 function UserSection({
-  title, users, onToggleVerify, onChangeRole, onDelete, onImpersonate,
+  title, users, onToggleVerify, onRoleChange, onChangeRole, onDelete, onImpersonate,
+  roleChangingUuid,
 }: {
   title: string
   users: User[]
   onToggleVerify: (u: User) => void
+  onRoleChange?: (u: User, role: User['role']) => void
   onChangeRole: (u: User) => void
   onDelete: (uuid: string) => void
   onImpersonate?: (u: User) => void
+  roleChangingUuid?: string | null
 }) {
   if (users.length === 0) return null
   return (
@@ -340,60 +367,69 @@ function UserSection({
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
         {users.map((u, idx) => (
           <div key={u.uuid}
-            className={`flex items-center gap-3 px-4 py-3 sm:py-3.5 ${idx !== 0 ? 'border-t border-border/60' : ''} hover:bg-muted/20 transition-colors`}>
+            className={`flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-5 sm:py-3.5 ${idx !== 0 ? 'border-t border-border/60' : ''} hover:bg-muted/20 transition-colors`}>
             {/* Avatar + Info */}
-            <div className="flex items-start sm:items-center gap-3 flex-1 min-w-0">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
+            <div className="flex items-start gap-3 flex-1 min-w-0 w-full sm:w-auto">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
                 {u.username[0].toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 min-w-0">
-                  <p className="font-semibold text-sm truncate max-w-[7rem] sm:max-w-none">{u.username}</p>
-                  <Badge className="text-xs shrink-0" variant={u.role === 'admin' ? 'default' : 'secondary'}>
-                    {u.role}
-                  </Badge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold text-sm truncate max-w-[12rem] sm:max-w-none">{u.username}</p>
+                  <Select
+                    value={u.role}
+                    onValueChange={(v) => onRoleChange?.(u, v as User['role'])}
+                    disabled={roleChangingUuid === u.uuid || getSessionAuth()?.uuid === u.uuid}
+                  >
+                    <SelectTrigger aria-label={`Role for ${u.username}`} className="h-8 w-28 text-xs rounded-full border-0 bg-primary/10 text-primary focus:ring-0 focus:ring-offset-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="supplier">Supplier</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Badge
                     variant={u.isVerified ? 'default' : 'secondary'}
                     className={`text-xs shrink-0 ${u.isVerified
-                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20'
                       : 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20'}`}>
                     {u.isVerified ? 'Verified' : 'Pending'}
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground truncate mt-1 sm:mt-0.5">{u.email}</p>
+                <p className="text-xs text-muted-foreground truncate mt-1.5">{u.email}</p>
               </div>
             </div>
-            {/* Date + Actions */}
-            <div className="flex items-center justify-end gap-2 ml-auto shrink-0">
+            {/* Actions */}
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <p className="hidden sm:block text-xs text-muted-foreground shrink-0">
                 {new Date(u.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               </p>
-              <Button variant="ghost" size="sm"
-                className={`flex-shrink-0 gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 whitespace-nowrap ${u.isVerified
+              <Button variant="ghost" size="sm" aria-label={u.isVerified ? 'Unverify user' : 'Verify user'}
+                className={`flex-shrink-0 h-9 w-9 sm:w-auto sm:px-3 sm:gap-1.5 text-xs ${u.isVerified
                   ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30'
-                  : 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'}`}
-                onClick={() => onToggleVerify(u)}>
-                {u.isVerified ? <ShieldOff className="h-3.5 w-3.5 shrink-0" /> : <ShieldCheck className="h-3.5 w-3.5 shrink-0" />}
+                  : 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'}`}>
+                {u.isVerified ? <ShieldOff className="h-4 w-4 shrink-0" /> : <ShieldCheck className="h-4 w-4 shrink-0" />}
                 <span className="hidden sm:inline">{u.isVerified ? 'Unverify' : 'Verify'}</span>
               </Button>
-              <Button variant="ghost" size="sm"
-                className="flex-shrink-0 gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/30 whitespace-nowrap"
+              <Button variant="ghost" size="sm" aria-label="Edit user privileges"
+                className="flex-shrink-0 h-9 w-9 sm:w-auto sm:px-3 sm:gap-1.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/30"
                 onClick={() => onChangeRole(u)}>
-                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <Lock className="h-4 w-4 shrink-0" />
                 <span className="hidden sm:inline">Privilege</span>
               </Button>
               {u.role === 'supplier' && u.isVerified && onImpersonate && (
-                <Button variant="ghost" size="sm"
-                  className="flex-shrink-0 gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950/30 whitespace-nowrap"
+                <Button variant="ghost" size="sm" aria-label={`Impersonate ${u.username}`}
+                  className="flex-shrink-0 h-9 w-9 sm:w-auto sm:px-3 sm:gap-1.5 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950/30"
                   onClick={() => onImpersonate(u)}>
-                  <SwitchCamera className="h-3.5 w-3.5 shrink-0" />
+                  <SwitchCamera className="h-4 w-4 shrink-0" />
                   <span className="hidden sm:inline">Switch</span>
                 </Button>
               )}
-              <Button variant="ghost" size="icon"
-                className="flex-shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8"
+              <Button variant="ghost" size="icon" aria-label="Delete user"
+                className="flex-shrink-0 h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => onDelete(u.uuid)}>
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-4 w-4" />
               </Button>
             </div>
           </div>
