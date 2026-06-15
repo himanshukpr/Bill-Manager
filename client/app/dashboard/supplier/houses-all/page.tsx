@@ -118,7 +118,7 @@ function getRateByProductName(rates: ProductRate[], productName: string): number
 }
 
 function getActiveProducts(rates: ProductRate[]): ProductRate[] {
-  return rates.filter((rate) => rate.isActive && Number(rate.rate) > 0).sort((left, right) => (left.name || '').localeCompare(right.name || ''))
+  return rates.filter((rate) => rate.isActive && Number(rate.rate) > 0).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.name || '').localeCompare(b.name || ''))
 }
 
 function getErrorMessage(error: unknown): string {

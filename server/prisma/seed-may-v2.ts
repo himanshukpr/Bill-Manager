@@ -105,12 +105,12 @@ async function main() {
 
   // ─── Product Rates ───────────────────────────────────
   const productRatesData = [
-    { name: 'Cow Milk', unit: 'L', rate: 55 },
-    { name: 'Buffalo Milk', unit: 'L', rate: 70 },
-    { name: 'Curd', unit: 'Kg', rate: 40 },
-    { name: 'Buttermilk', unit: 'L', rate: 30 },
-    { name: 'Paneer', unit: 'Kg', rate: 200 },
-    { name: 'Ghee', unit: 'L', rate: 500 },
+    { name: 'Cow Milk', unit: 'L', rate: 55, sortOrder: 0 },
+    { name: 'Buffalo Milk', unit: 'L', rate: 70, sortOrder: 1 },
+    { name: 'Curd', unit: 'Kg', rate: 40, sortOrder: 2 },
+    { name: 'Buttermilk', unit: 'L', rate: 30, sortOrder: 3 },
+    { name: 'Paneer', unit: 'Kg', rate: 200, sortOrder: 4 },
+    { name: 'Ghee', unit: 'L', rate: 500, sortOrder: 5 },
   ];
 
   for (const pr of productRatesData) {

@@ -41,6 +41,22 @@ Access via SSH:
 mysql -u admin_billmanager -p'RNhM44VeME24YSGzZqPj' admin_billmanager
 ```
 
+## All Sites
+
+| Site | URL | Frontend | Backend | Database |
+|------|-----|----------|---------|----------|
+| **Original** | http://31.97.235.218:8080/ | port 3000 | port 5000 | `admin_billmanager` |
+| **GNDairy2** | http://31.97.235.218:8081/ | port 3001 | port 5001 | `gndairy2` |
+| **Doddhi** | http://31.97.235.218:8082/ | port 3002 | port 5002 | `doddhi` |
+
+### GNDairy2
+- Frontend: `/home/admin/domains/gndairy2/public_html/`
+- Backend: `/home/admin/gndairy2-server/`
+
+### Doddhi
+- Frontend: `/home/admin/domains/doddhi/public_html/`
+- Backend: `/home/admin/doddhi-server/`
+
 ## Bill Manager Locations
 
 - **Client**: `/root/bill-manager-client`

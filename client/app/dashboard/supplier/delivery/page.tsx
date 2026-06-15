@@ -75,10 +75,10 @@ type DeliveryItemForm = {
 }
 
 
-const emptyDeliveryItem: DeliveryItemForm = {
-    milkType: 'Buffalo Milk',
-    qty: '',
-}
+const defaultDeliveryItems: DeliveryItemForm[] = [
+    { milkType: 'Buffalo Milk', qty: '' },
+    { milkType: 'Cow Milk', qty: '' },
+]
 
 const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
 
@@ -263,7 +263,7 @@ export default function DeliveryPage() {
     const [loadedHouseLogIds, setLoadedHouseLogIds] = useState<Set<number>>(new Set())
     const [logsLoading, setLogsLoading] = useState(false)
 
-    const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([{ ...emptyDeliveryItem }])
+    const [deliveryItems, setDeliveryItems] = useState<DeliveryItemForm[]>([...defaultDeliveryItems])
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
     const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
@@ -663,7 +663,7 @@ const loadSelectedDateDeliveredSummary = useCallback(async () => {
     }, [selectedDateKey, selectedShift, loadSelectedDateDeliveredSummary])
 
     const buildDeliveryItemsFromLogs = useCallback((logs: DeliveryLog[]): DeliveryItemForm[] => {
-        if (logs.length === 0) return [{ ...emptyDeliveryItem }]
+        if (logs.length === 0) return [...defaultDeliveryItems]
 
         const grouped = new Map<string, number>()
 
@@ -680,7 +680,7 @@ const loadSelectedDateDeliveredSummary = useCallback(async () => {
             qty: String(qty),
         }))
 
-        return nextItems.length > 0 ? nextItems : [{ ...emptyDeliveryItem }]
+        return nextItems.length > 0 ? nextItems : [...defaultDeliveryItems]
     }, [])
 
     const preloadHouseLogs = useCallback(async (houseId: number) => {
@@ -797,7 +797,7 @@ const loadCurrentHouseLogs = async () => {
             delete next[currentHouse.id]
             return next
         })
-        setDeliveryItems([{ ...emptyDeliveryItem }])
+        setDeliveryItems([...defaultDeliveryItems])
 
         const deletedProducts = new Map<string, number>()
         for (const log of toDelete) {
@@ -1053,7 +1053,7 @@ const loadCurrentHouseLogs = async () => {
     }
 
     const resetForm = () => {
-        setDeliveryItems([{ ...emptyDeliveryItem }])
+        setDeliveryItems([...defaultDeliveryItems])
         setHasUnsavedChanges(false)
         setSaveStatus('idle')
     }
@@ -1091,7 +1091,7 @@ const loadCurrentHouseLogs = async () => {
     }
 
     const addItem = () => {
-        setDeliveryItems((prev) => [...prev, { ...emptyDeliveryItem }])
+        setDeliveryItems((prev) => [...prev, { milkType: 'Buffalo Milk', qty: '' }])
         setHasUnsavedChanges(true)
         setSaveStatus('idle')
     }
@@ -1216,7 +1216,7 @@ const loadCurrentHouseLogs = async () => {
         }
 
         setDeliveryItems((prev) => {
-            if (prev.length <= 1) return [{ ...emptyDeliveryItem }]
+            if (prev.length <= 1) return [...defaultDeliveryItems]
             return prev.filter((_, i) => i !== idx)
         })
         setSwipedDeliveryItem({ index: null, offset: 0 })

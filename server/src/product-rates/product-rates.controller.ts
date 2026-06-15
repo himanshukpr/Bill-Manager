@@ -12,6 +12,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 import {
   CreateProductRateDto,
+  ReorderProductRatesDto,
   UpdateProductRateDto,
 } from './dto/product-rate.dto';
 import { ProductRatesService } from './product-rates.service';
@@ -29,6 +30,11 @@ export class ProductRatesController {
   @Post()
   create(@Body() dto: CreateProductRateDto) {
     return this.service.create(dto);
+  }
+
+  @Post('reorder')
+  reorder(@Body() dto: ReorderProductRatesDto) {
+    return this.service.reorder(dto.ids);
   }
 
   @Patch(':id')

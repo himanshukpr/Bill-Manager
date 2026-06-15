@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Edit3, Plus, Search, Tag, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Edit3, Plus, Search, Tag, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -50,6 +50,7 @@ export default function RatesPage() {
   const [rates, setRates] = useState<ProductRate[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [reorderSaving, setReorderSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   const [search, setSearch] = useState('')
@@ -145,7 +146,7 @@ export default function RatesPage() {
           rate: parsedRate,
           isActive: form.isActive,
         })
-        setRates((prev) => [createdRate, ...prev])
+        setRates((prev) => [...prev, createdRate])
         toast.success('Rate created successfully')
       }
 
@@ -175,6 +176,36 @@ export default function RatesPage() {
       setDeleting(false)
     }
   }
+
+  async function moveRate(rateId: number, direction: -1 | 1) {
+    const fromIndex = filteredRates.findIndex((rate) => rate.id === rateId)
+    const toIndex = fromIndex + direction
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= filteredRates.length) return
+
+    const nextRates = [...rates]
+    const sourceIndex = nextRates.findIndex((rate) => rate.id === rateId)
+    const targetId = filteredRates[toIndex].id
+    const targetIndex = nextRates.findIndex((rate) => rate.id === targetId)
+    if (sourceIndex < 0 || targetIndex < 0) return
+
+    const [moved] = nextRates.splice(sourceIndex, 1)
+    nextRates.splice(targetIndex, 0, moved)
+
+    setRates(nextRates)
+    setReorderSaving(true)
+    try {
+      const reordered = await productRatesApi.reorder(nextRates.map((rate) => rate.id))
+      setRates(reordered)
+      toast.success('Product order updated')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update product order')
+      await loadRates()
+    } finally {
+      setReorderSaving(false)
+    }
+  }
+
+  const canReorder = !search.trim()
 
   return (
     <div className="space-y-6">
@@ -214,6 +245,9 @@ export default function RatesPage() {
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
+        <p className="text-xs text-muted-foreground">
+          Use the arrow buttons to reorder products. Clear search to reorder the full list.
+        </p>
 
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           {loading ? (
@@ -234,6 +268,7 @@ export default function RatesPage() {
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Product</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Order</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Unit</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Rate</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Status</th>
@@ -250,6 +285,30 @@ export default function RatesPage() {
                     >
                       <td className="px-4 py-3">
                         <p className="font-semibold">{rate.name}</p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={!canReorder || reorderSaving || idx === 0}
+                            onClick={() => moveRate(rate.id, -1)}
+                            className="h-8 w-8"
+                            aria-label="Move up"
+                          >
+                            <ArrowUp className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={!canReorder || reorderSaving || idx === filteredRates.length - 1}
+                            onClick={() => moveRate(rate.id, 1)}
+                            className="h-8 w-8"
+                            aria-label="Move down"
+                          >
+                            <ArrowDown className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{rate.unit}</td>
                       <td className="px-4 py-3 font-semibold text-primary">

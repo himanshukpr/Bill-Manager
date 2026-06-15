@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -27,7 +28,7 @@ export class ProductRatesService {
 
     return this.prisma.productRate.findMany({
       where: { isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
 
@@ -40,12 +41,17 @@ export class ProductRatesService {
       throw new ConflictException('Product already exists');
     }
 
+    const maxSort = await this.prisma.productRate.aggregate({
+      _max: { sortOrder: true },
+    });
+
     return this.prisma.productRate.create({
       data: {
         name: dto.name,
         unit: dto.unit?.trim() || 'L',
         rate: dto.rate,
         isActive: dto.isActive ?? true,
+        sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
       },
     });
   }
@@ -74,6 +80,32 @@ export class ProductRatesService {
         unit: dto.unit?.trim() || dto.unit,
       },
     });
+  }
+
+  async reorder(ids: number[]) {
+    const uniqueIds = [...new Set(ids)];
+    const existingRates = await this.prisma.productRate.findMany({
+      select: { id: true },
+    });
+    const existingIds = new Set(existingRates.map((rate) => rate.id));
+
+    if (
+      uniqueIds.length !== existingIds.size ||
+      uniqueIds.some((id) => !existingIds.has(id))
+    ) {
+      throw new BadRequestException('Invalid product rate order');
+    }
+
+    await this.prisma.$transaction(
+      uniqueIds.map((id, index) =>
+        this.prisma.productRate.update({
+          where: { id },
+          data: { sortOrder: index },
+        }),
+      ),
+    );
+
+    return this.findAll();
   }
 
   async remove(id: number) {

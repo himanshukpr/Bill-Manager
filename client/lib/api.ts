@@ -552,6 +552,7 @@ export type ProductRate = {
   unit: string;
   rate: string;
   isActive: boolean;
+  sortOrder?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -1630,6 +1631,11 @@ export const productRatesApi = {
     data: Partial<{ name: string; unit: string; rate: number; isActive: boolean }>,
   ) => {
     const res = await apiPatch<ProductRate>(`/product-rates/${id}`, data);
+    if (isBrowser()) await invalidateCache('/product-rates');
+    return res;
+  },
+  reorder: async (ids: number[]) => {
+    const res = await apiPost<ProductRate[]>('/product-rates/reorder', { ids });
     if (isBrowser()) await invalidateCache('/product-rates');
     return res;
   },
