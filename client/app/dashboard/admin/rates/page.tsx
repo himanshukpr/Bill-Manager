@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Edit3, Plus, Search, Tag, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, Edit3, Plus, Search, Tag, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 import {
   productRatesApi,
@@ -207,6 +209,43 @@ export default function RatesPage() {
 
   const canReorder = !search.trim()
 
+  function handleExportPdf() {
+    const doc = new jsPDF()
+    const pageWidth = doc.internal.pageSize.getWidth()
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(16)
+    doc.text('Product Rate List', pageWidth / 2, 20, { align: 'center' })
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, 28, { align: 'center' })
+
+    const activeRates = rates.filter((r) => r.isActive)
+    const inactiveRates = rates.filter((r) => !r.isActive)
+
+    const rows = [...activeRates, ...inactiveRates].map((rate) => [
+      rate.name,
+      `${Number(rate.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}/${rate.unit}`,
+    ])
+
+    autoTable(doc, {
+      startY: 35,
+      head: [['Product', 'Rate']],
+      body: rows,
+      styles: { fontSize: 11, cellPadding: 5 },
+      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { cellWidth: 80 },
+        1: { cellWidth: 50, halign: 'right' },
+      },
+      margin: { left: 30, right: 30 },
+    })
+
+    doc.save('product-rates.pdf')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -219,9 +258,14 @@ export default function RatesPage() {
             Manage product rates used across delivery and billing workflows
           </p>
         </div>
-        <Button onClick={openCreate} className="gap-2 self-start sm:self-auto">
-          <Plus className="h-4 w-4" /> Add Rate
-        </Button>
+        <div className="flex gap-2 self-start sm:self-auto">
+          <Button variant="outline" onClick={handleExportPdf} className="gap-2">
+            <Download className="h-4 w-4" /> PDF
+          </Button>
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="h-4 w-4" /> Add Rate
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-border bg-gradient-to-br from-sky-500/10 to-cyan-500/10 p-5">

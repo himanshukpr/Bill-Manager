@@ -1905,7 +1905,7 @@ const loadCurrentHouseLogs = async () => {
                                                             >
                                                                 <div>
                                                                     <Select
-                                                                        value={item.milkType}
+                                                                        value={productRateOptions.find(o => o.value.toLowerCase() === item.milkType.toLowerCase())?.value ?? item.milkType}
                                                                         onValueChange={(val) =>
                                                                             updateDeliveryItem(idx, 'milkType', val)
                                                                         }

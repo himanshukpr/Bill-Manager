@@ -38,6 +38,7 @@ const PDF_ROWS = 4
 const PDF_CARD_GAP_X = 4
 const PDF_CARD_GAP_Y = 4
 const PDF_TABLE_ROWS = 4
+const BILLS_PER_PAGE = 25
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
@@ -112,8 +113,7 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function billItemProduct(name: string): 'buffalo' | 'cow' | 'other' {
@@ -277,7 +277,7 @@ export default function BillsPage() {
   const [printMonth, setPrintMonth] = useState<string>(String(new Date().getMonth() + 1))
   const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
   const [pendingOpen, setPendingOpen] = useState(false)
-  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string; receiptedThisMonth: boolean; _sortKey: string }>>([])
+  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string; receiptedThisMonth: boolean; position: number }>>([])
   const [pendingLoading, setPendingLoading] = useState(false)
   const [skipReceiptedThisMonth, setSkipReceiptedThisMonth] = useState(false)
   const [generateOpen, setGenerateOpen] = useState(false)
@@ -285,10 +285,15 @@ export default function BillsPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [generateMode, setGenerateMode] = useState<'single' | 'all'>('single')
+  const [visibleBillCount, setVisibleBillCount] = useState(BILLS_PER_PAGE)
+  const loadMoreBillsSentinelRef = useRef<HTMLTableRowElement | null>(null)
+  const billLoadMoreLockRef = useRef(false)
 
   // Generate form
   const [genHouseId, setGenHouseId] = useState('')
   const [genHouseSearch, setGenHouseSearch] = useState('')
+  const [genMonth, setGenMonth] = useState<string>(String(new Date().getMonth() + 1))
+  const [genYear, setGenYear] = useState<string>(String(CURRENT_YEAR))
   const [genFromDate, setGenFromDate] = useState(() => getMonthStart())
   const [genToDate, setGenToDate] = useState(() => formatLocalDate(new Date()))
   const [genNote, setGenNote] = useState('')
@@ -355,6 +360,14 @@ export default function BillsPage() {
     }
     fetchPreview()
   }, [genHouseId, genFromDate, genToDate, generateMode])
+
+  useEffect(() => {
+    const month = parseInt(genMonth) || new Date().getMonth() + 1
+    const year = parseInt(genYear) || CURRENT_YEAR
+    const range = getMonthRange(month, year)
+    setGenFromDate(range.fromDate)
+    setGenToDate(range.toDate)
+  }, [genMonth, genYear])
 
   const filteredGenHouses = useMemo(() => {
     const q = genHouseSearch.trim().toLowerCase()
@@ -492,6 +505,7 @@ export default function BillsPage() {
           const config = h.configs?.[0]
           const shift = config?.shift ?? ''
           const supplier = config?.supplier?.username ?? ''
+          const position = config?.position ?? 999
           const previousBalance = Number(h.balance?.previousBalance ?? 0)
           const receiptedThisMonth = receiptedThisMonthHouseIds.has(h.id)
           return {
@@ -501,11 +515,29 @@ export default function BillsPage() {
             shift,
             supplier,
             receiptedThisMonth,
-            _sortKey: `${shift === 'shop' ? '0' : shift === 'morning' ? '1' : '2'}_${supplier}_${h.houseNo.padStart(5, '0')}`,
+            position,
           }
         })
         .filter(d => d.previousBalance > 0 || d.receiptedThisMonth)
-        .sort((a, b) => a._sortKey.localeCompare(b._sortKey))
+        .sort((a, b) => {
+          // Shop first
+          if (a.shift === 'shop' && b.shift !== 'shop') return -1
+          if (a.shift !== 'shop' && b.shift === 'shop') return 1
+          // Then evening
+          if (a.shift === 'evening' && b.shift === 'morning') return -1
+          if (a.shift === 'morning' && b.shift === 'evening') return 1
+          // Same shift
+          if (a.shift === 'evening' && b.shift === 'evening') {
+            if (a.position !== b.position) return a.position - b.position
+            return a.houseNo.localeCompare(b.houseNo, undefined, { numeric: true, sensitivity: 'base' })
+          }
+          if (a.shift === 'morning' && b.shift === 'morning') {
+            if (a.supplier !== b.supplier) return a.supplier.localeCompare(b.supplier)
+            if (a.position !== b.position) return a.position - b.position
+            return a.houseNo.localeCompare(b.houseNo, undefined, { numeric: true, sensitivity: 'base' })
+          }
+          return 0
+        })
 
       setPendingData(data)
     } catch {
@@ -776,35 +808,6 @@ export default function BillsPage() {
     }
   }, [exportingBalancePdf, printBills, printMonth, printYear])
 
-  // When a house is selected for generation, default the from date to last bill.generatedDate + 1 day
-  useEffect(() => {
-    if (!genHouseId) return
-    let cancelled = false
-      ; (async () => {
-        try {
-          const houseId = parseInt(genHouseId)
-          const billsForHouse = await billsApi.list({ houseId })
-          if (cancelled) return
-          if (billsForHouse && billsForHouse.length > 0) {
-            const latest = billsForHouse
-              .map(b => new Date(b.generatedDate))
-              .filter(d => !Number.isNaN(d.getTime()))
-              .sort((a, b) => b.getTime() - a.getTime())[0]
-            if (latest) {
-              const next = new Date(latest)
-              next.setDate(next.getDate() + 1)
-              setGenFromDate(formatLocalDate(next))
-              return
-            }
-          }
-          setGenFromDate(getMonthStart())
-        } catch {
-          setGenFromDate(getMonthStart())
-        }
-      })()
-    return () => { cancelled = true }
-  }, [genHouseId])
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     const filtered = bills
@@ -844,11 +847,85 @@ export default function BillsPage() {
     return sorted
   }, [bills, search])
 
+  const visibleFiltered = useMemo(() => filtered.slice(0, visibleBillCount), [filtered, visibleBillCount])
+  const hasMoreVisibleBills = visibleBillCount < filtered.length
+
+  useEffect(() => {
+    setVisibleBillCount(BILLS_PER_PAGE)
+  }, [filtered.length, search, filterMonth, filterYear])
+
+  const loadMoreBills = useCallback(() => {
+    if (billLoadMoreLockRef.current) return
+
+    billLoadMoreLockRef.current = true
+    setVisibleBillCount((current) => {
+      const next = Math.min(current + BILLS_PER_PAGE, filtered.length)
+      if (next === current) {
+        billLoadMoreLockRef.current = false
+        return current
+      }
+      return next
+    })
+    window.setTimeout(() => {
+      billLoadMoreLockRef.current = false
+    }, 250)
+  }, [filtered.length])
+
+  useEffect(() => {
+    if (!hasMoreVisibleBills) return
+
+    const node = loadMoreBillsSentinelRef.current
+    if (!node || !('IntersectionObserver' in window)) return
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreBills()
+      }
+    }, { root: null, rootMargin: '300px 0px', threshold: 0.01 })
+
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMoreVisibleBills, filtered.length, visibleBillCount, loadMoreBills])
+
+  useEffect(() => {
+    if (!hasMoreVisibleBills) return
+
+    const node = loadMoreBillsSentinelRef.current
+    if (!node) return
+
+    const rect = node.getBoundingClientRect()
+    if (rect.top <= window.innerHeight + 300 && rect.bottom >= -300) {
+      loadMoreBills()
+    }
+  }, [hasMoreVisibleBills, filtered.length, visibleBillCount, loadMoreBills])
+
+  useEffect(() => {
+    if (!hasMoreVisibleBills) return
+
+    const handleScroll = () => {
+      const remaining = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)
+      if (remaining <= 300) {
+        loadMoreBills()
+      }
+    }
+
+    handleScroll()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('resize', handleScroll)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('resize', handleScroll)
+    }
+  }, [hasMoreVisibleBills, loadMoreBills])
+
   function openGenerate() {
+    const now = new Date()
     setGenerateMode('single')
     setGenHouseId('')
-    setGenFromDate(getMonthStart())
-    setGenToDate(formatLocalDate(new Date()))
+    setGenMonth(String(now.getMonth() + 1))
+    setGenYear(String(now.getFullYear()))
+    setGenFromDate(getMonthStart(now))
+    setGenToDate(formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)))
     setGenNote('')
     setPreviewData(null)
     setGenerateOpen(true)
@@ -1040,8 +1117,8 @@ export default function BillsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((b, idx) => (
-                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
+                {visibleFiltered.map((b, idx) => (
+                  <tr key={`${b.id}-${idx}`} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === visibleFiltered.length - 1 && !hasMoreVisibleBills ? 'border-b-0' : ''}`}>
                     <td className="px-4 py-3">
                       <div>
                         <p className="font-semibold">{b.house?.houseNo}</p>
@@ -1091,6 +1168,13 @@ export default function BillsPage() {
                     </td>
                   </tr>
                 ))}
+                {hasMoreVisibleBills && (
+                  <tr ref={loadMoreBillsSentinelRef} className="border-b border-border/60">
+                    <td colSpan={7} className="px-4 py-3 text-center text-sm text-muted-foreground">
+                      Scroll to the end to load more bills...
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -1103,7 +1187,7 @@ export default function BillsPage() {
           <DialogHeader>
             <DialogTitle>Generate Bill</DialogTitle>
             <DialogDescription>
-              Choose whether to generate for one house or for all houses within the selected date range.
+              Choose whether to generate for one house or for all houses within the selected month and year.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-5 py-2">
@@ -1176,13 +1260,32 @@ export default function BillsPage() {
                   )}
                 </div>
               )}
-              <div className="space-y-1.5">
-                <Label>From Date</Label>
-                <Input type="date" value={genFromDate} onChange={e => setGenFromDate(parseDateFieldToString(e.target.value))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Upto Date</Label>
-                <Input type="date" value={genToDate} onChange={e => setGenToDate(parseDateFieldToString(e.target.value))} />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Month</Label>
+                  <Select value={genMonth} onValueChange={setGenMonth}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select month" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTH_NAMES.slice(1).map((monthName, index) => (
+                        <SelectItem key={monthName} value={String(index + 1)}>{monthName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Year</Label>
+                  <Select value={genYear} onValueChange={setGenYear}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {YEARS.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
@@ -1210,9 +1313,7 @@ export default function BillsPage() {
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-muted-foreground">Period</span>
                         <span className="font-semibold">
-                          {new Date(genFromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          {' '}to{' '}
-                          {new Date(genToDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          {getMonthLabel(parseInt(genMonth) || new Date().getMonth() + 1, parseInt(genYear) || CURRENT_YEAR)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
@@ -1237,8 +1338,8 @@ export default function BillsPage() {
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                Bills will be generated for all houses from {new Date(genFromDate).toLocaleDateString('en-IN')} to {new Date(genToDate).toLocaleDateString('en-IN')}.
-                Houses with no deliveries in this range will be skipped.
+                Bills will be generated for all houses for {getMonthLabel(parseInt(genMonth) || new Date().getMonth() + 1, parseInt(genYear) || CURRENT_YEAR)}.
+                Houses with no deliveries in this month will be skipped.
               </div>
             )}
 

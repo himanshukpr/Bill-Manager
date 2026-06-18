@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Plus, Search, X, Phone, MapPin, Building2, Bell, CalendarDays,
@@ -44,6 +44,8 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
+const HOUSES_PER_PAGE = 25
+
 type HouseDeliverySummaryRow = {
   dateKey: string
   dayLabel: string
@@ -81,8 +83,7 @@ function normalizeMilkType(value: unknown): string {
   if (lower === 'milk') return ''
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
-  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function cleanItemName(name: string): string {
@@ -92,8 +93,7 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function normalizeRateType(value: unknown): string {
@@ -461,7 +461,11 @@ export default function HousesPage() {
   const [allExportMonth, setAllExportMonth] = useState(new Date().getMonth() + 1)
   const [allExportYear, setAllExportYear] = useState(new Date().getFullYear())
   const [allExportLoading, setAllExportLoading] = useState(false)
+  const [visibleHouseCount, setVisibleHouseCount] = useState(HOUSES_PER_PAGE)
   const loading = !hydrated && (!cachedHouses || !cachedSuppliers)
+  const loadMoreSentinelRef = useRef<HTMLTableRowElement | null>(null)
+  const houseLoadMoreLockRef = useRef(false)
+  const summaryRequestIdRef = useRef(0)
 
   const filteredSummaryLogs = useMemo(() => {
     if (!summaryFromDate || !summaryToDate) return summaryLogs
@@ -1321,6 +1325,77 @@ export default function HousesPage() {
     return getFilteredHouses(filtered, query)
   }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
 
+  const visibleFiltered = useMemo(() => filtered.slice(0, visibleHouseCount), [filtered, visibleHouseCount])
+  const hasMoreVisibleHouses = visibleHouseCount < filtered.length
+
+  useEffect(() => {
+    setVisibleHouseCount(HOUSES_PER_PAGE)
+  }, [filtered.length, search, shiftFilter, paymentFilter, houseStatusFilter])
+
+  const loadMoreHouses = useCallback(() => {
+    if (houseLoadMoreLockRef.current) return
+
+    houseLoadMoreLockRef.current = true
+    setVisibleHouseCount((current) => {
+      const next = Math.min(current + HOUSES_PER_PAGE, filtered.length)
+      if (next === current) {
+        houseLoadMoreLockRef.current = false
+        return current
+      }
+      return next
+    })
+    window.setTimeout(() => {
+      houseLoadMoreLockRef.current = false
+    }, 250)
+  }, [filtered.length])
+
+  useEffect(() => {
+    if (!hasMoreVisibleHouses) return
+
+    const node = loadMoreSentinelRef.current
+    if (!node || !('IntersectionObserver' in window)) return
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreHouses()
+      }
+    }, { root: null, rootMargin: '300px 0px', threshold: 0.01 })
+
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMoreVisibleHouses, filtered.length, visibleHouseCount, loadMoreHouses])
+
+  useEffect(() => {
+    if (!hasMoreVisibleHouses) return
+
+    const node = loadMoreSentinelRef.current
+    if (!node) return
+
+    const rect = node.getBoundingClientRect()
+    if (rect.top <= window.innerHeight + 300 && rect.bottom >= -300) {
+      loadMoreHouses()
+    }
+  }, [hasMoreVisibleHouses, filtered.length, visibleHouseCount, loadMoreHouses])
+
+  useEffect(() => {
+    if (!hasMoreVisibleHouses) return
+
+    const handleScroll = () => {
+      const remaining = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)
+      if (remaining <= 300) {
+        loadMoreHouses()
+      }
+    }
+
+    handleScroll()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('resize', handleScroll)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('resize', handleScroll)
+    }
+  }, [hasMoreVisibleHouses, loadMoreHouses])
+
   const searchSuggestions = useMemo(() => {
     const query = search.trim()
     if (!query) return []
@@ -1486,29 +1561,46 @@ export default function HousesPage() {
   }
 
   async function openSummary(house: House) {
+    const requestId = summaryRequestIdRef.current + 1
+    summaryRequestIdRef.current = requestId
+
     setSummaryHouse(house)
     setSummaryBalance(null)
     setSummaryLogs([])
     setSummaryBills([])
+    setProductRates([])
+    setSummaryFromDate('')
+    setSummaryToDate('')
+    setDeletingDeliveryLog(null)
+    setEditDeliveryDialogOpen(false)
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [balance, logs, bills, rates] = await Promise.all([
+      const [freshHouse, balance, logs, bills, rates] = await Promise.all([
+        housesApi.get(house.id),
         balanceApi.get(house.id),
         deliveryLogsApi.list({ houseId: house.id }),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
+
+      if (summaryRequestIdRef.current !== requestId) return
+
+      setSummaryHouse(freshHouse)
       setSummaryBalance(balance)
       setSummaryLogs(logs)
       setSummaryBills(bills)
       setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
       setSummaryPeriod(getLogPeriod(logs))
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error))
+      if (summaryRequestIdRef.current === requestId) {
+        toast.error(getErrorMessage(error))
+      }
     } finally {
-      setSummaryLoading(false)
+      if (summaryRequestIdRef.current === requestId) {
+        setSummaryLoading(false)
+      }
     }
   }
 
@@ -2006,10 +2098,10 @@ export default function HousesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((h, idx) => (
+                {visibleFiltered.map((h, idx) => (
                   <tr
                     key={h.id}
-                    className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
+                    className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === visibleFiltered.length - 1 && !hasMoreVisibleHouses ? 'border-b-0' : ''}`}
                   >
                     <td className="px-2 py-2 sm:px-3">
                       <div className="flex flex-wrap items-center gap-2">
@@ -2078,6 +2170,13 @@ export default function HousesPage() {
                     </td>
                   </tr>
                 ))}
+                {hasMoreVisibleHouses && (
+                  <tr ref={loadMoreSentinelRef} className="border-b border-border/60">
+                    <td colSpan={7} className="px-2 py-3 text-center text-sm text-muted-foreground">
+                      Scroll to the end to load more houses...
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -2428,9 +2527,17 @@ export default function HousesPage() {
       <Dialog open={summaryOpen} onOpenChange={(open) => {
         setSummaryOpen(open)
         if (!open) {
+          summaryRequestIdRef.current += 1
           setSummaryHouse(null)
           setSummaryBalance(null)
           setSummaryLogs([])
+          setSummaryBills([])
+          setProductRates([])
+          setSummaryLoading(false)
+          setSummaryFromDate('')
+          setSummaryToDate('')
+          setDeletingDeliveryLog(null)
+          setEditDeliveryDialogOpen(false)
         }
       }}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -2443,7 +2550,28 @@ export default function HousesPage() {
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex items-center justify-center gap-2 border-b border-border pb-3">
+              {summaryLoading ? (
+                <div className="space-y-4 py-4">
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">Loading house summary</p>
+                        <p className="text-xs text-muted-foreground">Fetching balance, deliveries, bills, and rates for House {summaryHouse?.houseNo}.</p>
+                      </div>
+                      <Rows3 className="h-5 w-5 animate-pulse text-primary" />
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/40" />
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <Skeleton className="h-20 rounded-xl" />
+                      <Skeleton className="h-20 rounded-xl" />
+                      <Skeleton className="h-20 rounded-xl" />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2 border-b border-border pb-3">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2464,7 +2592,9 @@ export default function HousesPage() {
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
+              )}
 
+              {!summaryLoading && (
               <div className="space-y-6 py-2">
                 <div>
                   <div className="flex items-center gap-2 mb-3">
@@ -2763,6 +2893,7 @@ export default function HousesPage() {
                   </div>
                 </div>
               </div>
+              )}
 
               <DialogFooter>
                 <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || summaryRows.length === 0}>

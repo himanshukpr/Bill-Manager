@@ -72,8 +72,7 @@ function normalizeMilkType(value: unknown): string {
   if (lower === 'milk') return ''
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
-  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function cleanItemName(name: string): string {
@@ -83,8 +82,7 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  const cleaned = text.replace(/\s+[Mm][Ii][Ll][Kk]$/, '') || text
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function normalizeRateType(value: unknown): string {
