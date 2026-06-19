@@ -522,6 +522,9 @@ export type BillPreview = {
   alreadyClosedMessage: string | null;
   isDurationAlreadyCreated: boolean;
   durationAlreadyCreatedMessage: string | null;
+  adjustedFromDate?: string;
+  adjustedToDate?: string;
+  skippedToDate?: string | null;
 };
 
 export type User = {
@@ -1601,6 +1604,12 @@ export const usersApi = {
       await invalidateCache('/users');
     }
     return apiPatch(`/users/${uuid}/permissions`, permissions);
+  },
+  resetPassword: async (uuid: string, password: string) => {
+    if (isBrowser()) {
+      await invalidateCache('/users');
+    }
+    return apiPatch(`/users/${uuid}/reset-password`, { password });
   },
   delete: async (uuid: string) => {
     if (isBrowser()) {

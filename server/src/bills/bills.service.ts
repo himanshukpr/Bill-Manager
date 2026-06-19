@@ -40,6 +40,47 @@ export class BillsService {
     );
   }
 
+  private async getAdjustedPeriodStart(
+    houseId: number,
+    periodStart: Date,
+    periodEnd: Date,
+  ): Promise<{ adjustedStart: Date; existingBillToDate: Date | null }> {
+    const bills = await this.prisma.bill.findMany({
+      where: { houseId },
+      select: {
+        fromDate: true,
+        toDate: true,
+        month: true,
+        year: true,
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+    });
+
+    let latestEnd: Date | null = null;
+
+    for (const bill of bills) {
+      const billStart =
+        bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
+      const billEnd =
+        bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
+
+      if (billStart <= periodEnd && billEnd >= periodStart) {
+        if (!latestEnd || billEnd > latestEnd) {
+          latestEnd = billEnd;
+        }
+      }
+    }
+
+    if (latestEnd && latestEnd < periodEnd) {
+      const nextDay = new Date(latestEnd);
+      nextDay.setDate(nextDay.getDate() + 1);
+      nextDay.setHours(0, 0, 0, 0);
+      return { adjustedStart: nextDay, existingBillToDate: latestEnd };
+    }
+
+    return { adjustedStart: periodStart, existingBillToDate: null };
+  }
+
   async getPeriodClosureState(
     houseId: number,
     periodStart: Date,
@@ -164,20 +205,18 @@ export class BillsService {
       year = resolved.year;
     }
 
-    const existingBill = await this.getExistingBillForPeriod(
+    const { adjustedStart } = await this.getAdjustedPeriodStart(
       dto.houseId,
       periodStart,
       periodEnd,
     );
-    if (existingBill) {
-      throw new ConflictException(
-        'This duration bill is already created. Please create the next duration bill separately.',
-      );
-    }
+
+    const adjustedMonth = periodEnd.getMonth() + 1;
+    const adjustedYear = periodEnd.getFullYear();
 
     const closureState = await this.getPeriodClosureState(
       dto.houseId,
-      periodStart,
+      adjustedStart,
       periodEnd,
     );
     if (closureState.isAlreadyClosed) {
@@ -197,7 +236,7 @@ export class BillsService {
         houseId: dto.houseId,
         billGenerated: false,
         deliveredAt: {
-          gte: periodStart,
+          gte: adjustedStart,
           lte: periodEnd,
         },
       },
@@ -209,7 +248,7 @@ export class BillsService {
 
     if (deliveryLogs.length === 0) {
       throw new BadRequestException(
-        `No delivery logs found for house #${dto.houseId} for ${month}/${year} up to selected date`,
+        `No delivery logs found for house #${dto.houseId} for ${adjustedMonth}/${adjustedYear} up to selected date`,
       );
     }
 
@@ -274,9 +313,9 @@ export class BillsService {
     }
 
     return {
-      month,
-      year,
-      periodStart,
+      month: adjustedMonth,
+      year: adjustedYear,
+      periodStart: adjustedStart,
       periodEnd,
       totalAmount,
       billItems,
@@ -518,14 +557,15 @@ export class BillsService {
   ) {
     const { periodStart, periodEnd } = this.resolvePeriod(period);
 
-    const existingBill = await this.getExistingBillForPeriod(
+    const { adjustedStart, existingBillToDate } = await this.getAdjustedPeriodStart(
       houseId,
       periodStart,
       periodEnd,
     );
+
     const closureState = await this.getPeriodClosureState(
       houseId,
-      periodStart,
+      adjustedStart,
       periodEnd,
     );
 
@@ -540,7 +580,7 @@ export class BillsService {
         houseId,
         billGenerated: false,
         deliveredAt: {
-          gte: periodStart,
+          gte: adjustedStart,
           lte: periodEnd,
         },
       },
@@ -558,13 +598,16 @@ export class BillsService {
       previousBalance,
       grandTotal: totalAmount + previousBalance,
       logCount: deliveryLogs.length,
-      existingBillId: existingBill?.id ?? closureState.matchingBillId,
+      existingBillId: closureState.matchingBillId,
       lastNote: await this.getLatestHouseNote(houseId),
       isAlreadyClosed: closureState.isAlreadyClosed,
       alreadyClosedMessage: closureState.alreadyClosedMessage,
-      isDurationAlreadyCreated: Boolean(existingBill),
-      durationAlreadyCreatedMessage: existingBill
-        ? 'This duration bill is already created. Please create the next duration bill separately.'
+      isDurationAlreadyCreated: false,
+      durationAlreadyCreatedMessage: null,
+      adjustedFromDate: adjustedStart.toISOString().split('T')[0],
+      adjustedToDate: periodEnd.toISOString().split('T')[0],
+      skippedToDate: existingBillToDate
+        ? existingBillToDate.toISOString().split('T')[0]
         : null,
     };
   }

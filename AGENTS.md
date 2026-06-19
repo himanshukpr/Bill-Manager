@@ -112,4 +112,26 @@ None.
 - Modified `handleExportAllHousesSummaryPdf` to sort houses as: Shop → Evening → Morning
 - Morning houses sorted by supplier (alphabetically by username), then by house number
 - Evening houses sorted by supplier, then by house number
+
+### 21. Partial-month billing — adjust period instead of blocking (`bills.service.ts`, `bills/page.tsx`, `api.ts`)
+- **Problem**: `getExistingBillForPeriod` blocked bill creation if ANY existing bill overlapped the requested date range (e.g., bill for June 1–10 blocked creating June 1–30)
+- **Fix**: New `getAdjustedPeriodStart(houseId, periodStart, periodEnd)` finds the latest overlapping bill's `toDate` and pushes `periodStart` to the next day
+- `buildBillDraft` now uses `adjustedStart` instead of the raw `periodStart`, so bills only cover unbilled logs
+- `preview` endpoint returns `adjustedFromDate`, `adjustedToDate`, and `skippedToDate` (the previous bill's end date) instead of `isDurationAlreadyCreated`
+- Client `BillPreview` type updated with `adjustedFromDate?`, `adjustedToDate?`, `skippedToDate?`
+- Client preview panel shows amber info banner: "A bill already exists up to {skippedToDate}. This bill will cover {adjustedFromDate} to {adjustedToDate}."
+- `handleGenerate` no longer blocks on `isDurationAlreadyCreated` — only blocks on `isAlreadyClosed` or zero logs
+
+### 22. Delivery Summary fixes across all summary pages (`houses/page.tsx`, `recipts/page.tsx`, `supplier/houses-all/page.tsx`)
+- Monthly Product Summary now computes all month logs first, then subtracts bill item quantities/amounts to show pending-only quantities
+- Added `summaryTotals.pendingTotal` so Monthly Product Summary Total/Grand Total rows no longer include bill totals again
+- Green delivery row highlighting and delete validation use `isDeliveryBlockedByBill(dateKey)` instead of stale client-side `billGenerated`
+- Receipts page Monthly Product Summary is no longer hidden when a bill exists
+- Supplier houses-all `buildMonthlyProductSummary` no longer internally filters `billGenerated`
+- PDF exports updated to use pending totals consistently
+
+### 23. Database reset to May-only data (`seed-may-v2.ts`)
+- Database was reset with `npx prisma migrate reset --force`
+- `seed-may-v2.ts` now seeds May 1–31, 2026 only (no April/June logs)
+- Current seeded state: 5 users, 200 houses, 6 product rates, 200 house configs, 200 balances, 6,200 delivery logs, 5 delivery plans, 0 bills, 0 payments
 - Added `suppliers` to dependency array

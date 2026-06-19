@@ -308,7 +308,7 @@ export default function BillsPage() {
     previewLoading ||
     !isValidRange(genFromDate, genToDate) ||
     (generateMode === 'single' && !genHouseId) ||
-    Boolean(previewData?.isAlreadyClosed || previewData?.isDurationAlreadyCreated)
+    Boolean(previewData?.isAlreadyClosed)
 
   const load = useCallback(async () => {
     try {
@@ -941,14 +941,6 @@ export default function BillsPage() {
     }
 
     if (generateMode === 'single') {
-      if (previewData?.isDurationAlreadyCreated) {
-        toast.error(
-          previewData.durationAlreadyCreatedMessage ??
-          'This duration bill is already created. Please create the next duration bill separately.',
-        )
-        return
-      }
-
       if (previewData?.isAlreadyClosed) {
         toast.error(previewData.alreadyClosedMessage ?? 'This period is already closed.')
         return
@@ -1299,9 +1291,9 @@ export default function BillsPage() {
                     </div>
                   ) : previewData ? (
                     <>
-                      {previewData.isDurationAlreadyCreated && (
-                        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                          {previewData.durationAlreadyCreatedMessage ?? 'This duration bill is already created. Please create the next duration bill separately.'}
+                      {previewData.skippedToDate && (
+                        <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-600/50 dark:bg-amber-950 dark:text-amber-300">
+                          A bill already exists up to <strong>{previewData.skippedToDate}</strong>. This bill will cover <strong>{previewData.adjustedFromDate}</strong> to <strong>{previewData.adjustedToDate}</strong>.
                         </div>
                       )}
                       {previewData.isAlreadyClosed && (

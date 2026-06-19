@@ -303,14 +303,14 @@ export default function DeliveryEntryPage() {
         setLoading(true)
         const today = getTodayDateKey()
         const [houseData, rateData] = await Promise.all([
-          loadCached(DIRECT_ENTRY_HOUSES_CACHE_KEY, housesApi.list, setHouses),
+          loadCached(DIRECT_ENTRY_HOUSES_CACHE_KEY, housesApi.list, (data) => setHouses(data.filter((h: House) => h.active))),
           loadCached(DIRECT_ENTRY_RATES_CACHE_KEY, productRatesApi.list, setRates),
         ])
 
         await loadLogsForDate(today)
 
         if (!active) return
-        setHouses(houseData)
+        setHouses(houseData.filter((h) => h.active))
         setRates(rateData)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load direct entry data')

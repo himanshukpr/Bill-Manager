@@ -290,6 +290,9 @@ export default function DeliveryPage() {
     const [miniMapCenter, setMiniMapCenter] = useState<{ lat: number; lon: number }>(DEFAULT_MAP_CENTER)
     const [miniMapLoading, setMiniMapLoading] = useState(false)
     const [miniMapLocationWarning, setMiniMapLocationWarning] = useState<string | null>(null)
+    const [highlightHouseId, setHighlightHouseId] = useState<number | null>(null)
+    const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const highlightedRowRef = useRef<HTMLTableRowElement | null>(null)
     const pageContainerRef = useRef<HTMLDivElement | null>(null)
     const [availableHeight, setAvailableHeight] = useState<number | null>(null)
 
@@ -342,7 +345,7 @@ export default function DeliveryPage() {
                     routePosition: configs[0]?.position ?? Number.POSITIVE_INFINITY,
                 }
             })
-            .filter((house) => house.configs.length > 0)
+            .filter((house) => house.configs.length > 0 && house.active)
             .sort((left, right) => left.routePosition - right.routePosition)
     }, [houses, rawConfigs, selectedShift, auth?.uuid])
 
@@ -899,6 +902,18 @@ const loadCurrentHouseLogs = async () => {
             void preloadHouseLogs(next.id)
         }
     }, [selectedShift, currentIndex, visibleHouses, preloadHouseLogs])
+
+    useEffect(() => {
+        return () => {
+            if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+        }
+    }, [])
+
+    useEffect(() => {
+        if (highlightHouseId && highlightedRowRef.current) {
+            highlightedRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+    }, [highlightHouseId])
 
     useEffect(() => {
         setDeliveryItems(buildDeliveryItemsFromLogs(currentHouseLogs))
@@ -1490,8 +1505,11 @@ const loadCurrentHouseLogs = async () => {
                                     return (
                                         <TableRow
                                             key={house.id}
+                                            ref={highlightHouseId === house.id ? highlightedRowRef : undefined}
                                             onClick={() => handleOpenHouseInDelivery(house.id)}
-                                            className="cursor-pointer hover:bg-muted/50"
+                                            className={`cursor-pointer hover:bg-muted/50 transition-all duration-500 ${
+                                                highlightHouseId === house.id ? 'bg-blue-500/15 shadow-[0_0_14px_4px_rgba(59,130,246,0.45)]' : ''
+                                            }`}
                                         >
                                             <TableCell>
                                                 <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-semibold">
@@ -1790,7 +1808,15 @@ const loadCurrentHouseLogs = async () => {
                                             variant="outline"
                                             size="icon"
                                             className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
-                                            onClick={() => handlePanelViewChange(panelView === 'delivery' ? 'allocated-houses' : 'delivery')}
+                                            onClick={() => {
+                                                const switchingToAllocated = panelView === 'delivery'
+                                                handlePanelViewChange(panelView === 'delivery' ? 'allocated-houses' : 'delivery')
+                                                if (switchingToAllocated) {
+                                                    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+                                                    setHighlightHouseId(currentHouse.id)
+                                                    highlightTimerRef.current = setTimeout(() => setHighlightHouseId(null), 2000)
+                                                }
+                                            }}
                                             aria-label="Switch view"
                                             title="Switch view"
                                         >

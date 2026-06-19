@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { Role } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
@@ -85,6 +86,20 @@ export class UsersService {
         email: true,
         role: true,
         isVerified: true,
+      },
+    });
+  }
+
+  async resetPassword(uuid: string, newPassword: string) {
+    const hashed = await bcrypt.hash(newPassword, 10);
+    return this.prisma.user.update({
+      where: { uuid },
+      data: { password: hashed },
+      select: {
+        uuid: true,
+        username: true,
+        email: true,
+        role: true,
       },
     });
   }

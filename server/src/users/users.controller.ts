@@ -41,6 +41,12 @@ export class UsersController {
   }
 
   @UseGuards(AdminGuard)
+  @Patch(':uuid/reset-password')
+  resetPassword(@Param('uuid') uuid: string, @Body('password') password: string) {
+    return this.usersService.resetPassword(uuid, password);
+  }
+
+  @UseGuards(AdminGuard)
   @Delete(':uuid')
   remove(@Param('uuid') uuid: string) {
     return this.usersService.remove(uuid);

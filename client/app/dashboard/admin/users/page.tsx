@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Users, Search, ShieldCheck, Trash2, UserPlus, ShieldOff, Lock, SwitchCamera } from 'lucide-react'
+import { Users, Search, ShieldCheck, Trash2, UserPlus, ShieldOff, Lock, SwitchCamera, KeyRound } from 'lucide-react'
 import { usersApi, type User } from '@/lib/api'
 import { apiImpersonate, saveSessionAuth, saveAdminSession, dashboardPath, getSessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
@@ -43,6 +43,9 @@ export default function UsersPage() {
   const [permEditItems, setPermEditItems] = useState(false)
   const [permEditHouses, setPermEditHouses] = useState(false)
   const [permViewAll, setPermViewAll] = useState(false)
+  const [resetPwdUuid, setResetPwdUuid] = useState<string | null>(null)
+  const [resetPwdValue, setResetPwdValue] = useState('')
+  const [resetPwdSaving, setResetPwdSaving] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -155,6 +158,21 @@ export default function UsersPage() {
     }
   }
 
+  async function handleResetPassword() {
+    if (!resetPwdUuid || !resetPwdValue.trim()) return
+    try {
+      setResetPwdSaving(true)
+      await usersApi.resetPassword(resetPwdUuid, resetPwdValue.trim())
+      toast.success('Password reset successfully')
+      setResetPwdUuid(null)
+      setResetPwdValue('')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setResetPwdSaving(false)
+    }
+  }
+
   async function handleImpersonate(u: User) {
     try {
       const adminSession = { ...getSessionAuth()! }
@@ -220,6 +238,7 @@ export default function UsersPage() {
             }}
             onDelete={setDeleteUuid}
             onImpersonate={handleImpersonate}
+            onResetPassword={setResetPwdUuid}
           />
         </div>
       )}
@@ -343,12 +362,33 @@ export default function UsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!resetPwdUuid} onOpenChange={open => { if (!open) { setResetPwdUuid(null); setResetPwdValue(''); } }}>
+        <DialogContent className="max-w-sm w-[90vw] sm:w-full">
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>Set a new password for this user.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>New Password</Label>
+              <Input placeholder="Enter new password" type="password" value={resetPwdValue} onChange={e => setResetPwdValue(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setResetPwdUuid(null); setResetPwdValue(''); }}>Cancel</Button>
+            <Button onClick={handleResetPassword} disabled={resetPwdSaving || !resetPwdValue.trim()}>
+              {resetPwdSaving ? 'Saving...' : 'Reset Password'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
 function UserSection({
-  title, users, onToggleVerify, onRoleChange, onChangeRole, onDelete, onImpersonate,
+  title, users, onToggleVerify, onRoleChange, onChangeRole, onDelete, onImpersonate, onResetPassword,
   roleChangingUuid,
 }: {
   title: string
@@ -358,6 +398,7 @@ function UserSection({
   onChangeRole: (u: User) => void
   onDelete: (uuid: string) => void
   onImpersonate?: (u: User) => void
+  onResetPassword?: (uuid: string) => void
   roleChangingUuid?: string | null
 }) {
   if (users.length === 0) return null
@@ -424,6 +465,13 @@ function UserSection({
                   onClick={() => onImpersonate(u)}>
                   <SwitchCamera className="h-4 w-4 shrink-0" />
                   <span className="hidden sm:inline">Switch</span>
+                </Button>
+              )}
+              {onResetPassword && (
+                <Button variant="ghost" size="icon" aria-label="Reset password"
+                  className="flex-shrink-0 h-9 w-9 text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                  onClick={() => onResetPassword(u.uuid)}>
+                  <KeyRound className="h-4 w-4" />
                 </Button>
               )}
               <Button variant="ghost" size="icon" aria-label="Delete user"

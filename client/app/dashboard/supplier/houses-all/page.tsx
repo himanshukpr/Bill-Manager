@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
@@ -224,10 +224,7 @@ function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: nu
   const productMap = new Map<string, number>()
 
   // Group quantities by product for the selected month only.
-  // Exclude logs that are already part of a paid bill.
   for (const log of logs) {
-    if (log.billGenerated) continue
-
     const deliveredAt = new Date(log.deliveredAt)
     const logYear = deliveredAt.getFullYear()
     const logMonth = deliveredAt.getMonth()
@@ -458,82 +455,108 @@ export default function HousesPage() {
     return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, summaryLogs, summaryPeriod])
 
-  const matchingBill = useMemo(() => {
-    return summaryBills.find(
+  const matchingBills = useMemo(() => {
+    return summaryBills.filter(
       b => b.year === summaryPeriod.year && b.month === summaryPeriod.month + 1,
-    ) ?? null
+    )
   }, [summaryBills, summaryPeriod])
 
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
 
-    // If a bill exists for this period, derive product summary from bill items
-    if (matchingBill && matchingBill.items?.length) {
-      const items = matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>
-      const productMap = new Map<string, number>()
-      for (const item of items) {
-        if (item.name && item.qty > 0) {
-          const product = cleanItemName(item.name)
-          productMap.set(product, (productMap.get(product) ?? 0) + item.qty)
+    // Compute ALL logs for this month (don't rely on billGenerated flag which may be stale)
+    const allMonthLogs = summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+    })
+
+    const totalMap = new Map<string, number>()
+    for (const log of allMonthLogs) {
+      for (const item of log.items ?? []) {
+        const product = normalizeMilkType(item.milkType)
+        const qty = Number(item.qty ?? 0)
+        if (product && qty > 0) {
+          totalMap.set(product, (totalMap.get(product) ?? 0) + qty)
         }
       }
-      return Array.from(productMap.entries())
-        .map(([product, quantity]) => ({
-          product,
-          months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity }],
-          totalQuantity: quantity,
-        }))
-        .sort((a, b) => b.totalQuantity - a.totalQuantity)
     }
 
-    return buildMonthlyProductSummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBill])
+    // If bills exist, subtract bill items to get pending-only quantities
+    for (const bill of matchingBills) {
+      if (bill.items?.length) {
+        const items = bill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>
+        for (const item of items) {
+          if (item.name && item.qty > 0) {
+            const product = cleanItemName(item.name)
+            const current = totalMap.get(product) ?? 0
+            totalMap.set(product, Math.max(0, current - item.qty))
+          }
+        }
+      }
+    }
+
+    return Array.from(totalMap.entries())
+      .filter(([, qty]) => qty > 0)
+      .map(([product, quantity]) => ({
+        product,
+        months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity }],
+        totalQuantity: quantity,
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity)
+  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBills])
 
   const summaryTotals = useMemo(() => {
-    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0 }
+    if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0, pendingTotal: 0 }
 
-    // If a bill exists for this period, use its data
-    if (matchingBill) {
-      const items = (matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>) ?? []
-      const productMap = new Map<string, { qty: number; amount: number }>()
-      for (const item of items) {
-        if (item.name && item.qty > 0) {
-          const product = cleanItemName(item.name)
-          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
-          productMap.set(product, { qty: existing.qty + item.qty, amount: existing.amount + item.amount })
-        }
-      }
-      return {
-        productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
-        grandTotal: Number(matchingBill.totalAmount),
-        previousBalance: Number(matchingBill.previousBalance ?? 0),
-      }
-    }
-
-    const monthLogs = summaryLogs.filter(log => {
+    // Compute ALL logs for this month (don't rely on stale billGenerated flag)
+    const allMonthLogs = summaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month && !log.billGenerated
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
-    const productMap = new Map<string, { qty: number; amount: number }>()
-    let grandTotal = 0
-    for (const log of monthLogs) {
-      grandTotal += Number(log.totalAmount ?? 0)
+
+    const totalMap = new Map<string, { qty: number; amount: number }>()
+    let allLogsGrandTotal = 0
+    for (const log of allMonthLogs) {
+      allLogsGrandTotal += Number(log.totalAmount ?? 0)
       for (const item of log.items ?? []) {
         const product = normalizeMilkType(item.milkType)
         const qty = Number(item.qty ?? 0)
         const amount = Number(item.amount ?? 0)
         if (product && qty > 0) {
-          const existing = productMap.get(product) ?? { qty: 0, amount: 0 }
-          productMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+          const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+          totalMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
         }
       }
     }
-    return {
-      productTotals: Array.from(productMap.entries()).map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
-      grandTotal,
-      previousBalance: 0,
+
+    // If bills exist, subtract all bill items to get pending-only quantities
+    for (const bill of matchingBills) {
+      const billItems = (bill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>) ?? []
+      for (const item of billItems) {
+        if (item.name && item.qty > 0) {
+          const product = cleanItemName(item.name)
+          const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+          totalMap.set(product, {
+            qty: Math.max(0, existing.qty - item.qty),
+            amount: Math.max(0, existing.amount - item.amount),
+          })
+        }
+      }
     }
-  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBill])
+
+    const billsTotalAmount = matchingBills.reduce((sum, b) => sum + Number(b.totalAmount), 0)
+    const pendingGrandTotal = allLogsGrandTotal - billsTotalAmount
+    const pendingTotal = Array.from(totalMap.values()).reduce((sum, d) => sum + d.amount, 0)
+
+    return {
+      productTotals: Array.from(totalMap.entries())
+        .filter(([, data]) => data.qty > 0)
+        .map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+      grandTotal: matchingBills.length > 0 ? billsTotalAmount + Math.max(0, pendingGrandTotal) : allLogsGrandTotal,
+      previousBalance: matchingBills.length > 0 ? Number(matchingBills[0].previousBalance ?? 0) : 0,
+      pendingTotal,
+    }
+  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBills])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
@@ -1103,7 +1126,8 @@ export default function HousesPage() {
 
   async function handleDeleteDeliveryLog() {
     if (!deletingDeliveryLog || !summaryHouse) return
-    if (deletingDeliveryLog.billGenerated) {
+    const deleteDateKey = deletingDeliveryLog.deliveredAt ? new Date(deletingDeliveryLog.deliveredAt).toISOString().split('T')[0] : ''
+    if (deleteDateKey && isDeliveryBlockedByBill(deleteDateKey)) {
       toast.error('Cannot delete a delivery that was included in a generated bill')
       return
     }
@@ -1535,8 +1559,8 @@ export default function HousesPage() {
                 <SelectTrigger id="house-rate1type"><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">None</SelectItem>
-                  <SelectItem value="buffalo">Buffalo Milk</SelectItem>
-                  <SelectItem value="cow">Cow Milk</SelectItem>
+                  <SelectItem value="Buffalo Milk">Buffalo Milk</SelectItem>
+                  <SelectItem value="Cow Milk">Cow Milk</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1567,8 +1591,8 @@ export default function HousesPage() {
                 <SelectTrigger id="house-rate2type"><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">None</SelectItem>
-                  <SelectItem value="buffalo">Buffalo Milk</SelectItem>
-                  <SelectItem value="cow">Cow Milk</SelectItem>
+                  <SelectItem value="Buffalo Milk">Buffalo Milk</SelectItem>
+                  <SelectItem value="Cow Milk">Cow Milk</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1929,13 +1953,9 @@ export default function HousesPage() {
                                 <tr className="border-t-2 border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3 text-foreground">Total</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const totalQty = monthlyProductSummary.reduce((sum, p) => {
-                                      const md = p.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
-                                      return sum + (md ? md.quantity : 0)
-                                    }, 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-foreground">
-                                        ₹{summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        ₹{summaryTotals.pendingTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                       </td>
                                     )
                                   })}
@@ -1943,10 +1963,9 @@ export default function HousesPage() {
                                 <tr className="border-t border-border bg-muted/50 font-semibold">
                                   <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryHouse?.balance?.previousBalance ?? 0)
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
-                                        ₹{prevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                        ₹{summaryTotals.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                       </td>
                                     )
                                   })}
@@ -1954,8 +1973,7 @@ export default function HousesPage() {
                                 <tr className="border-t-2 border-border bg-muted/50 font-bold">
                                   <td className="px-4 py-3 text-foreground">Grand Total</td>
                                   {Array.from(new Set(monthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
-                                    const prevBal = Number(matchingBill?.previousBalance ?? summaryHouse?.balance?.previousBalance ?? 0)
-                                    const grandTotal = summaryTotals.grandTotal + prevBal
+                                    const grandTotal = summaryTotals.pendingTotal + summaryTotals.previousBalance
                                     return (
                                       <td key={monthKey} className="px-3 py-3 text-right text-primary">
                                         ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -1972,47 +1990,78 @@ export default function HousesPage() {
                   </div>
                 </div>
 
-                {matchingBill && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bill</h3>
-                    <div className="rounded-xl border border-border bg-muted/30 p-4">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-muted/50">
-                              <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
-                              <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(matchingBill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>).map((item, idx) => (
-                              <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                <td className="px-4 py-3 font-medium text-foreground">{cleanItemName(item.name ?? '')}</td>
-                                <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
-                                <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                                <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                {matchingBills.length > 0 && (() => {
+                  const combinedMap = new Map<string, { name: string; qty: number; rate: number; amount: number }>()
+                  for (const bill of matchingBills) {
+                    for (const item of (bill.items as BillItem[])) {
+                      if (!item.name || item.qty <= 0) continue
+                      const cleanName = cleanItemName(item.name)
+                      const key = `${cleanName}:${item.rate}`
+                      const existing = combinedMap.get(key)
+                      if (existing) {
+                        existing.qty += item.qty
+                        existing.amount += item.amount
+                      } else {
+                        combinedMap.set(key, { name: cleanName, qty: item.qty, rate: item.rate, amount: item.amount })
+                      }
+                    }
+                  }
+                  const combinedItems = Array.from(combinedMap.values())
+                  const totalBillAmount = matchingBills.reduce((s, b) => s + Number(b.totalAmount), 0)
+                  const latestPreviousBalance = Number(matchingBills[0].previousBalance ?? 0)
+                  const dateRanges = matchingBills.map(b =>
+                    b.fromDate && b.toDate
+                      ? `${new Date(b.fromDate).toLocaleDateString('en-IN')} — ${new Date(b.toDate).toLocaleDateString('en-IN')}`
+                      : null
+                  ).filter(Boolean)
+
+                  return (
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bills</h3>
+                      {dateRanges.length > 0 && (
+                        <div className="mb-2 text-xs text-muted-foreground">
+                          {dateRanges.join(' | ')}
+                        </div>
+                      )}
+                      <div className="rounded-xl border border-border bg-muted/30 p-4">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/50">
+                                <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
                               </tr>
-                            ))}
-                            <tr className="border-t border-border bg-muted/50 font-semibold">
-                              <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
-                              <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
-                                ₹{Number(matchingBill.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </td>
-                            </tr>
-                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
-                              <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
-                              <td className="px-4 py-3 text-right text-primary">
-                                ₹{(Number(matchingBill.totalAmount) + Number(matchingBill.previousBalance)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {combinedItems.map((item, idx) => (
+                                <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                  <td className="px-4 py-3 font-medium text-foreground">{item.name}</td>
+                                  <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                  <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                  <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                </tr>
+                              ))}
+                              <tr className="border-t border-border bg-muted/50 font-semibold">
+                                <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                                <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                  ₹{latestPreviousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                              <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                                <td className="px-4 py-3 text-right text-primary">
+                                  ₹{(totalBillAmount + latestPreviousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
 
                 {/* Daily View */}
                 <div>
@@ -2041,8 +2090,8 @@ export default function HousesPage() {
                         </TableHeader>
                         <TableBody>
                           {summaryRows.map((row) => {
-                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated || row.log?.isClosed)
-                            const isPaid = Boolean(row.log?.billGenerated || row.log?.isClosed)
+                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
+                            const isPaid = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
                             return (
                               <TableRow key={row.dateKey} className={isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
                                 <TableCell className={`font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</TableCell>
