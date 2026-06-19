@@ -221,20 +221,17 @@ export default function RatesPage() {
     doc.setFontSize(12)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, 28, { align: 'center' })
 
-    const activeRates = rates.filter((r) => r.isActive)
-    const inactiveRates = rates.filter((r) => !r.isActive)
-
-    const rows = [...activeRates, ...inactiveRates].map((rate) => [
+    const rows = rates.filter((r) => r.isActive).map((rate) => [
       rate.name,
       '-',
-      `${Number(rate.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}/${rate.unit}`,
+      `${Number(rate.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`,
     ])
 
     autoTable(doc, {
       startY: 35,
       head: [['Product', '', 'Rate']],
       body: rows,
-      styles: { fontSize: 14, cellPadding: 6, fontStyle: 'bold' },
+      styles: { fontSize: 20, cellPadding: 4, fontStyle: 'bold' },
       headStyles: { fillColor: false, textColor: [0, 0, 0], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: false },
       columnStyles: {
