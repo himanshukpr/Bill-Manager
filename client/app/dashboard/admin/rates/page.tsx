@@ -214,11 +214,11 @@ export default function RatesPage() {
     const pageWidth = doc.internal.pageSize.getWidth()
 
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(16)
+    doc.setFontSize(20)
     doc.text('Product Rate List', pageWidth / 2, 20, { align: 'center' })
 
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(10)
+    doc.setFontSize(12)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, 28, { align: 'center' })
 
     const activeRates = rates.filter((r) => r.isActive)
@@ -226,19 +226,21 @@ export default function RatesPage() {
 
     const rows = [...activeRates, ...inactiveRates].map((rate) => [
       rate.name,
+      '-',
       `${Number(rate.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}/${rate.unit}`,
     ])
 
     autoTable(doc, {
       startY: 35,
-      head: [['Product', 'Rate']],
+      head: [['Product', '', 'Rate']],
       body: rows,
-      styles: { fontSize: 11, cellPadding: 5 },
-      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { fontSize: 14, cellPadding: 6, fontStyle: 'bold' },
+      headStyles: { fillColor: false, textColor: [0, 0, 0], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: false },
       columnStyles: {
-        0: { cellWidth: 80 },
-        1: { cellWidth: 50, halign: 'right' },
+        0: { cellWidth: 70, halign: 'left' },
+        1: { cellWidth: 30, halign: 'center' },
+        2: { cellWidth: 50, halign: 'right' },
       },
       margin: { left: 30, right: 30 },
     })
