@@ -6,6 +6,7 @@ import {
     ChevronLeft,
     ChevronRight,
     Edit2,
+    History,
     Maximize2,
     MapPin,
     Phone,
@@ -295,6 +296,9 @@ export default function DeliveryPage() {
     const highlightedRowRef = useRef<HTMLTableRowElement | null>(null)
     const pageContainerRef = useRef<HTMLDivElement | null>(null)
     const [availableHeight, setAvailableHeight] = useState<number | null>(null)
+    const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
+    const [historyLogs, setHistoryLogs] = useState<DeliveryLog[]>([])
+    const [historyLoading, setHistoryLoading] = useState(false)
 
     const containerStyle = useMemo(
         () => ({ height: availableHeight ? `${availableHeight}px` : 'calc(100dvh - 0.5rem)' }),
@@ -563,11 +567,11 @@ export default function DeliveryPage() {
             })
     }, [visibleHouses, houseSearch, allocatedHouseProducts])
 
-const loadSelectedDateDeliveredSummary = useCallback(async () => {
-         if (!auth || !selectedShift) return
+    const loadSelectedDateDeliveredSummary = useCallback(async () => {
+        if (!auth || !selectedShift) return
 
-         const logs = await deliveryLogsApi.list({ shift: selectedShift }, true) // Force fresh on load
-         const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
+        const logs = await deliveryLogsApi.list({ shift: selectedShift }, true) // Force fresh on load
+        const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         // Only count server-confirmed logs (positive IDs) for completed status.
         // TempLogs (negative IDs) are local-only and should not show "delivered"
@@ -727,13 +731,13 @@ const loadSelectedDateDeliveredSummary = useCallback(async () => {
 
         let active = true
 
-const loadCurrentHouseLogs = async () => {
-             try {
-                 setLogsLoading(true)
-                 const logs = await deliveryLogsApi.list({
-                     houseId: currentHouse.id,
-                     shift: selectedShift,
-                 }, true) // Force fresh from server on page load
+        const loadCurrentHouseLogs = async () => {
+            try {
+                setLogsLoading(true)
+                const logs = await deliveryLogsApi.list({
+                    houseId: currentHouse.id,
+                    shift: selectedShift,
+                }, true) // Force fresh from server on page load
 
                 const selectedDateLogs = logs.filter((log) => {
                     const deliveredAt = new Date(log.deliveredAt)
@@ -840,6 +844,27 @@ const loadCurrentHouseLogs = async () => {
         toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
         setClearTodayDialogOpen(false)
     }, [currentHouse, currentHouseLogs, selectedShift, selectedDate])
+
+    const handleOpenHistory = useCallback(async () => {
+        if (!currentHouse) return
+        setHistoryDialogOpen(true)
+        setHistoryLoading(true)
+        try {
+            const logs = await deliveryLogsApi.list({ houseId: currentHouse.id })
+            const sorted = logs.sort((a, b) => new Date(b.deliveredAt).getTime() - new Date(a.deliveredAt).getTime())
+            if (sorted.length === 0) {
+                setHistoryLogs([])
+                return
+            }
+            const latestDate = new Date(sorted[0].deliveredAt)
+            const latestDayStr = latestDate.toDateString()
+            setHistoryLogs(sorted.filter((log) => new Date(log.deliveredAt).toDateString() === latestDayStr))
+        } catch {
+            toast.error('Failed to load delivery history')
+        } finally {
+            setHistoryLoading(false)
+        }
+    }, [currentHouse])
 
     // Navigate to previous day
     const handlePreviousDay = useCallback(() => {
@@ -1507,9 +1532,8 @@ const loadCurrentHouseLogs = async () => {
                                             key={house.id}
                                             ref={highlightHouseId === house.id ? highlightedRowRef : undefined}
                                             onClick={() => handleOpenHouseInDelivery(house.id)}
-                                            className={`cursor-pointer hover:bg-muted/50 transition-all duration-500 ${
-                                                highlightHouseId === house.id ? 'bg-blue-500/15 shadow-[0_0_14px_4px_rgba(59,130,246,0.45)]' : ''
-                                            }`}
+                                            className={`cursor-pointer hover:bg-muted/50 transition-all duration-500 ${highlightHouseId === house.id ? 'bg-blue-500/15 shadow-[0_0_14px_4px_rgba(59,130,246,0.45)]' : ''
+                                                }`}
                                         >
                                             <TableCell>
                                                 <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-semibold">
@@ -1587,31 +1611,77 @@ const loadCurrentHouseLogs = async () => {
     return (
         <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
             <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground">
-                    {selectedDate.toLocaleDateString('en-IN', {
-                        weekday: 'short',
-                        month: 'short',
-                        day: 'numeric',
-                    })}
-                </p>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => {
-                        setDatePickerValue(selectedDateKey)
-                        setIsDatePickerOpen(true)
-                    }}
-                    title="Change delivery date"
-                >
-                    <Edit2 className="h-3.5 w-3.5" />
-                </Button>
+                <div className='flex items-center gap-2'>
+                    <p className="text-xs font-medium text-muted-foreground">
+                        {selectedDate.toLocaleDateString('en-IN', {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                        })}
+                    </p>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => {
+                            setDatePickerValue(selectedDateKey)
+                            setIsDatePickerOpen(true)
+                        }}
+                        title="Change delivery date"
+                    >
+                        <Edit2 className="h-3.5 w-3.5" />
+                    </Button>
+                </div>
+
+                <div className='flex items-center'>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={handleOpenHistory}
+                    >
+                        <History className="h-4 w-4" />
+                        History
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => setIsMapExpanded(true)}
+                    >
+                        <MapIcon className="h-4 w-4" />
+                        Map
+                    </Button>
+
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        className=""
+                        onClick={() => {
+                            const switchingToAllocated = panelView === 'delivery'
+                            handlePanelViewChange(panelView === 'delivery' ? 'allocated-houses' : 'delivery')
+                            if (switchingToAllocated) {
+                                if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+                                setHighlightHouseId(currentHouse.id)
+                                highlightTimerRef.current = setTimeout(() => setHighlightHouseId(null), 2000)
+                            }
+                        }}
+                        aria-label="Switch view"
+                        title="Switch view"
+                    >
+                        <Rows3 className="h-4 w-4" />
+                    </Button>
+
+                </div>
+
             </div>
 
             <Dialog open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
                 <DialogContent className="w-80">
                     <DialogHeader>
-                        <DialogTitle>Change Delivery Date</DialogTitle>
+                        <DialogTitle>Change delivery date</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4">
                         <Input
@@ -1769,30 +1839,6 @@ const loadCurrentHouseLogs = async () => {
                 <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
                     {/* HOUSE CARD */}
                     <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                        <div className="flex items-center justify-between">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="gap-1.5"
-                                onClick={() => setIsMapExpanded(true)}
-                            >
-                                <MapIcon className="h-4 w-4" />
-                                Map
-                            </Button>
-
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={handleClearToday}
-                                title="Clear selected-date deliveries"
-                            >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                        </div>
-
                         <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
                             <div className="space-y-1.5 sm:col-span-2">
                                 <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
@@ -1805,22 +1851,14 @@ const loadCurrentHouseLogs = async () => {
                                     </div>
                                     <div className="relative flex flex-col items-start pr-10">
                                         <Button
-                                            variant="outline"
+                                            type="button"
+                                            variant="ghost"
                                             size="icon"
                                             className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
-                                            onClick={() => {
-                                                const switchingToAllocated = panelView === 'delivery'
-                                                handlePanelViewChange(panelView === 'delivery' ? 'allocated-houses' : 'delivery')
-                                                if (switchingToAllocated) {
-                                                    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
-                                                    setHighlightHouseId(currentHouse.id)
-                                                    highlightTimerRef.current = setTimeout(() => setHighlightHouseId(null), 2000)
-                                                }
-                                            }}
-                                            aria-label="Switch view"
-                                            title="Switch view"
+                                            onClick={handleClearToday}
+                                            title="Clear selected-date deliveries"
                                         >
-                                            <Rows3 className="h-4 w-4" />
+                                            <Trash2 className="h-4 w-4 text-destructive" />
                                         </Button>
                                         <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
                                         {isCompleted ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
@@ -2147,6 +2185,73 @@ const loadCurrentHouseLogs = async () => {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            <Dialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen}>
+                <DialogContent className="max-h-[80vh] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto sm:w-full">
+                    <DialogHeader>
+                        <DialogTitle>
+                            Last Delivery — House {currentHouse?.houseNo}
+                        </DialogTitle>
+                    </DialogHeader>
+                    {historyLoading ? (
+                        <div className="space-y-3 py-4">
+                            {[1, 2, 3].map((i) => (
+                                <Skeleton key={i} className="h-16 w-full rounded-lg" />
+                            ))}
+                        </div>
+                    ) : historyLogs.length === 0 ? (
+                        <p className="py-6 text-center text-sm text-muted-foreground">No delivery records found.</p>
+                    ) : (() => {
+                        const latestLogDate = new Date(historyLogs[0].deliveredAt)
+                        const dateStr = latestLogDate.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+                        const allItems = new Map<string, { qty: number; rate: number }>()
+                        for (const log of historyLogs) {
+                            for (const item of log.items || []) {
+                                if (Number(item.qty) <= 0) continue
+                                const key = item.milkType.trim().toLowerCase()
+                                const existing = allItems.get(key)
+                                if (existing) {
+                                    existing.qty += Number(item.qty)
+                                } else {
+                                    allItems.set(key, { qty: Number(item.qty), rate: item.rate })
+                                }
+                            }
+                        }
+                        const grandTotal = Array.from(allItems.values()).reduce((s, it) => s + it.qty * it.rate, 0)
+                        return (
+                            <div className="py-1">
+                                <p className="mb-3 text-xs uppercase tracking-widest text-muted-foreground">Delivered on {dateStr}</p>
+                                <div className="overflow-x-auto rounded-xl border border-border/70">
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Product</TableHead>
+                                                <TableHead className="text-right">Qty (L)</TableHead>
+                                                <TableHead className="text-right">Rate</TableHead>
+                                                <TableHead className="text-right">Amount</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {Array.from(allItems.entries()).map(([key, { qty, rate }]) => (
+                                                <TableRow key={key}>
+                                                    <TableCell className="font-medium capitalize">{key}</TableCell>
+                                                    <TableCell className="text-right">{qty}</TableCell>
+                                                    <TableCell className="text-right">₹{rate}/L</TableCell>
+                                                    <TableCell className="text-right font-semibold">₹{(qty * rate).toLocaleString('en-IN')}</TableCell>
+                                                </TableRow>
+                                            ))}
+                                            <TableRow>
+                                                <TableCell colSpan={3} className="text-right font-bold">Total</TableCell>
+                                                <TableCell className="text-right font-bold">₹{grandTotal.toLocaleString('en-IN')}</TableCell>
+                                            </TableRow>
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </div>
+                        )
+                    })()}
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
