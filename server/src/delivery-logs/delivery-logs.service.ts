@@ -17,6 +17,7 @@ type UserInfo = {
   email?: string;
   role: string;
   isVerified?: boolean;
+  dairyId: number;
 };
 
 @Injectable()
@@ -24,10 +25,10 @@ export class DeliveryLogsService {
   constructor(private prisma: PrismaService) { }
 
   async create(dto: CreateDeliveryLogDto, user: UserInfo) {
-    const house = await this.prisma.house.findUnique({
-      where: { id: dto.houseId },
+    const house = await this.prisma.house.findFirst({
+      where: { id: dto.houseId, dairyId: user.dairyId },
     });
-    if (!house) throw new NotFoundException(`House #${dto.houseId} not found`);
+    if (!house) throw new NotFoundException(`House #${dto.houseId} not found in this dairy`);
 
     let supplierId: string | null = null;
 
@@ -55,6 +56,7 @@ export class DeliveryLogsService {
       where: { houseId: dto.houseId },
       create: {
         houseId: dto.houseId,
+        dairyId: user.dairyId,
         currentBalance: 0,
         previousBalance: 0,
       },
@@ -66,6 +68,7 @@ export class DeliveryLogsService {
 
     const data: any = {
       houseId: dto.houseId,
+      dairyId: user.dairyId,
       shift: dto.shift as Shift,
       billGenerated: dto.billGenerated ?? false,
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -110,9 +113,11 @@ export class DeliveryLogsService {
       houseId?: number;
       shift?: Shift;
       supplierId?: string;
+      dairyId?: number;
       deliveredAt?: { gte?: Date; lte?: Date };
     } = {};
 
+    if (user?.dairyId) where.dairyId = user.dairyId;
     if (filters?.houseId) where.houseId = filters.houseId;
     if (filters?.shift) where.shift = filters.shift;
     if (filters?.fromDate || filters?.toDate) {
@@ -151,8 +156,10 @@ export class DeliveryLogsService {
       throw new BadRequestException('Invalid user context');
     }
 
-    const log = await this.prisma.deliveryLog.findUnique({ where: { id } });
-    if (!log) throw new NotFoundException(`Delivery log #${id} not found`);
+    const log = await this.prisma.deliveryLog.findFirst({
+      where: { id, dairyId: user.dairyId },
+    });
+    if (!log) throw new NotFoundException(`Delivery log #${id} not found in this dairy`);
 
     // Only supplier who created it can update
     if (user.role === 'supplier' && log.supplierId !== user.uuid) {
@@ -230,8 +237,10 @@ export class DeliveryLogsService {
       throw new BadRequestException('Invalid user context');
     }
 
-    const log = await this.prisma.deliveryLog.findUnique({ where: { id } });
-    if (!log) throw new NotFoundException(`Delivery log #${id} not found`);
+    const log = await this.prisma.deliveryLog.findFirst({
+      where: { id, dairyId: user.dairyId },
+    });
+    if (!log) throw new NotFoundException(`Delivery log #${id} not found in this dairy`);
 
     // Only supplier who created it or admin can delete
     if (user.role === 'supplier' && log.supplierId !== user.uuid) {

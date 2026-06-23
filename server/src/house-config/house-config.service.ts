@@ -17,6 +17,7 @@ type UserInfo = {
   email?: string;
   role: string;
   isVerified?: boolean;
+  dairyId: number;
 };
 
 @Injectable()
@@ -42,19 +43,25 @@ export class HouseConfigService {
     }
   }
 
-  private async ensureHouseExists(houseId: number) {
+  private async ensureHouseExists(houseId: number, dairyId?: number) {
     const house = await this.prisma.house.findUnique({
       where: { id: houseId },
-      select: { id: true },
+      select: { id: true, dairyId: true },
     });
 
     if (!house) {
       throw new NotFoundException(`House #${houseId} not found`);
     }
+
+    if (dairyId && house.dairyId !== dairyId) {
+      throw new NotFoundException(`House #${houseId} not found in this dairy`);
+    }
   }
 
-  async findAll(supplierId?: string) {
-    const where = supplierId ? { supplierId } : {};
+  async findAll(supplierId?: string, dairyId?: number) {
+    const where: any = {};
+    if (supplierId) where.supplierId = supplierId;
+    if (dairyId) where.dairyId = dairyId;
     return this.prisma.houseConfig.findMany({
       where,
       orderBy: { position: 'asc' },
@@ -65,9 +72,9 @@ export class HouseConfigService {
     });
   }
 
-  async findByHouse(houseId: number) {
+  async findByHouse(houseId: number, dairyId: number) {
     return this.prisma.houseConfig.findMany({
-      where: { houseId },
+      where: { houseId, dairyId },
       orderBy: { position: 'asc' },
       include: {
         supplier: { select: { uuid: true, username: true } },
@@ -75,11 +82,11 @@ export class HouseConfigService {
     });
   }
 
-  async create(dto: CreateHouseConfigDto) {
-    await this.ensureHouseExists(dto.houseId);
+  async create(dto: CreateHouseConfigDto, dairyId: number) {
+    await this.ensureHouseExists(dto.houseId, dairyId);
 
     const existing = await this.prisma.houseConfig.findFirst({
-      where: { houseId: dto.houseId },
+      where: { houseId: dto.houseId, dairyId },
     });
 
     if (existing) {
@@ -96,7 +103,7 @@ export class HouseConfigService {
     }
 
     const count = await this.prisma.houseConfig.count({
-      where: { supplierId: dto.supplierId ?? null },
+      where: { supplierId: dto.supplierId ?? null, dairyId },
     });
     try {
       return await this.prisma.houseConfig.create({
@@ -106,6 +113,7 @@ export class HouseConfigService {
           supplierId: dto.supplierId,
           position: dto.position ?? count,
           dailyAlerts: this.normalizeSingleDailyAlert(dto.dailyAlerts),
+          dairyId,
         },
         include: { house: true },
       });
@@ -123,12 +131,13 @@ export class HouseConfigService {
     }
   }
 
-  async update(id: number, dto: UpdateHouseConfigDto) {
+  async update(id: number, dto: UpdateHouseConfigDto, dairyId: number) {
     const cfg = await this.prisma.houseConfig.findUnique({ where: { id } });
     if (!cfg) throw new NotFoundException(`Config #${id} not found`);
+    if (cfg.dairyId !== dairyId) throw new NotFoundException(`Config #${id} not found`);
 
     if (dto.houseId && dto.houseId !== cfg.houseId) {
-      await this.ensureHouseExists(dto.houseId);
+      await this.ensureHouseExists(dto.houseId, dairyId);
     }
 
     const { dailyAlerts, ...rest } = dto;
@@ -146,7 +155,6 @@ export class HouseConfigService {
   }
 
   async reorder(dto: ReorderConfigDto, user?: UserInfo) {
-    // Validate input
     if (
       !dto.orderedIds ||
       !Array.isArray(dto.orderedIds) ||
@@ -155,9 +163,8 @@ export class HouseConfigService {
       throw new BadRequestException('orderedIds must be a non-empty array');
     }
 
-    // Fetch all configs being reordered
     const configs = await this.prisma.houseConfig.findMany({
-      where: { id: { in: dto.orderedIds } },
+      where: { id: { in: dto.orderedIds }, dairyId: user?.dairyId },
     });
 
     if (configs.length !== dto.orderedIds.length) {
@@ -166,9 +173,6 @@ export class HouseConfigService {
       );
     }
 
-    // Supplier permissions:
-    // - can reorder all evening configs (shared)
-    // - can reorder only their own morning configs
     if (user && user.role === 'supplier') {
       const unauthorizedConfigs = configs.filter((c) => {
         if (c.shift === Shift.evening) return false;
@@ -181,9 +185,7 @@ export class HouseConfigService {
         );
       }
     }
-    // Admins can reorder any configs
 
-    // Update positions in order
     const updates = dto.orderedIds.map((cfgId, index) =>
       this.prisma.houseConfig.update({
         where: { id: cfgId },
@@ -195,9 +197,10 @@ export class HouseConfigService {
     return { success: true, updated: configs.length };
   }
 
-  async remove(id: number) {
+  async remove(id: number, dairyId: number) {
     const cfg = await this.prisma.houseConfig.findUnique({ where: { id } });
     if (!cfg) throw new NotFoundException(`Config #${id} not found`);
+    if (cfg.dairyId !== dairyId) throw new NotFoundException(`Config #${id} not found`);
     return this.prisma.houseConfig.delete({ where: { id } });
   }
 }

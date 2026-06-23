@@ -6,8 +6,10 @@ import {
   Delete,
   Body,
   Param,
-  ParseIntPipe,
+  Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { HousesService } from './houses.service';
 import {
@@ -16,6 +18,7 @@ import {
   UpdateHouseLocationDto,
 } from './dto/house.dto';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('houses')
@@ -23,50 +26,71 @@ export class HousesController {
   constructor(private housesService: HousesService) {}
 
   @Get()
-  findAll() {
-    return this.housesService.findAll();
+  findAll(@CurrentUser('dairyId') dairyId: number) {
+    return this.housesService.findAll(dairyId);
   }
 
   @Get('stats')
-  getStats() {
-    return this.housesService.getStats();
+  getStats(@CurrentUser('dairyId') dairyId: number) {
+    return this.housesService.getStats(dairyId);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.housesService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.housesService.findOne(+id, dairyId);
   }
 
   @Post()
-  create(@Body() dto: CreateHouseDto) {
-    return this.housesService.create(dto);
+  @HttpCode(HttpStatus.CREATED)
+  create(
+    @Body() dto: CreateHouseDto,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.housesService.create(dto, dairyId);
   }
 
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHouseDto) {
-    return this.housesService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateHouseDto,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.housesService.update(+id, dto, dairyId);
   }
 
   @Patch(':id/location')
   updateLocation(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Body() dto: UpdateHouseLocationDto,
+    @CurrentUser('dairyId') dairyId: number,
   ) {
-    return this.housesService.updateLocation(id, dto);
+    return this.housesService.updateLocation(+id, dto, dairyId);
   }
 
   @Patch(':id/deactivate')
-  deactivate(@Param('id', ParseIntPipe) id: number) {
-    return this.housesService.deactivate(id);
+  deactivate(
+    @Param('id') id: string,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.housesService.deactivate(+id, dairyId);
   }
 
   @Patch(':id/reactivate')
-  reactivate(@Param('id', ParseIntPipe) id: number) {
-    return this.housesService.reactivate(id);
+  reactivate(
+    @Param('id') id: string,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.housesService.reactivate(+id, dairyId);
   }
 
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
-    return this.housesService.delete(id);
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.housesService.delete(+id, dairyId);
   }
 }

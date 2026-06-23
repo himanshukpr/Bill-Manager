@@ -9,7 +9,11 @@ const ROLE_ROUTES: Record<string, string> = {
 }
 
 // Pages only for unauthenticated users
-const AUTH_PAGES = ["/", "/signup"]
+function matchAuthPage(pathname: string): boolean {
+  if (pathname === "/" || pathname === "/signup") return true
+  if (pathname.startsWith("/dairy/")) return true
+  return false
+}
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -21,11 +25,15 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get("bill-manager-token")?.value
   const role = request.cookies.get("bill-manager-role")?.value
   const verified = request.cookies.get("bill-manager-verified")?.value
+  const dairyToken = request.cookies.get("bill-manager-dairy-token")?.value
 
   const isLoggedIn = Boolean(token && role)
+  const isDairyAuthed = Boolean(dairyToken)
   const isDashboard = pathname.startsWith("/dashboard")
-  const isAuthPage = AUTH_PAGES.includes(pathname)
+  const isAuthPage = matchAuthPage(pathname)
   const isPendingPage = pathname === "/pending"
+  const isDairyAuth = /^\/dairy\/\d+\/auth$/.test(pathname)
+  const isDairyUsers = /^\/dairy\/\d+\/users$/.test(pathname)
 
   // ── 1. Not logged in → block all dashboard routes ──────────────────────────
   if (!isLoggedIn && isDashboard) {
@@ -39,9 +47,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url))
   }
 
-  // ── 3. Already logged in → redirect away from login / signup ───────────────
+  // ── 3. Already logged in → redirect away from auth pages ───────────────────
   if (isLoggedIn && isAuthPage) {
-    // Any unverified user gets sent to /pending even from login page
     if (verified !== "true") {
       return NextResponse.redirect(new URL("/pending", request.url))
     }
@@ -54,12 +61,21 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL(dest, request.url))
   }
 
-  // ── 4. User not yet verified → block everything except /pending ─────────
+  // ── 4. Not dairy-authed → block /dairy/[id]/users (need dairy password first)
+  if (!isLoggedIn && isDairyUsers && !isDairyAuthed) {
+    // Extract dairyId from path and redirect to auth page
+    const match = pathname.match(/^\/dairy\/(\d+)\/users$/)
+    if (match) {
+      return NextResponse.redirect(new URL(`/dairy/${match[1]}/auth`, request.url))
+    }
+  }
+
+  // ── 5. User not yet verified → block everything except /pending ─────────
   if (isLoggedIn && verified !== "true" && !isPendingPage) {
     return NextResponse.redirect(new URL("/pending", request.url))
   }
 
-  // ── 5. Logged in → enforce role-based access on every dashboard prefix ──────
+  // ── 6. Logged in → enforce role-based access on every dashboard prefix ──────
   if (isLoggedIn && isDashboard) {
     for (const [prefix, requiredRole] of Object.entries(ROLE_ROUTES)) {
       if (pathname.startsWith(prefix) && role !== requiredRole) {

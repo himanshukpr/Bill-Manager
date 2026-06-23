@@ -1,19 +1,25 @@
-import { Injectable, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
-import { RegisterDto } from './dto/auth.dto';
+import { DairiesService } from '../dairies/dairies.service';
+import { RegisterDto, DairyRegisterDto, DairyLoginDto } from './dto/auth.dto';
 import { Role } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
+    private dairiesService: DairiesService,
+    private prisma: PrismaService,
   ) {}
 
-  async validateUser(username: string, password: string) {
-    const user = await this.usersService.findByUsername(username);
+  async validateUser(username: string, password: string, dairyId?: number) {
+    const user = dairyId
+      ? await this.usersService.findByUsernameInDairy(username, dairyId)
+      : await this.usersService.findByUsername(username);
 
     if (!user) return null;
 
@@ -26,11 +32,12 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
-    // Check for existing email / username
     const emailExists = await this.usersService.findByEmail(dto.email);
     if (emailExists) throw new ConflictException('Email already in use');
 
-    const usernameExists = await this.usersService.findByUsername(dto.username);
+    const usernameExists = dto.dairyId
+      ? await this.usersService.findByUsernameInDairy(dto.username, dto.dairyId)
+      : await this.usersService.findByUsername(dto.username);
     if (usernameExists) throw new ConflictException('Username already taken');
 
     const hashed = await bcrypt.hash(dto.password, 10);
@@ -39,11 +46,61 @@ export class AuthService {
       email: dto.email,
       password: hashed,
       role: dto.role ?? Role.supplier,
+      dairyId: dto.dairyId,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _pw, ...result } = user;
     return result;
+  }
+
+  async dairyRegister(dto: DairyRegisterDto) {
+    const dairy = await this.dairiesService.create({
+      name: dto.dairyName,
+      email: dto.email,
+      phone: dto.phone,
+      address: dto.address,
+      username: dto.username,
+      password: dto.password,
+      ownerName: dto.ownerName,
+    });
+
+    const dairyUser = await this.usersService.findByUsernameInDairy(dto.username, dairy.id);
+    if (!dairyUser) throw new NotFoundException('Failed to create dairy admin user');
+
+    return this.login({
+      uuid: dairyUser.uuid,
+      username: dairyUser.username,
+      email: dairyUser.email,
+      role: dairyUser.role,
+      isVerified: dairyUser.isVerified,
+      permissions: (dairyUser.permissions ?? {}) as Record<string, boolean>,
+      dairyId: dairy.id,
+    });
+  }
+
+  async dairyLogin(dto: DairyLoginDto) {
+    const dairy = await this.dairiesService.findByEmail(dto.email);
+    if (!dairy) throw new UnauthorizedException('Invalid dairy credentials');
+
+    const isMatch = await bcrypt.compare(dto.password, dairy.password);
+    if (!isMatch) throw new UnauthorizedException('Invalid dairy credentials');
+
+    if (!dairy.isActive) throw new UnauthorizedException('Dairy is inactive');
+
+    const token = this.jwtService.sign({
+      dairyId: dairy.id,
+      type: 'dairy',
+    });
+
+    return {
+      access_token: token,
+      dairy: {
+        id: dairy.id,
+        name: dairy.name,
+        email: dairy.email,
+      },
+    };
   }
 
   login(user: {
@@ -53,6 +110,7 @@ export class AuthService {
     role: string;
     isVerified: boolean;
     permissions?: Record<string, boolean>;
+    dairyId?: number;
   }) {
     const payload = {
       sub: user.uuid,
@@ -61,6 +119,7 @@ export class AuthService {
       role: user.role,
       isVerified: user.isVerified,
       permissions: user.permissions ?? {},
+      dairyId: user.dairyId ?? 0,
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -90,6 +149,7 @@ export class AuthService {
       isVerified: target.isVerified,
       permissions,
       impersonator: adminUuid,
+      dairyId: target.dairyId,
     };
 
     return {
@@ -101,6 +161,7 @@ export class AuthService {
         role: target.role,
         isVerified: target.isVerified,
         permissions,
+        dairyId: target.dairyId,
       },
     };
   }

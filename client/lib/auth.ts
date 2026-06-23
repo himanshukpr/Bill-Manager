@@ -14,6 +14,25 @@ export type SessionAuth = {
   permissions?: Record<string, boolean>
   loginAt: string
   impersonator?: string
+  dairyId: number
+}
+
+export type DairyInfo = {
+  id: number
+  name: string
+  email: string
+  phone?: string
+  address?: string
+  ownerName?: string
+  isActive?: boolean
+  createdAt?: string
+}
+
+export type DairySession = {
+  dairyToken: string
+  dairyId: number
+  dairyName: string
+  dairyEmail: string
 }
 
 // ─── Cookie helpers (used by Edge Middleware) ─────────────────────────────────
@@ -41,6 +60,7 @@ export function saveSessionAuth(auth: SessionAuth): void {
   setCookie("bill-manager-token", auth.token)
   setCookie("bill-manager-role", auth.role)
   setCookie("bill-manager-verified", String(auth.isVerified))
+  setCookie("bill-manager-dairy-id", String(auth.dairyId))
 }
 
 export function getSessionAuth(): SessionAuth | null {
@@ -67,12 +87,39 @@ export function clearSessionAuth(): void {
   deleteCookie("bill-manager-token")
   deleteCookie("bill-manager-role")
   deleteCookie("bill-manager-verified")
+  deleteCookie("bill-manager-dairy-id")
 }
 
 export function getAuthHeader(): Record<string, string> {
   const session = getSessionAuth()
   if (!session?.token) return {}
   return { Authorization: `Bearer ${session.token}` }
+}
+
+// ─── Dairy Session (dairy-level auth, separate from user auth) ───────────────
+
+const DAIRY_STORAGE_KEY = "bill-manager-dairy-session"
+
+export function saveDairySession(dairy: DairySession): void {
+  if (typeof window === "undefined") return
+  try { window.localStorage.setItem(DAIRY_STORAGE_KEY, JSON.stringify(dairy)) } catch { /* noop */ }
+  setCookie("bill-manager-dairy-token", dairy.dairyToken)
+  setCookie("bill-manager-dairy-id", String(dairy.dairyId))
+}
+
+export function getDairySession(): DairySession | null {
+  if (typeof window === "undefined") return null
+  let raw: string | null = null
+  try { raw = window.localStorage.getItem(DAIRY_STORAGE_KEY) } catch { /* noop */ }
+  if (!raw) return null
+  try { return JSON.parse(raw) as DairySession } catch { return null }
+}
+
+export function clearDairySession(): void {
+  if (typeof window === "undefined") return
+  try { window.localStorage.removeItem(DAIRY_STORAGE_KEY) } catch { /* noop */ }
+  deleteCookie("bill-manager-dairy-token")
+  deleteCookie("bill-manager-dairy-id")
 }
 
 // ─── Destination helper ───────────────────────────────────────────────────────
@@ -98,18 +145,74 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 /**
- * POST /auth/login
- * Returns the stored SessionAuth on success.
- * Throws Error with a human-readable message on failure.
+ * GET /dairies
+ * Lists all registered dairies
  */
-export async function apiLogin(
-  username: string,
-  password: string,
-): Promise<SessionAuth> {
-  const res = await fetchApi('/auth/login', {
+/**
+ * GET /dairies/:id
+ * Fetches details for a single dairy (public).
+ */
+export async function apiGetDairy(id: number): Promise<DairyInfo> {
+  const res = await fetchApi(`/dairies/${id}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  })
+  return handleResponse<DairyInfo>(res)
+}
+
+export async function apiListDairies(): Promise<DairyInfo[]> {
+  const res = await fetchApi('/dairies', {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  })
+  return handleResponse<DairyInfo[]>(res)
+}
+
+/**
+ * POST /auth/dairy/login
+ * Authenticates a dairy by email + password.
+ * Returns a dairy-scoped token (not a user token).
+ */
+export async function apiDairyLogin(email: string, password: string): Promise<DairySession> {
+  const res = await fetchApi('/auth/dairy/login', {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ email, password }),
+  })
+
+  const data = await handleResponse<{
+    access_token: string
+    dairy: { id: number; name: string; email: string }
+  }>(res)
+
+  const dairySession: DairySession = {
+    dairyToken: data.access_token,
+    dairyId: data.dairy.id,
+    dairyName: data.dairy.name,
+    dairyEmail: data.dairy.email,
+  }
+
+  saveDairySession(dairySession)
+  return dairySession
+}
+
+/**
+ * POST /auth/dairy/register
+ * Registers a new dairy with an admin user account.
+ */
+export async function apiDairyRegister(dto: {
+  dairyName: string
+  email: string
+  phone?: string
+  address?: string
+  username: string
+  password: string
+  ownerName?: string
+}): Promise<SessionAuth> {
+  const res = await fetchApi('/auth/dairy/register', {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(dto),
   })
 
   const data = await handleResponse<{
@@ -120,6 +223,7 @@ export async function apiLogin(
       email: string
       role: AppRole
       isVerified: boolean
+      dairyId: number
     }
   }>(res)
 
@@ -132,6 +236,51 @@ export async function apiLogin(
     isVerified: data.user.isVerified,
     permissions: (data.user as { permissions?: Record<string, boolean> }).permissions,
     loginAt: new Date().toISOString(),
+    dairyId: data.user.dairyId,
+  }
+
+  saveSessionAuth(session)
+  return session
+}
+
+/**
+ * POST /auth/login
+ * Logs in a user within a specific dairy.
+ * Returns the stored SessionAuth on success.
+ */
+export async function apiLogin(
+  username: string,
+  password: string,
+  dairyId?: number,
+): Promise<SessionAuth> {
+  const res = await fetchApi('/auth/login', {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password, dairyId }),
+  })
+
+  const data = await handleResponse<{
+    access_token: string
+    user: {
+      uuid: string
+      username: string
+      email: string
+      role: AppRole
+      isVerified: boolean
+      dairyId: number
+    }
+  }>(res)
+
+  const session: SessionAuth = {
+    token: data.access_token,
+    uuid: data.user.uuid,
+    username: data.user.username,
+    email: data.user.email,
+    role: data.user.role,
+    isVerified: data.user.isVerified,
+    permissions: (data.user as { permissions?: Record<string, boolean> }).permissions,
+    loginAt: new Date().toISOString(),
+    dairyId: data.user.dairyId,
   }
 
   saveSessionAuth(session)
@@ -140,13 +289,12 @@ export async function apiLogin(
 
 /**
  * POST /auth/register
- * Registers the user then auto-logs-in to obtain a JWT.
- * Returns the stored SessionAuth on success.
- * Throws Error with a human-readable message on failure.
+ * Registers a new user within a dairy and auto-logs-in.
  */
 export async function apiRegister(
   username: string,
   password: string,
+  dairyId?: number,
 ): Promise<SessionAuth> {
   const safeUsername = username.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '.').replace(/\.+/g, '.').replace(/^\.|\.$/g, '') || 'user';
   const email = `${safeUsername}@bill-manager.local`;
@@ -154,19 +302,18 @@ export async function apiRegister(
   const res = await fetchApi('/auth/register', {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, password }),
+    body: JSON.stringify({ username, email, password, dairyId }),
   })
 
   await handleResponse<unknown>(res) // throws on conflict / validation error
 
   // Auto-login after registration to get the JWT
-  return apiLogin(username, password)
+  return apiLogin(username, password, dairyId)
 }
 
 /**
  * POST /auth/impersonate/:uuid
  * Admin-only: returns a new session for the target supplier.
- * The returned session carries an `impersonator` field for traceability.
  */
 export async function apiImpersonate(uuid: string): Promise<SessionAuth> {
   const session = getSessionAuth()
@@ -188,6 +335,7 @@ export async function apiImpersonate(uuid: string): Promise<SessionAuth> {
       email: string
       role: AppRole
       isVerified: boolean
+      dairyId: number
     }
   }>(res)
 
@@ -201,6 +349,7 @@ export async function apiImpersonate(uuid: string): Promise<SessionAuth> {
     permissions: (data.user as { permissions?: Record<string, boolean> }).permissions,
     loginAt: new Date().toISOString(),
     impersonator: session.uuid,
+    dairyId: data.user.dairyId,
   }
 
   return impersonated

@@ -12,6 +12,7 @@ import { BillsModule } from './bills/bills.module';
 import { ProductRatesModule } from './product-rates/product-rates.module';
 import { DeliveryLogsModule } from './delivery-logs/delivery-logs.module';
 import { DeliveryPlansModule } from './delivery-plans/delivery-plans.module';
+import { DairiesModule } from './dairies/dairies.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { DeliveryPlansModule } from './delivery-plans/delivery-plans.module';
     ProductRatesModule,
     DeliveryLogsModule,
     DeliveryPlansModule,
+    DairiesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

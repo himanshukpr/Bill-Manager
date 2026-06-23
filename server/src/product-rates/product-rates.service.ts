@@ -14,34 +14,35 @@ import {
 export class ProductRatesService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll() {
-    const count = await this.prisma.productRate.count();
+  async findAll(dairyId: number) {
+    const count = await this.prisma.productRate.count({ where: { dairyId } });
     if (count === 0) {
       await this.prisma.productRate.createMany({
         data: [
-          { name: 'Cow Milk', unit: 'L', rate: 0 },
-          { name: 'Buffalo Milk', unit: 'L', rate: 0 },
+          { name: 'Cow Milk', unit: 'L', rate: 0, dairyId },
+          { name: 'Buffalo Milk', unit: 'L', rate: 0, dairyId },
         ],
         skipDuplicates: true,
       });
     }
 
     return this.prisma.productRate.findMany({
-      where: { isActive: true },
+      where: { dairyId, isActive: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
 
-  async create(dto: CreateProductRateDto) {
-    const exists = await this.prisma.productRate.findUnique({
-      where: { name: dto.name },
+  async create(dto: CreateProductRateDto, dairyId: number) {
+    const exists = await this.prisma.productRate.findFirst({
+      where: { name: dto.name, dairyId },
     });
 
     if (exists) {
-      throw new ConflictException('Product already exists');
+      throw new ConflictException('Product already exists in this dairy');
     }
 
     const maxSort = await this.prisma.productRate.aggregate({
+      where: { dairyId },
       _max: { sortOrder: true },
     });
 
@@ -52,24 +53,25 @@ export class ProductRatesService {
         rate: dto.rate,
         isActive: dto.isActive ?? true,
         sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
+        dairyId,
       },
     });
   }
 
-  async update(id: number, dto: UpdateProductRateDto) {
-    const existing = await this.prisma.productRate.findUnique({
-      where: { id },
+  async update(id: number, dto: UpdateProductRateDto, dairyId: number) {
+    const existing = await this.prisma.productRate.findFirst({
+      where: { id, dairyId },
     });
     if (!existing) {
-      throw new NotFoundException(`Product rate #${id} not found`);
+      throw new NotFoundException(`Product rate #${id} not found in this dairy`);
     }
 
     if (dto.name && dto.name !== existing.name) {
-      const duplicate = await this.prisma.productRate.findUnique({
-        where: { name: dto.name },
+      const duplicate = await this.prisma.productRate.findFirst({
+        where: { name: dto.name, dairyId },
       });
       if (duplicate) {
-        throw new ConflictException('Product name already in use');
+        throw new ConflictException('Product name already in use in this dairy');
       }
     }
 
@@ -82,9 +84,10 @@ export class ProductRatesService {
     });
   }
 
-  async reorder(ids: number[]) {
+  async reorder(ids: number[], dairyId: number) {
     const uniqueIds = [...new Set(ids)];
     const existingRates = await this.prisma.productRate.findMany({
+      where: { dairyId },
       select: { id: true },
     });
     const existingIds = new Set(existingRates.map((rate) => rate.id));
@@ -105,15 +108,15 @@ export class ProductRatesService {
       ),
     );
 
-    return this.findAll();
+    return this.findAll(dairyId);
   }
 
-  async remove(id: number) {
-    const existing = await this.prisma.productRate.findUnique({
-      where: { id },
+  async remove(id: number, dairyId: number) {
+    const existing = await this.prisma.productRate.findFirst({
+      where: { id, dairyId },
     });
     if (!existing) {
-      throw new NotFoundException(`Product rate #${id} not found`);
+      throw new NotFoundException(`Product rate #${id} not found in this dairy`);
     }
 
     return this.prisma.productRate.delete({ where: { id } });

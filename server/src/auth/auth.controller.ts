@@ -10,7 +10,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterDto } from './dto/auth.dto';
+import { RegisterDto, DairyRegisterDto, DairyLoginDto } from './dto/auth.dto';
 import { LocalAuthGuard, JwtAuthGuard, AdminGuard } from './guards/auth.guard';
 
 interface AuthenticatedRequest {
@@ -20,6 +20,7 @@ interface AuthenticatedRequest {
     email: string;
     role: string;
     isVerified: boolean;
+    dairyId: number;
   };
 }
 
@@ -29,7 +30,7 @@ export class AuthController {
 
   /**
    * POST /auth/register
-   * Body: { username, email, password, role? }
+   * Body: { username, email, password, role?, dairyId? }
    */
   @Post('register')
   async register(@Body() dto: RegisterDto) {
@@ -37,8 +38,30 @@ export class AuthController {
   }
 
   /**
+   * POST /auth/dairy/register
+   * Body: { dairyName, email, phone?, address?, username, password, ownerName? }
+   * Creates a new dairy with an admin user and returns JWT.
+   */
+  @Post('dairy/register')
+  @HttpCode(HttpStatus.CREATED)
+  async dairyRegister(@Body() dto: DairyRegisterDto) {
+    return this.authService.dairyRegister(dto);
+  }
+
+  /**
+   * POST /auth/dairy/login
+   * Body: { email, password }
+   * Authenticates the dairy itself (not a user). Returns a dairy-scoped token.
+   */
+  @Post('dairy/login')
+  @HttpCode(HttpStatus.OK)
+  async dairyLogin(@Body() dto: DairyLoginDto) {
+    return this.authService.dairyLogin(dto);
+  }
+
+  /**
    * POST /auth/login
-   * Body: { username, password }
+   * Body: { username, password, dairyId? }
    * LocalStrategy validates credentials and attaches user to request
    */
   @UseGuards(LocalAuthGuard)

@@ -8,6 +8,7 @@ type UserInfo = {
   email?: string;
   role: string;
   isVerified?: boolean;
+  dairyId: number;
 };
 
 @Injectable()
@@ -15,10 +16,11 @@ export class DeliveryPlansService {
   constructor(private prisma: PrismaService) {}
 
   findAll(user?: UserInfo) {
-    const where =
-      user?.role === 'supplier' && user?.uuid
-        ? { supplier_id: user.uuid }
-        : undefined;
+    const where: any = {};
+    if (user?.dairyId) where.dairyId = user.dairyId;
+    if (user?.role === 'supplier' && user?.uuid) {
+      where.supplier_id = user.uuid;
+    }
 
     return this.prisma.deliveryPlan.findMany({
       where,
@@ -40,9 +42,8 @@ export class DeliveryPlansService {
         quantity_per_go: dto.quantity_per_go,
         number_of_goes: dto.number_of_goes,
         total_quantity: dto.total_quantity,
-        users: {
-          connect: { uuid: user.uuid },
-        },
+        dairyId: user.dairyId,
+        supplier_id: user.uuid,
       },
       include: {
         users: { select: { uuid: true, username: true } },

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard, AdminGuard } from '../auth/guards/auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard)
@@ -18,8 +19,11 @@ export class UsersController {
   constructor(private usersService: UsersService) {}
 
   @Get()
-  findAll(@Query('role') role?: Role) {
-    return this.usersService.findAll(role);
+  findAll(
+    @Query('role') role?: Role,
+    @CurrentUser('dairyId') dairyId?: number,
+  ) {
+    return this.usersService.findAll(dairyId, role);
   }
 
   @UseGuards(AdminGuard)

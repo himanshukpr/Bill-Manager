@@ -15,9 +15,10 @@ export class BillsService {
     houseId: number,
     periodStart: Date,
     periodEnd: Date,
+    dairyId: number,
   ) {
     const bills = await this.prisma.bill.findMany({
-      where: { houseId },
+      where: { houseId, dairyId },
       select: {
         id: true,
         fromDate: true,
@@ -44,9 +45,10 @@ export class BillsService {
     houseId: number,
     periodStart: Date,
     periodEnd: Date,
+    dairyId: number,
   ): Promise<{ adjustedStart: Date; existingBillToDate: Date | null }> {
     const bills = await this.prisma.bill.findMany({
-      where: { houseId },
+      where: { houseId, dairyId },
       select: {
         fromDate: true,
         toDate: true,
@@ -85,12 +87,14 @@ export class BillsService {
     houseId: number,
     periodStart: Date,
     periodEnd: Date,
+    dairyId: number,
   ) {
     const [matchingBill, deliveryLogs] = await Promise.all([
-      this.getExistingBillForPeriod(houseId, periodStart, periodEnd),
+      this.getExistingBillForPeriod(houseId, periodStart, periodEnd, dairyId),
       this.prisma.deliveryLog.findMany({
         where: {
           houseId,
+          dairyId,
           deliveredAt: {
             gte: periodStart,
             lte: periodEnd,
@@ -113,9 +117,9 @@ export class BillsService {
     };
   }
 
-  private async getLatestHouseNote(houseId: number): Promise<string | null> {
+  private async getLatestHouseNote(houseId: number, dairyId: number): Promise<string | null> {
     const lastBill = await this.prisma.bill.findFirst({
-      where: { houseId },
+      where: { houseId, dairyId },
       orderBy: { generatedDate: 'desc' },
       select: { note: true },
     });
@@ -162,7 +166,7 @@ export class BillsService {
     };
   }
 
-  private async buildBillDraft(dto: GenerateBillDto) {
+  private async buildBillDraft(dto: GenerateBillDto, dairyId: number) {
     let periodStart: Date;
     let periodEnd: Date;
     let month: number;
@@ -172,7 +176,7 @@ export class BillsService {
     // If no fromDate/date provided, attempt to use the last bill's generatedDate + 1 day
     if (!dto.fromDate && !dto.date) {
       const lastBill = await this.prisma.bill.findFirst({
-        where: { houseId: dto.houseId },
+        where: { houseId: dto.houseId, dairyId },
         orderBy: { generatedDate: 'desc' },
         select: { generatedDate: true },
       });
@@ -209,6 +213,7 @@ export class BillsService {
       dto.houseId,
       periodStart,
       periodEnd,
+      dairyId,
     );
 
     const adjustedMonth = periodEnd.getMonth() + 1;
@@ -218,6 +223,7 @@ export class BillsService {
       dto.houseId,
       adjustedStart,
       periodEnd,
+      dairyId,
     );
     if (closureState.isAlreadyClosed) {
       throw new ConflictException(
@@ -225,8 +231,8 @@ export class BillsService {
       );
     }
 
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId: dto.houseId },
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId: dto.houseId, dairyId },
     });
     if (!balance)
       throw new NotFoundException(`House #${dto.houseId} balance not found`);
@@ -234,6 +240,7 @@ export class BillsService {
     const deliveryLogs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId: dto.houseId,
+        dairyId,
         billGenerated: false,
         deliveredAt: {
           gte: adjustedStart,
@@ -324,11 +331,12 @@ export class BillsService {
     };
   }
 
-  async findAll(filters?: { houseId?: number; month?: number; year?: number }) {
-    const where: { houseId?: number; month?: number; year?: number } = {};
+  async findAll(filters?: { houseId?: number; month?: number; year?: number }, dairyId?: number) {
+    const where: { houseId?: number; month?: number; year?: number; dairyId?: number } = {};
     if (filters?.houseId) where.houseId = filters.houseId;
     if (filters?.month) where.month = filters.month;
     if (filters?.year) where.year = filters.year;
+    if (dairyId) where.dairyId = dairyId;
 
     return this.prisma.bill.findMany({
       where,
@@ -339,9 +347,9 @@ export class BillsService {
     });
   }
 
-  async findOne(id: number) {
-    const bill = await this.prisma.bill.findUnique({
-      where: { id },
+  async findOne(id: number, dairyId: number) {
+    const bill = await this.prisma.bill.findFirst({
+      where: { id, dairyId },
       include: {
         house: true,
       },
@@ -350,7 +358,7 @@ export class BillsService {
     return bill;
   }
 
-  async generate(dto: GenerateBillDto) {
+  async generate(dto: GenerateBillDto, dairyId: number) {
     const {
       month,
       year,
@@ -360,12 +368,13 @@ export class BillsService {
       billItems,
       previousBalance,
       noteText,
-    } = await this.buildBillDraft(dto);
+    } = await this.buildBillDraft(dto, dairyId);
 
     const bill = await this.prisma.$transaction(async (tx) => {
       const created = await tx.bill.create({
         data: {
           houseId: dto.houseId,
+          dairyId,
           month,
           year,
           fromDate: periodStart,
@@ -384,6 +393,7 @@ export class BillsService {
       await tx.deliveryLog.updateMany({
         where: {
           houseId: dto.houseId,
+          dairyId,
           deliveredAt: {
             gte: periodStart,
             lte: periodEnd,
@@ -392,8 +402,8 @@ export class BillsService {
         data: { billGenerated: true },
       });
 
-      await tx.houseBalance.update({
-        where: { houseId: dto.houseId },
+      await tx.houseBalance.updateMany({
+        where: { houseId: dto.houseId, dairyId },
         data: {
           previousBalance: { increment: totalAmount },
           currentBalance: { decrement: totalAmount },
@@ -405,7 +415,7 @@ export class BillsService {
 
     // After creating a bill, recompute closures in case payments already cover it
     try {
-      await this.recomputeClosuresForHouse(dto.houseId);
+      await this.recomputeClosuresForHouse(dto.houseId, dairyId);
     } catch {
       // ignore errors from recompute to avoid breaking bill generation
     }
@@ -413,9 +423,9 @@ export class BillsService {
     return bill;
   }
 
-  async getPendingBills(houseId: number) {
+  async getPendingBills(houseId: number, dairyId: number) {
     const bills = await this.prisma.bill.findMany({
-      where: { houseId },
+      where: { houseId, dairyId },
       orderBy: { generatedDate: 'asc' },
       include: {
         house: { select: { id: true, houseNo: true, area: true } },
@@ -423,8 +433,8 @@ export class BillsService {
     });
 
     // Get all payments for this house
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId },
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
     });
     if (!balance) {
       throw new NotFoundException(`Balance for house #${houseId} not found`);
@@ -498,8 +508,9 @@ export class BillsService {
     return billsWithPending;
   }
 
-  async generateAll(dto: GenerateAllBillsDto) {
+  async generateAll(dto: GenerateAllBillsDto, dairyId: number) {
     const houses = await this.prisma.house.findMany({
+      where: { dairyId },
       select: { id: true, houseNo: true },
       orderBy: { id: 'asc' },
     });
@@ -520,7 +531,7 @@ export class BillsService {
           fromDate: dto.fromDate,
           toDate: dto.toDate,
           note: dto.note,
-        });
+        }, dairyId);
         generated.push({
           houseId: house.id,
           houseNo: house.houseNo,
@@ -554,6 +565,7 @@ export class BillsService {
   async preview(
     houseId: number,
     period: { date?: string; fromDate?: string; toDate?: string },
+    dairyId: number,
   ) {
     const { periodStart, periodEnd } = this.resolvePeriod(period);
 
@@ -561,16 +573,18 @@ export class BillsService {
       houseId,
       periodStart,
       periodEnd,
+      dairyId,
     );
 
     const closureState = await this.getPeriodClosureState(
       houseId,
       adjustedStart,
       periodEnd,
+      dairyId,
     );
 
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId },
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
     });
     if (!balance)
       throw new NotFoundException(`House #${houseId} balance not found`);
@@ -578,6 +592,7 @@ export class BillsService {
     const deliveryLogs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId,
+        dairyId,
         billGenerated: false,
         deliveredAt: {
           gte: adjustedStart,
@@ -599,7 +614,7 @@ export class BillsService {
       grandTotal: totalAmount + previousBalance,
       logCount: deliveryLogs.length,
       existingBillId: closureState.matchingBillId,
-      lastNote: await this.getLatestHouseNote(houseId),
+      lastNote: await this.getLatestHouseNote(houseId, dairyId),
       isAlreadyClosed: closureState.isAlreadyClosed,
       alreadyClosedMessage: closureState.alreadyClosedMessage,
       isDurationAlreadyCreated: false,
@@ -612,8 +627,8 @@ export class BillsService {
     };
   }
 
-  async remove(id: number) {
-    const bill = await this.findOne(id);
+  async remove(id: number, dairyId: number) {
+    const bill = await this.findOne(id, dairyId);
 
     const periodStart = new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
     const periodEnd = new Date(bill.generatedDate);
@@ -621,11 +636,14 @@ export class BillsService {
     const billTotal = Number(bill.totalAmount ?? 0);
 
     return this.prisma.$transaction(async (tx) => {
-      const deleted = await tx.bill.delete({ where: { id } });
+      const deleted = await tx.bill.delete({
+        where: { id },
+      });
 
       await tx.deliveryLog.updateMany({
         where: {
           houseId: bill.houseId,
+          dairyId,
           deliveredAt: {
             gte: periodStart,
             lte: periodEnd,
@@ -634,8 +652,8 @@ export class BillsService {
         data: { billGenerated: false },
       });
 
-      await tx.houseBalance.update({
-        where: { houseId: bill.houseId },
+      await tx.houseBalance.updateMany({
+        where: { houseId: bill.houseId, dairyId },
         data: {
           previousBalance: { decrement: billTotal },
           currentBalance: { increment: billTotal },
@@ -657,15 +675,16 @@ export class BillsService {
     return bills;
   }
 
-  async getDashboardStats() {
+  async getDashboardStats(dairyId: number) {
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
 
     const [totalBills, billsThisMonth, totalBalance] = await Promise.all([
-      this.prisma.bill.count(),
-      this.prisma.bill.count({ where: { month, year } }),
+      this.prisma.bill.count({ where: { dairyId } }),
+      this.prisma.bill.count({ where: { month, year, dairyId } }),
       this.prisma.houseBalance.aggregate({
+        where: { dairyId },
         _sum: { previousBalance: true },
       }),
     ]);
@@ -678,9 +697,9 @@ export class BillsService {
   }
 
   // Recompute bill closures for a house by allocating payments to oldest outstanding bills
-  async recomputeClosuresForHouse(houseId: number) {
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId },
+  async recomputeClosuresForHouse(houseId: number, dairyId: number) {
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
     });
     if (!balance) return;
 
@@ -690,7 +709,7 @@ export class BillsService {
     });
 
     const bills = await this.prisma.bill.findMany({
-      where: { houseId },
+      where: { houseId, dairyId },
       orderBy: { generatedDate: 'asc' },
       select: {
         id: true,

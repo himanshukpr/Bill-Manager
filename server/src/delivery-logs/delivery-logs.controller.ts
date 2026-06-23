@@ -8,24 +8,16 @@ import {
   Patch,
   Post,
   Query,
-  Request,
   UseGuards,
 } from '@nestjs/common';
 import { Shift } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import {
   CreateDeliveryLogDto,
   UpdateDeliveryLogDto,
 } from './dto/delivery-log.dto';
 import { DeliveryLogsService } from './delivery-logs.service';
-
-interface RequestUser {
-  uuid: string;
-  username: string;
-  email: string;
-  role: string;
-  isVerified: boolean;
-}
 
 @UseGuards(JwtAuthGuard)
 @Controller('delivery-logs')
@@ -38,7 +30,7 @@ export class DeliveryLogsController {
     @Query('shift') shift?: string,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
-    @Request() req?: { user: RequestUser },
+    @CurrentUser() user?: any,
   ) {
     const parsedShift =
       shift === 'morning' || shift === 'evening' ? (shift as Shift) : undefined;
@@ -50,32 +42,32 @@ export class DeliveryLogsController {
         fromDate,
         toDate,
       },
-      req?.user,
+      user,
     );
   }
 
   @Post()
   create(
     @Body() dto: CreateDeliveryLogDto,
-    @Request() req: { user: RequestUser },
+    @CurrentUser() user: any,
   ) {
-    return this.service.create(dto, req.user);
+    return this.service.create(dto, user);
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateDeliveryLogDto,
-    @Request() req: { user: RequestUser },
+    @CurrentUser() user: any,
   ) {
-    return this.service.update(id, dto, req.user);
+    return this.service.update(id, dto, user);
   }
 
   @Delete(':id')
   remove(
     @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user: RequestUser },
+    @CurrentUser() user: any,
   ) {
-    return this.service.remove(id, req.user);
+    return this.service.remove(id, user);
   }
 }

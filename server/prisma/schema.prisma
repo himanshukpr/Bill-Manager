@@ -6,24 +6,55 @@ datasource db {
   provider = "mysql"
 }
 
+model Dairy {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(200)
+  email     String   @unique @db.VarChar(255)
+  password  String   @default("") @db.VarChar(255)
+  phone     String?  @db.VarChar(20)
+  address   String?  @db.Text
+  ownerName String   @default("") @db.VarChar(200)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users         User[]
+  houses        House[]
+  productRates  ProductRate[]
+  houseConfigs  HouseConfig[]
+  houseBalances HouseBalance[]
+  bills         Bill[]
+  billNotes     BillNote[]
+  deliveryLogs  DeliveryLog[]
+  deliveryPlans DeliveryPlan[]
+  payments      PaymentHistory[]
+
+  @@map("dairies")
+}
+
 model User {
-  uuid          String         @id @default(uuid()) 
-  username      String         @unique
-  email         String         @unique
-  password      String
+  uuid          String         @id @default(uuid())
+  username      String         @db.VarChar(100)
+  email         String         @unique @db.VarChar(255)
+  password      String         @db.VarChar(255)
   role          Role           @default(supplier)
   createdAt     DateTime       @default(now()) @map("created_at")
   isVerified    Boolean        @default(false)
   permissions   Json           @default("{}")
+  dairyId       Int
+  dairy         Dairy          @relation(fields: [dairyId], references: [id])
+
   deliveries    DeliveryLog[]
   deliveryPlans DeliveryPlan[]
   houseConfigs  HouseConfig[]
 
+  @@unique([dairyId, username])
+  @@index([dairyId])
   @@map("users")
 }
 
 model House {
-  houseNo          String        @unique @map("house_no")
+  houseNo          String        @map("house_no")
   area             String?
   phoneNo          String?       @map("phone_no")
   alternativePhone String?       @map("alternative_phone")
@@ -37,26 +68,34 @@ model House {
   location         String?
   active           Boolean       @default(true)
   id               Int           @id @default(autoincrement())
+  dairyId          Int
+  dairy            Dairy         @relation(fields: [dairyId], references: [id])
+
   bills            Bill[]
   deliveries       DeliveryLog[]
   balance          HouseBalance?
   configs          HouseConfig?
 
+  @@unique([dairyId, houseNo])
+  @@index([dairyId])
   @@map("houses")
 }
 
 model HouseConfig {
   id          Int      @id @default(autoincrement())
   shift       Shift
-  supplierId  String?  @map("supplier_id") 
+  supplierId  String?  @map("supplier_id")
   position    Int      @default(0)
   dailyAlerts String?  @map("daily_alerts")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
   houseId     Int      @unique @map("house_id")
+  dairyId     Int
   house       House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier    User?    @relation(fields: [supplierId], references: [uuid])
+  dairy       Dairy    @relation(fields: [dairyId], references: [id])
 
+  @@index([dairyId])
   @@map("house_configs")
 }
 
@@ -66,9 +105,12 @@ model HouseBalance {
   currentBalance  Decimal          @default(0) @map("current_balance") @db.Decimal(10, 2)
   updatedAt       DateTime         @updatedAt @map("updated_at")
   houseId         Int              @unique @map("house_id")
+  dairyId         Int
   house           House            @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  dairy           Dairy            @relation(fields: [dairyId], references: [id])
   payments        PaymentHistory[]
 
+  @@index([dairyId])
   @@map("house_balances")
 }
 
@@ -81,8 +123,11 @@ model PaymentHistory {
   createdAt  DateTime     @default(now()) @map("created_at")
   paidAt     DateTime     @default(now()) @map("paid_at")
   billIds    Json?        @map("bill_ids")
+  dairyId    Int
   balance    HouseBalance @relation(fields: [balanceRef], references: [id], onDelete: Cascade)
+  dairy      Dairy        @relation(fields: [dairyId], references: [id])
 
+  @@index([dairyId])
   @@map("payment_history")
 }
 
@@ -100,9 +145,12 @@ model Bill {
   note              String?
   houseId           Int        @map("house_id")
   outstandingAmount Decimal?   @map("outstanding_amount") @db.Decimal(10, 2)
+  dairyId           Int
   notes             BillNote[]
   house             House      @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  dairy             Dairy      @relation(fields: [dairyId], references: [id])
 
+  @@index([dairyId])
   @@map("bills")
 }
 
@@ -111,27 +159,34 @@ model BillNote {
   billId  Int     @map("bill_id")
   note    Json
   houseNo String? @map("house_no")
+  dairyId Int
   bill    Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+  dairy   Dairy   @relation(fields: [dairyId], references: [id])
 
+  @@index([dairyId])
   @@map("bill_notes")
 }
 
 model ProductRate {
   id        Int      @id @default(autoincrement())
-  name      String   @unique
+  name      String
   unit      String   @default("L")
   rate      Decimal  @db.Decimal(10, 2)
   isActive  Boolean  @default(true) @map("is_active")
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  dairyId   Int
+  dairy     Dairy    @relation(fields: [dairyId], references: [id])
 
+  @@unique([dairyId, name])
+  @@index([dairyId])
   @@map("product_rates")
 }
 
 model DeliveryLog {
   id             Int      @id @default(autoincrement())
-  supplierId     String?  @map("supplier_id") 
+  supplierId     String?  @map("supplier_id")
   shift          Shift
   items          Json
   totalAmount    Decimal  @map("total_amount") @db.Decimal(10, 2)
@@ -143,26 +198,32 @@ model DeliveryLog {
   isClosed       Boolean  @default(false) @map("is_closed_log")
   houseId        Int      @map("house_id")
   createdAt      DateTime @default(now()) @map("created_at")
+  dairyId        Int
   house          House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
   supplier       User?    @relation(fields: [supplierId], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+  dairy          Dairy    @relation(fields: [dairyId], references: [id])
 
   @@index([houseId, deliveredAt])
   @@index([supplierId, deliveredAt])
+  @@index([dairyId])
   @@map("delivery_logs")
 }
 
 model DeliveryPlan {
   id              Int      @id @default(autoincrement())
-  supplier_id     String   @map("supplier_id") 
+  supplier_id     String   @map("supplier_id")
   product_name    String   @map("product_name")
   quantity_per_go Decimal  @map("quantity_per_go") @db.Decimal(10, 2)
   number_of_goes  Int      @map("number_of_goes")
   total_quantity  Decimal  @map("total_quantity") @db.Decimal(10, 2)
-  created_at      DateTime @default(now()) @map("created_at") 
-  updated_at      DateTime @default(now()) @map("updated_at") 
+  created_at      DateTime @default(now()) @map("created_at")
+  updated_at      DateTime @default(now()) @map("updated_at")
+  dairyId         Int
   users           User     @relation(fields: [supplier_id], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+  dairy           Dairy    @relation(fields: [dairyId], references: [id])
 
   @@index([supplier_id, created_at])
+  @@index([dairyId])
   @@map("delivery_plans")
 }
 

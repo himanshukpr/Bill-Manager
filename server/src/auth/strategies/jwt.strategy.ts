@@ -11,6 +11,7 @@ export interface JwtPayload {
   isVerified: boolean;
   permissions?: Record<string, boolean>;
   impersonator?: string;
+  dairyId: number;
 }
 
 @Injectable()
@@ -32,6 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       isVerified: payload.isVerified,
       permissions: payload.permissions ?? {},
       impersonator: payload.impersonator,
+      dairyId: payload.dairyId,
     };
   }
 }

@@ -12,9 +12,9 @@ export class HouseBalanceService {
     private billsService: BillsService,
   ) { }
 
-  async getBalance(houseId: number) {
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId },
+  async getBalance(houseId: number, dairyId: number) {
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
       include: {
         payments: {
           orderBy: { createdAt: 'desc' },
@@ -34,17 +34,22 @@ export class HouseBalanceService {
     return balance;
   }
 
-  async recordPayment(dto: RecordPaymentDto) {
-    let balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId: dto.houseId },
+  async recordPayment(dto: RecordPaymentDto, dairyId: number) {
+    let balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId: dto.houseId, dairyId },
     });
     if (!balance) {
+      const house = await this.prisma.house.findFirst({
+        where: { id: dto.houseId, dairyId },
+        select: { id: true },
+      });
+      if (!house)
+        throw new NotFoundException(`House #${dto.houseId} not found in this dairy`);
       balance = await this.prisma.houseBalance.create({
-        data: { houseId: dto.houseId },
+        data: { houseId: dto.houseId, dairyId },
       });
     }
 
-    // Calculate total amount including discount
     const totalAmount = dto.amount + (dto.discount || 0);
 
     const [payment, updatedBalance] = await this.prisma.$transaction([
@@ -54,12 +59,13 @@ export class HouseBalanceService {
           amount: dto.amount,
           note: dto.note,
           discount: dto.discount || 0,
+          dairyId,
           ...(dto.paidAt ? { paidAt: new Date(dto.paidAt) } : {}),
           ...(dto.billIds ? { billIds: dto.billIds } : {}),
         },
       }),
       this.prisma.houseBalance.update({
-        where: { houseId: dto.houseId },
+        where: { id: balance.id },
         data: {
           previousBalance: {
             decrement: totalAmount,
@@ -68,10 +74,9 @@ export class HouseBalanceService {
       }),
     ]);
 
-    // Deduct the payment from the latest bill's outstandingAmount
     try {
       const latestBill = await this.prisma.bill.findFirst({
-        where: { houseId: dto.houseId },
+        where: { houseId: dto.houseId, dairyId },
         orderBy: { generatedDate: 'desc' },
         select: { id: true, totalAmount: true, outstandingAmount: true },
       });
@@ -94,9 +99,9 @@ export class HouseBalanceService {
     return { payment, balance: updatedBalance };
   }
 
-  async getPaymentHistory(houseId: number) {
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId },
+  async getPaymentHistory(houseId: number, dairyId: number) {
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
     });
     if (!balance) return [];
 
@@ -106,8 +111,9 @@ export class HouseBalanceService {
     });
   }
 
-  async getAllPaymentHistory() {
+  async getAllPaymentHistory(dairyId: number) {
     return this.prisma.paymentHistory.findMany({
+      where: { dairyId },
       orderBy: { createdAt: 'desc' },
       include: {
         balance: {
@@ -119,25 +125,39 @@ export class HouseBalanceService {
     });
   }
 
-  async updatePreviousBalance(houseId: number, previousBalance: number) {
-    return this.prisma.houseBalance.upsert({
-      where: { houseId },
-      create: { houseId, previousBalance },
-      update: { previousBalance },
+  async updatePreviousBalance(houseId: number, previousBalance: number, dairyId: number) {
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
+    });
+    if (balance) {
+      return this.prisma.houseBalance.update({
+        where: { id: balance.id },
+        data: { previousBalance },
+      });
+    }
+    return this.prisma.houseBalance.create({
+      data: { houseId, previousBalance, dairyId },
     });
   }
 
-  async updateCurrentBalance(houseId: number, currentBalance: number) {
-    return this.prisma.houseBalance.upsert({
-      where: { houseId },
-      create: { houseId, currentBalance },
-      update: { currentBalance },
+  async updateCurrentBalance(houseId: number, currentBalance: number, dairyId: number) {
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
+    });
+    if (balance) {
+      return this.prisma.houseBalance.update({
+        where: { id: balance.id },
+        data: { currentBalance },
+      });
+    }
+    return this.prisma.houseBalance.create({
+      data: { houseId, currentBalance, dairyId },
     });
   }
 
-  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number; paidAt?: string }) {
-    const payment = await this.prisma.paymentHistory.findUnique({
-      where: { id },
+  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number; paidAt?: string }, dairyId: number) {
+    const payment = await this.prisma.paymentHistory.findFirst({
+      where: { id, dairyId },
       include: { balance: true },
     });
     if (!payment)
@@ -153,12 +173,11 @@ export class HouseBalanceService {
     const newTotal =
       (dto.amount ?? Number(payment.amount)) +
       (dto.discount ?? Number(payment.discount ?? 0));
-    const delta = +(oldTotal - newTotal).toFixed(2); // positive = refund, negative = more to deduct
+    const delta = +(oldTotal - newTotal).toFixed(2);
 
     if (delta !== 0) {
-      // Find the bill that was current when this payment was recorded
       const billAtPaymentTime = await this.prisma.bill.findFirst({
-        where: { houseId: payment.balance.houseId, generatedDate: { lte: payment.createdAt } },
+        where: { houseId: payment.balance.houseId, dairyId, generatedDate: { lte: payment.createdAt } },
         orderBy: { generatedDate: 'desc' },
         select: { id: true, outstandingAmount: true, totalAmount: true },
       });
@@ -209,9 +228,9 @@ export class HouseBalanceService {
     return { updated: true };
   }
 
-  async deletePayment(id: number) {
-    const payment = await this.prisma.paymentHistory.findUnique({
-      where: { id },
+  async deletePayment(id: number, dairyId: number) {
+    const payment = await this.prisma.paymentHistory.findFirst({
+      where: { id, dairyId },
       include: { balance: true },
     });
     if (!payment)
@@ -219,14 +238,12 @@ export class HouseBalanceService {
 
     const totalAmount = Number(payment.amount) + Number(payment.discount ?? 0);
 
-    // Find the bill that was adjusted when this payment was recorded
     const billAtPaymentTime = await this.prisma.bill.findFirst({
-      where: { houseId: payment.balance.houseId, generatedDate: { lte: payment.createdAt } },
+      where: { houseId: payment.balance.houseId, dairyId, generatedDate: { lte: payment.createdAt } },
       orderBy: { generatedDate: 'desc' },
       select: { id: true, outstandingAmount: true, totalAmount: true },
     });
 
-    // Reverse bill outstanding adjustment on the bill that was current at payment time
     if (billAtPaymentTime) {
       const billOutstanding = Number(billAtPaymentTime.outstandingAmount ?? billAtPaymentTime.totalAmount ?? 0);
       const newOutstanding = +(billOutstanding + totalAmount).toFixed(2);
@@ -265,8 +282,7 @@ export class HouseBalanceService {
     return { deleted: true };
   }
 
-  // Close a date range by generating a bill + recording payment
-  async closePeriod(dto: ClosePeriodDto) {
+  async closePeriod(dto: ClosePeriodDto, dairyId: number) {
     const { houseId, fromDate, toDate, note } = dto;
 
     const periodStart = new Date(fromDate);
@@ -281,6 +297,7 @@ export class HouseBalanceService {
       houseId,
       periodStart,
       periodEnd,
+      dairyId,
     );
     if (closureState.isAlreadyClosed) {
       throw new BadRequestException(
@@ -291,6 +308,7 @@ export class HouseBalanceService {
     const logs = await this.prisma.deliveryLog.findMany({
       where: {
         houseId,
+        dairyId,
         deliveredAt: { gte: periodStart, lte: periodEnd },
         isClosed: false,
       },
@@ -310,7 +328,6 @@ export class HouseBalanceService {
       typeof dto.amount === 'number' ? dto.amount : billTotal;
     const logIds = logs.map((l) => l.id);
 
-    // Aggregate items from delivery logs (same logic as buildBillDraft)
     const itemSummary = new Map<
       string,
       { name: string; qty: number; rate: number; amount: number }
@@ -358,8 +375,8 @@ export class HouseBalanceService {
       });
     }
 
-    const balance = await this.prisma.houseBalance.findUnique({
-      where: { houseId },
+    const balance = await this.prisma.houseBalance.findFirst({
+      where: { houseId, dairyId },
     });
     if (!balance)
       throw new NotFoundException(`House #${houseId} balance not found`);
@@ -368,6 +385,7 @@ export class HouseBalanceService {
       this.prisma.bill.create({
         data: {
           houseId,
+          dairyId,
           month,
           year,
           fromDate: periodStart,
@@ -387,12 +405,13 @@ export class HouseBalanceService {
           balanceRef: balance.id,
           amount: amountToApply,
           note: note ?? `Closed period ${fromDate} - ${toDate}`,
+          dairyId,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           billIds: logIds as unknown as any,
         },
       }),
       this.prisma.houseBalance.update({
-        where: { houseId },
+        where: { id: balance.id },
         data: {
           previousBalance: { increment: billTotal - amountToApply },
           currentBalance: { decrement: billTotal },
@@ -405,7 +424,7 @@ export class HouseBalanceService {
     ]);
 
     try {
-      await this.billsService.recomputeClosuresForHouse(houseId);
+      await this.billsService.recomputeClosuresForHouse(houseId, dairyId);
     } catch {
       // ignore
     }

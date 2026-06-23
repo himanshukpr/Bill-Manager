@@ -13,7 +13,14 @@ export class UsersService {
   }
 
   async findByUsername(username: string) {
-    return this.prisma.user.findUnique({ where: { username } });
+    // Returns first match (fallback for backward compat / non-dairy queries)
+    return this.prisma.user.findFirst({ where: { username } });
+  }
+
+  async findByUsernameInDairy(username: string, dairyId: number) {
+    return this.prisma.user.findFirst({
+      where: { username, dairyId },
+    });
   }
 
   async findById(uuid: string) {
@@ -26,12 +33,15 @@ export class UsersService {
     password: string;
     role?: Role;
     isVerified?: boolean;
+    dairyId?: number;
   }) {
-    return this.prisma.user.create({ data });
+    return this.prisma.user.create({ data: data as any });
   }
 
-  async findAll(role?: Role) {
-    const where = role ? { role } : {};
+  async findAll(dairyId?: number, role?: Role) {
+    const where: { role?: Role; dairyId?: number } = {};
+    if (role) where.role = role;
+    if (dairyId) where.dairyId = dairyId;
     return this.prisma.user.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -43,6 +53,7 @@ export class UsersService {
         isVerified: true,
         createdAt: true,
         permissions: true,
+        dairyId: true,
       },
     });
   }

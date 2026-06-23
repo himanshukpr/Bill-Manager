@@ -135,3 +135,72 @@ None.
 - `seed-may-v2.ts` now seeds May 1–31, 2026 only (no April/June logs)
 - Current seeded state: 5 users, 200 houses, 6 product rates, 200 house configs, 200 balances, 6,200 delivery logs, 5 delivery plans, 0 bills, 0 payments
 - Added `suppliers` to dependency array
+
+### 24. Multi-Dairy (Multi-Tenant) Architecture — Full Refactor
+
+#### Overview
+- **New `Dairy` model** in Prisma schema (`server/prisma/schema.prisma`) — each Dairy is a tenant with its own isolated data
+- **Every entity scoped by `dairyId`**: User, House, ProductRate, HouseConfig, HouseBalance, PaymentHistory, Bill, BillNote, DeliveryLog, DeliveryPlan
+- **Usernames are unique per dairy** (`@@unique([dairyId, username])`) — same username can exist in different dairies
+- **House numbers are unique per dairy** (`@@unique([dairyId, houseNo])`)
+- **Product rate names are unique per dairy** (`@@unique([dairyId, name])`)
+- **Email is globally unique** (across all dairies)
+
+#### Auth Flow
+- **`GET /dairies`** — Public endpoint listing all registered dairies (for dairy selection on login page)
+- **`POST /auth/dairy/register`** — Public endpoint to register a new dairy with an admin user account
+  - Body: `{ dairyName, email, phone?, address?, username, password, ownerName? }`
+  - Creates Dairy record + admin User, returns JWT with `dairyId`
+- **`POST /auth/login`** — Now accepts optional `dairyId` in body
+  - When `dairyId` provided, login is scoped to that dairy (`findFirst` with username + dairyId)
+  - JWT payload now includes `dairyId`
+- **`POST /auth/register`** — Creates user within a dairy (requires `dairyId` in body)
+
+#### Server Files Created/Modified
+
+**New files:**
+- `server/src/dairies/dairies.module.ts` — `DairiesModule`
+- `server/src/dairies/dairies.controller.ts` — CRUD for dairies (`GET /dairies`, `GET /dairies/:id`, `POST /dairies`, etc.)
+- `server/src/dairies/dairies.service.ts` — Dairy CRUD logic
+- `server/src/dairies/dto/dairy.dto.ts` — CreateDairyDto, UpdateDairyDto
+- `server/src/common/decorators/current-user.decorator.ts` — `@CurrentUser()` parameter decorator
+
+**Modified files (all server modules):**
+- `server/prisma/schema.prisma` — Dairy model + dairyId on all entities
+- `server/src/auth/auth.module.ts` — Imports DairiesModule + PrismaModule
+- `server/src/auth/auth.service.ts` — Dairy registration, dairy-scoped login, JWT with dairyId
+- `server/src/auth/auth.controller.ts` — New `/auth/dairy/register` endpoint
+- `server/src/auth/dto/auth.dto.ts` — New `DairyRegisterDto`, updated `LoginDto` with `dairyId`
+- `server/src/auth/strategies/local.strategy.ts` — `passReqToCallback: true`, reads `dairyId` from body
+- `server/src/auth/strategies/jwt.strategy.ts` — Added `dairyId` to `JwtPayload` + validated return
+- `server/src/app.module.ts` — Added `DairiesModule` to imports
+- ALL controllers — Added `@CurrentUser('dairyId') dairyId` parameter, pass to services
+- ALL services — Added `dairyId` parameter to all methods, added `where: { dairyId }` filters
+- `server/src/users/users.service.ts` — Added `findByUsernameInDairy()`, updated `findAll()` to accept `dairyId`
+
+#### Client Files Modified/Created
+
+**New files:**
+- `client/components/auth/dairy-login-form.tsx` — Login form with dairy selector dropdown + username/password
+- `client/components/auth/dairy-register-form.tsx` — Dairy registration form (dairy details + admin credentials)
+- `client/app/dairy/register/page.tsx` — Server component wrapping `DairyRegisterForm`
+
+**Modified files:**
+- `client/lib/auth.ts` — `SessionAuth` now includes `dairyId`, new functions: `apiListDairies()`, `apiDairyRegister()`, updated `apiLogin()`/`apiRegister()` with `dairyId` param
+- `client/app/page.tsx` — Changed from `LoginForm` to `DairyLoginForm` (dairy selection + login)
+- `client/middleware.ts` — Added `/dairy/register` to `AUTH_PAGES` (redirect authenticated users away)
+
+#### New Login Flow
+1. **`/`** → Shows dairy selector dropdown (fetched from `GET /dairies`) + username/password fields
+   - "Register New Dairy" link at bottom
+2. **`/dairy/register`** → Registration form: dairy name, email, phone, address, admin username, password
+   - Creates dairy + admin user, auto-logs-in
+3. After login → Redirected to dashboard (`/dashboard/admin` or `/dashboard/supplier` or `/dashboard/member`)
+4. All API calls automatically carry `dairyId` in JWT → server scopes all queries
+
+#### Testing
+- Server + Client both compile with zero TypeScript errors
+- Database seeded with 1 dairy (GNK Dairy), 200 houses, 5 users, 6200 delivery logs
+- Verified: data isolation between dairies (dairy 2 sees 0 houses)
+- Verified: login works with dairyId, JWT carries dairyId
+- Verified: dairy registration creates new tenant

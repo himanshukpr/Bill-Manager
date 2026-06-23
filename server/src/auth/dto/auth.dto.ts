@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   MinLength,
+  IsNumber,
 } from 'class-validator';
 import { Role } from '@prisma/client';
 
@@ -23,6 +24,10 @@ export class RegisterDto {
   @IsEnum(Role)
   @IsOptional()
   role?: Role;
+
+  @IsNumber()
+  @IsOptional()
+  dairyId?: number;
 }
 
 export class LoginDto {
@@ -32,5 +37,47 @@ export class LoginDto {
 
   @IsString()
   @IsNotEmpty()
+  password: string;
+
+  @IsNumber()
+  @IsOptional()
+  dairyId?: number;
+}
+
+export class DairyRegisterDto {
+  @IsString()
+  @IsNotEmpty()
+  dairyName: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  username: string;
+
+  @IsString()
+  @MinLength(6)
+  password: string;
+
+  @IsString()
+  @IsOptional()
+  ownerName?: string;
+}
+
+export class DairyLoginDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @MinLength(6)
   password: string;
 }

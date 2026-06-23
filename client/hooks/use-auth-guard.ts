@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-import { getSessionAuth, type AppRole, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, clearSessionAuth, type AppRole, type SessionAuth } from '@/lib/auth'
 
 export function useAuthGuard(requiredRole: AppRole) {
   const router = useRouter()
@@ -17,6 +17,8 @@ export function useAuthGuard(requiredRole: AppRole) {
       const session = getSessionAuth()
 
       if (!session?.token || session.role !== requiredRole) {
+        // Clear cookies + localStorage so middleware doesn't redirect back
+        clearSessionAuth()
         router.replace('/')
         return false
       }

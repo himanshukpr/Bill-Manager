@@ -24,28 +24,42 @@ async function main() {
   await prisma.productRate.deleteMany();
   await prisma.house.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.dairy.deleteMany();
 
   const hashedPassword = await bcrypt.hash('123123', 10);
 
+  // ─── Dairy ────────────────────────────────────────────
+  const dairy = await prisma.dairy.create({
+    data: {
+      name: 'GNK Dairy',
+      email: 'gnk@example.com',
+      password: hashedPassword,
+      phone: '9876543210',
+      address: 'Main Market, Ganaur',
+      ownerName: 'G.N. Kamboj',
+    },
+  });
+  console.log('  ✓ Dairy created');
+
   // ─── Users ───────────────────────────────────────────
   const admin = await prisma.user.create({
-    data: { username: 'admin', email: 'admin@example.com', password: hashedPassword, role: Role.admin, isVerified: true },
+    data: { username: 'admin', email: 'admin@example.com', password: hashedPassword, role: Role.admin, isVerified: true, dairyId: dairy.id },
   });
 
   const raj = await prisma.user.create({
-    data: { username: 'rajesh', email: 'rajesh@example.com', password: hashedPassword, role: Role.supplier, isVerified: true },
+    data: { username: 'rajesh', email: 'rajesh@example.com', password: hashedPassword, role: Role.supplier, isVerified: true, dairyId: dairy.id },
   });
 
   const amit = await prisma.user.create({
-    data: { username: 'amit', email: 'amit@example.com', password: hashedPassword, role: Role.supplier, isVerified: true },
+    data: { username: 'amit', email: 'amit@example.com', password: hashedPassword, role: Role.supplier, isVerified: true, dairyId: dairy.id },
   });
 
   const suresh = await prisma.user.create({
-    data: { username: 'suresh', email: 'suresh@example.com', password: hashedPassword, role: Role.supplier, isVerified: true },
+    data: { username: 'suresh', email: 'suresh@example.com', password: hashedPassword, role: Role.supplier, isVerified: true, dairyId: dairy.id },
   });
 
   await prisma.user.create({
-    data: { username: 'pending_user', email: 'pending@example.com', password: hashedPassword, role: Role.supplier, isVerified: false },
+    data: { username: 'pending_user', email: 'pending@example.com', password: hashedPassword, role: Role.supplier, isVerified: false, dairyId: dairy.id },
   });
 
   console.log('  ✓ Users created');
@@ -67,7 +81,8 @@ async function main() {
       rate2Type: i % 3 === 0 ? 'Buffalo Milk' : i % 3 === 1 ? 'Curd' : null, 
       rate2: i % 3 === 0 ? 70 : i % 3 === 1 ? 40 : null,
       location: '28.6129,77.2295',
-      description: `Rajesh house ${i}`
+      description: `Rajesh house ${i}`,
+      dairyId: dairy.id,
     });
   }
   
@@ -80,7 +95,8 @@ async function main() {
       rate2Type: i % 4 === 0 ? 'Buffalo Milk' : i % 4 === 1 ? 'Buttermilk' : null, 
       rate2: i % 4 === 0 ? 70 : i % 4 === 1 ? 30 : null,
       location: '28.6140,77.2300',
-      description: `Amit house ${i}`
+      description: `Amit house ${i}`,
+      dairyId: dairy.id,
     });
   }
   
@@ -93,7 +109,8 @@ async function main() {
       rate2Type: i % 5 === 0 ? 'Curd' : null, 
       rate2: i % 5 === 0 ? 40 : null,
       location: '28.6160,77.2320',
-      description: `Suresh house ${i}`
+      description: `Suresh house ${i}`,
+      dairyId: dairy.id,
     });
   }
 
@@ -105,16 +122,16 @@ async function main() {
 
   // ─── Product Rates ───────────────────────────────────
   const productRatesData = [
-    { name: 'Cow Milk', unit: 'L', rate: 55, sortOrder: 0 },
-    { name: 'Buffalo Milk', unit: 'L', rate: 70, sortOrder: 1 },
-    { name: 'Curd', unit: 'Kg', rate: 40, sortOrder: 2 },
-    { name: 'Buttermilk', unit: 'L', rate: 30, sortOrder: 3 },
-    { name: 'Paneer', unit: 'Kg', rate: 200, sortOrder: 4 },
-    { name: 'Ghee', unit: 'L', rate: 500, sortOrder: 5 },
+    { name: 'Cow Milk', unit: 'L', rate: 55, sortOrder: 0, dairyId: dairy.id },
+    { name: 'Buffalo Milk', unit: 'L', rate: 70, sortOrder: 1, dairyId: dairy.id },
+    { name: 'Curd', unit: 'Kg', rate: 40, sortOrder: 2, dairyId: dairy.id },
+    { name: 'Buttermilk', unit: 'L', rate: 30, sortOrder: 3, dairyId: dairy.id },
+    { name: 'Paneer', unit: 'Kg', rate: 200, sortOrder: 4, dairyId: dairy.id },
+    { name: 'Ghee', unit: 'L', rate: 500, sortOrder: 5, dairyId: dairy.id },
   ];
 
   for (const pr of productRatesData) {
-    await prisma.productRate.create({ data: pr });
+    await prisma.productRate.create({ data: pr as any });
   }
   console.log('  ✓ Product rates created');
 
@@ -138,7 +155,7 @@ async function main() {
 
   for (const c of configData) {
     await prisma.houseConfig.create({
-      data: { houseId: c.house.id, shift: c.shift, supplierId: c.supplier.uuid, position: c.position },
+      data: { houseId: c.house.id, shift: c.shift, supplierId: c.supplier.uuid, position: c.position, dairyId: dairy.id },
     });
   }
   console.log('  ✓ House configs created');
@@ -149,7 +166,8 @@ async function main() {
     balanceData.push({ 
       houseId: houses[i].id, 
       previousBalance: 100 + Math.floor(Math.random() * 2000), 
-      currentBalance: 0 // Will be synced with delivery totals later
+      currentBalance: 0,
+      dairyId: dairy.id,
     });
   }
 
@@ -163,7 +181,7 @@ async function main() {
     houseConfigMap.set(c.house.id, { shift: c.shift, supplierId: c.supplier.uuid });
   }
 
-  // ─── Delivery Logs (May 1-28) ────────────────────────
+  // ─── Delivery Logs (May 1-31) ────────────────────────
 
   for (let day = 1; day <= 31; day++) {
     for (const house of houses) {
@@ -205,6 +223,7 @@ async function main() {
           deliveredAt: deliveryDate,
           billGenerated: false,
           isClosed: false,
+          dairyId: dairy.id,
         },
       });
     }
@@ -227,19 +246,20 @@ async function main() {
 
   // ─── Delivery Plans ──────────────────────────────────
   const deliveryPlans = [
-    { supplier_id: raj.uuid, product_name: 'Cow Milk', quantity_per_go: 50, number_of_goes: 2, total_quantity: 100 },
-    { supplier_id: raj.uuid, product_name: 'Buffalo Milk', quantity_per_go: 30, number_of_goes: 1, total_quantity: 30 },
-    { supplier_id: amit.uuid, product_name: 'Cow Milk', quantity_per_go: 40, number_of_goes: 2, total_quantity: 80 },
-    { supplier_id: amit.uuid, product_name: 'Curd', quantity_per_go: 20, number_of_goes: 1, total_quantity: 20 },
-    { supplier_id: suresh.uuid, product_name: 'Cow Milk', quantity_per_go: 60, number_of_goes: 1, total_quantity: 60 },
+    { supplier_id: raj.uuid, product_name: 'Cow Milk', quantity_per_go: 50, number_of_goes: 2, total_quantity: 100, dairyId: dairy.id },
+    { supplier_id: raj.uuid, product_name: 'Buffalo Milk', quantity_per_go: 30, number_of_goes: 1, total_quantity: 30, dairyId: dairy.id },
+    { supplier_id: amit.uuid, product_name: 'Cow Milk', quantity_per_go: 40, number_of_goes: 2, total_quantity: 80, dairyId: dairy.id },
+    { supplier_id: amit.uuid, product_name: 'Curd', quantity_per_go: 20, number_of_goes: 1, total_quantity: 20, dairyId: dairy.id },
+    { supplier_id: suresh.uuid, product_name: 'Cow Milk', quantity_per_go: 60, number_of_goes: 1, total_quantity: 60, dairyId: dairy.id },
   ];
 
   for (const dp of deliveryPlans) {
-    await prisma.deliveryPlan.create({ data: dp });
+    await prisma.deliveryPlan.create({ data: dp as any });
   }
   console.log('  ✓ Delivery plans created');
 
   console.log('\n✅ May 2026 seeded successfully!');
+  console.log(`   Dairies: ${await prisma.dairy.count()}`);
   console.log(`   Users: ${await prisma.user.count()}`);
   console.log(`   Houses: ${await prisma.house.count()}`);
   console.log(`   Product rates: ${await prisma.productRate.count()}`);
