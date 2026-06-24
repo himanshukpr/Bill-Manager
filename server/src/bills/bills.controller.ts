@@ -39,8 +39,11 @@ export class BillsController {
   }
 
   @Get('monthly-stats/:year')
-  getMonthlyStats(@Param('year', ParseIntPipe) year: number) {
-    return this.service.getMonthlyStats(year);
+  getMonthlyStats(
+    @Param('year', ParseIntPipe) year: number,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.service.getMonthlyStats(year, dairyId);
   }
 
   @Get('pending/:houseId')

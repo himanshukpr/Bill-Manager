@@ -1,13 +1,13 @@
 "use client"
 
-import { useMemo } from "react"
-import { usePathname } from "next/navigation"
+import { useEffect, useMemo } from "react"
+import { usePathname, useRouter } from "next/navigation"
 
 import { AppSidebar } from "@/components/dashboard/admin/app-sidebar"
 import { SiteHeader } from "@/components/dashboard/admin/site-header"
 import { AdminAlertsPanel } from "@/components/dashboard/admin/admin-alerts-panel"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
-import { clearSessionAuth, getSessionAuth, type SessionAuth } from "@/lib/auth"
+import { clearSessionAuth, clearAllAuth, getSessionAuth, getDairyIdFromCookie, type SessionAuth } from "@/lib/auth"
 import { useAuthGuard } from "@/hooks/use-auth-guard"
 
 type AdminLayoutProps = {
@@ -17,6 +17,19 @@ type AdminLayoutProps = {
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const { auth, ready } = useAuthGuard("admin")
   const pathname = usePathname()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (window.location.search.includes("plan-expired=1")) return
+    const session = getSessionAuth()
+    if (session?.planExpiry) {
+      const expiryDate = new Date(session.planExpiry)
+      if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
+        clearAllAuth()
+        router.replace("/?plan-expired=1")
+      }
+    }
+  }, [pathname, router])
 
   const pageTitle = useMemo(() => {
     const titleMap: Record<string, string> = {
@@ -57,7 +70,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   function logout() {
     clearSessionAuth()
-    window.location.replace("/")
+    const dairyId = getDairyIdFromCookie()
+    window.location.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }
 
   if (!ready || !auth) {

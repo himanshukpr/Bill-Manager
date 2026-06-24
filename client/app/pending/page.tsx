@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import {
   clearSessionAuth,
   getSessionAuth,
+  getDairyIdFromCookie,
   saveSessionAuth,
   dashboardPath,
   type SessionAuth,
@@ -77,7 +78,8 @@ export default function PendingVerificationPage() {
 
   function handleLogout() {
     clearSessionAuth()
-    router.replace("/")
+    const dairyId = getDairyIdFromCookie()
+    router.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }
 
   return (

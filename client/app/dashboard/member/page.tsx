@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { PeriodSelector } from "@/components/member/period-selector"
 import { StatCard } from "@/components/dashboard/stat-card"
-import { clearSessionAuth } from "@/lib/auth"
+import { clearSessionAuth, getDairyIdFromCookie } from "@/lib/auth"
 import { useAuthGuard } from "@/hooks/use-auth-guard"
 
 const memberStats = [
@@ -20,7 +20,8 @@ export default function MemberDashboardPage() {
 
   function logout() {
     clearSessionAuth()
-    window.location.replace("/")
+    const dairyId = getDairyIdFromCookie()
+    window.location.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }
 
   if (!ready || !auth) {

@@ -38,10 +38,9 @@ export class UsersService {
     return this.prisma.user.create({ data: data as any });
   }
 
-  async findAll(dairyId?: number, role?: Role) {
-    const where: { role?: Role; dairyId?: number } = {};
+  async findAll(dairyId: number, role?: Role) {
+    const where: { role?: Role; dairyId: number } = { dairyId };
     if (role) where.role = role;
-    if (dairyId) where.dairyId = dairyId;
     return this.prisma.user.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -58,7 +57,9 @@ export class UsersService {
     });
   }
 
-  async updatePermissions(uuid: string, permissions: Record<string, boolean>) {
+  async updatePermissions(uuid: string, permissions: Record<string, boolean>, dairyId: number) {
+    const user = await this.prisma.user.findFirst({ where: { uuid, dairyId } });
+    if (!user) throw new BadRequestException('User not found in this dairy.');
     return this.prisma.user.update({
       where: { uuid },
       data: { permissions },
@@ -73,7 +74,9 @@ export class UsersService {
     });
   }
 
-  async verify(uuid: string, isVerified: boolean) {
+  async verify(uuid: string, isVerified: boolean, dairyId: number) {
+    const user = await this.prisma.user.findFirst({ where: { uuid, dairyId } });
+    if (!user) throw new BadRequestException('User not found in this dairy.');
     return this.prisma.user.update({
       where: { uuid },
       data: { isVerified },
@@ -87,7 +90,9 @@ export class UsersService {
     });
   }
 
-  async changeRole(uuid: string, role: Role) {
+  async changeRole(uuid: string, role: Role, dairyId: number) {
+    const user = await this.prisma.user.findFirst({ where: { uuid, dairyId } });
+    if (!user) throw new BadRequestException('User not found in this dairy.');
     return this.prisma.user.update({
       where: { uuid },
       data: { role },
@@ -101,7 +106,9 @@ export class UsersService {
     });
   }
 
-  async resetPassword(uuid: string, newPassword: string) {
+  async resetPassword(uuid: string, newPassword: string, dairyId: number) {
+    const user = await this.prisma.user.findFirst({ where: { uuid, dairyId } });
+    if (!user) throw new BadRequestException('User not found in this dairy.');
     const hashed = await bcrypt.hash(newPassword, 10);
     return this.prisma.user.update({
       where: { uuid },
@@ -115,7 +122,9 @@ export class UsersService {
     });
   }
 
-  async remove(uuid: string) {
+  async remove(uuid: string, dairyId: number) {
+    const user = await this.prisma.user.findFirst({ where: { uuid, dairyId } });
+    if (!user) throw new BadRequestException('User not found in this dairy.');
     try {
       return await this.prisma.user.delete({ where: { uuid } });
     } catch (error) {

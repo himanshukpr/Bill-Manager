@@ -98,6 +98,16 @@ export async function fetchApi(path: string, init?: RequestInit): Promise<Respon
     try {
       const response = await fetch(buildApiUrl(baseUrl, path), init);
 
+      if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403)) {
+        const body = await response.clone().json().catch(() => null) as { message?: string } | null;
+        if (body?.message === 'PLAN_EXPIRED') {
+          const { clearAllAuth } = await import('./auth');
+          clearAllAuth();
+          window.location.replace('/?plan-expired=1');
+          return response;
+        }
+      }
+
       // If Next.js proxying via /api fails (wrong upstream port, backend down, etc.),
       // continue trying direct candidates before surfacing an error.
       if (

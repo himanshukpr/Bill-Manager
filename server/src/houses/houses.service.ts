@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -51,6 +52,19 @@ export class HousesService {
       where: { houseNo: dto.houseNo, dairyId },
     });
     if (exists) throw new ConflictException('House number already exists in this dairy');
+
+    const dairy = await this.prisma.dairy.findUnique({
+      where: { id: dairyId },
+      select: { maxHouses: true },
+    });
+    if (dairy?.maxHouses) {
+      const count = await this.prisma.house.count({ where: { dairyId } });
+      if (count >= dairy.maxHouses) {
+        throw new ForbiddenException(
+          `House limit reached (${dairy.maxHouses}). Contact the team to increase your plan.`,
+        );
+      }
+    }
 
     const house = await this.prisma.house.create({
       data: {

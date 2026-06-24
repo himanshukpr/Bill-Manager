@@ -11,8 +11,12 @@ const ROLE_ROUTES: Record<string, string> = {
 // Pages only for unauthenticated users
 function matchAuthPage(pathname: string): boolean {
   if (pathname === "/" || pathname === "/signup") return true
-  if (pathname.startsWith("/dairy/")) return true
+  if (/^\/dairy\/\d+\/(auth|users|register)$/.test(pathname)) return true
   return false
+}
+
+function clearCookieResponse(response: NextResponse, name: string): void {
+  response.cookies.set(name, "", { expires: new Date(0), path: "/" })
 }
 
 export function middleware(request: NextRequest) {
@@ -26,6 +30,8 @@ export function middleware(request: NextRequest) {
   const role = request.cookies.get("bill-manager-role")?.value
   const verified = request.cookies.get("bill-manager-verified")?.value
   const dairyToken = request.cookies.get("bill-manager-dairy-token")?.value
+  const dairyId = request.cookies.get("bill-manager-dairy-id")?.value
+  const planExpiry = request.cookies.get("bill-manager-plan-expiry")?.value
 
   const isLoggedIn = Boolean(token && role)
   const isDairyAuthed = Boolean(dairyToken)
@@ -35,16 +41,33 @@ export function middleware(request: NextRequest) {
   const isDairyAuth = /^\/dairy\/\d+\/auth$/.test(pathname)
   const isDairyUsers = /^\/dairy\/\d+\/users$/.test(pathname)
 
+  // ── 0. Plan expired → force logout everything ──────────────────────────────
+  if (planExpiry) {
+    const decoded = (() => { try { return decodeURIComponent(planExpiry) } catch { return planExpiry } })()
+    const expiryDate = new Date(decoded)
+    if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
+      const response = NextResponse.redirect(new URL("/?plan-expired=1", request.url))
+      clearCookieResponse(response, "bill-manager-token")
+      clearCookieResponse(response, "bill-manager-role")
+      clearCookieResponse(response, "bill-manager-verified")
+      clearCookieResponse(response, "bill-manager-dairy-id")
+      clearCookieResponse(response, "bill-manager-dairy-token")
+      clearCookieResponse(response, "bill-manager-plan-expiry")
+      return response
+    }
+  }
+
   // ── 1. Not logged in → block all dashboard routes ──────────────────────────
   if (!isLoggedIn && isDashboard) {
-    const loginUrl = new URL("/", request.url)
+    // If dairy session exists, redirect to user login; otherwise dairy selection
+    const loginUrl = new URL(dairyId ? `/dairy/${dairyId}/users` : "/", request.url)
     loginUrl.searchParams.set("redirect", pathname)
     return NextResponse.redirect(loginUrl)
   }
 
   // ── 2. Not logged in → block /pending (nothing to wait for) ────────────────
   if (!isLoggedIn && isPendingPage) {
-    return NextResponse.redirect(new URL("/", request.url))
+    return NextResponse.redirect(new URL(dairyId ? `/dairy/${dairyId}/users` : "/", request.url))
   }
 
   // ── 3. Already logged in → redirect away from auth pages ───────────────────
@@ -62,12 +85,9 @@ export function middleware(request: NextRequest) {
   }
 
   // ── 4. Not dairy-authed → block /dairy/[id]/users (need dairy password first)
-  if (!isLoggedIn && isDairyUsers && !isDairyAuthed) {
-    // Extract dairyId from path and redirect to auth page
-    const match = pathname.match(/^\/dairy\/(\d+)\/users$/)
-    if (match) {
-      return NextResponse.redirect(new URL(`/dairy/${match[1]}/auth`, request.url))
-    }
+  //    But allow if the dairyId cookie matches (dairy was previously authenticated)
+  if (!isLoggedIn && isDairyUsers && !isDairyAuthed && !dairyId) {
+    return NextResponse.redirect(new URL("/", request.url))
   }
 
   // ── 5. User not yet verified → block everything except /pending ─────────

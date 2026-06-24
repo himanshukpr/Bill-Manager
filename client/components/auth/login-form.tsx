@@ -70,7 +70,7 @@ export function LoginForm() {
         </div>
         <div>
           <p className="text-xs font-semibold tracking-[0.2em] text-slate-500 uppercase dark:text-slate-400">
-            Bill Manager
+            Dairy Vyapar
           </p>
           <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Account Login</h1>
         </div>

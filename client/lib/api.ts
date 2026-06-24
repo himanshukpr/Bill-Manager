@@ -261,6 +261,16 @@ async function handleResponse<T>(res: Response): Promise<T> {
     const message = Array.isArray(body.message) ? body.message[0] : body.message;
     const fallback = `${res.status} ${res.statusText}`.trim() || 'Unknown error';
     const msg = typeof message === 'string' && message.trim().length > 0 ? message : fallback;
+
+    if (msg === 'PLAN_EXPIRED') {
+      if (typeof window !== 'undefined' && !window.location.search.includes('plan-expired=1')) {
+        const { clearAllAuth } = await import('./auth');
+        clearAllAuth();
+        window.location.replace('/?plan-expired=1');
+      }
+      throw new Error('PLAN_EXPIRED');
+    }
+
     throw new Error(msg);
   }
 
@@ -681,7 +691,7 @@ export const housesApi = {
               },
             );
           }
-        } catch {
+        } catch (error: unknown) {
           // On error, remove temp house from UI/cache
           if (isBrowser()) {
             await db.houses.delete(tempId);
@@ -693,6 +703,9 @@ export const housesApi = {
               },
             );
           }
+          const msg = error instanceof Error ? error.message : 'Failed to create house'
+          const { toast } = await import('sonner')
+          toast.error(msg)
         }
       })();
     } else {

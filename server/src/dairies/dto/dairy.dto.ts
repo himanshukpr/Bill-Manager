@@ -4,6 +4,8 @@ import {
   IsEmail,
   IsOptional,
   MinLength,
+  IsNumber,
+  IsDateString,
 } from 'class-validator';
 
 export class CreateDairyDto {
@@ -15,14 +17,6 @@ export class CreateDairyDto {
   email: string;
 
   @IsString()
-  @IsOptional()
-  phone?: string;
-
-  @IsString()
-  @IsOptional()
-  address?: string;
-
-  @IsString()
   @IsNotEmpty()
   username: string;
 
@@ -32,7 +26,23 @@ export class CreateDairyDto {
 
   @IsString()
   @IsOptional()
+  phone?: string;
+
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @IsString()
+  @IsOptional()
   ownerName?: string;
+
+  @IsDateString()
+  @IsOptional()
+  planExpiry?: string;
+
+  @IsNumber()
+  @IsOptional()
+  maxHouses?: number;
 }
 
 export class UpdateDairyDto {
@@ -58,4 +68,12 @@ export class UpdateDairyDto {
 
   @IsOptional()
   isActive?: boolean;
+
+  @IsDateString()
+  @IsOptional()
+  planExpiry?: string | null;
+
+  @IsNumber()
+  @IsOptional()
+  maxHouses?: number | null;
 }

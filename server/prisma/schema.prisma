@@ -7,16 +7,18 @@ datasource db {
 }
 
 model Dairy {
-  id        Int      @id @default(autoincrement())
-  name      String   @db.VarChar(200)
-  email     String   @unique @db.VarChar(255)
-  password  String   @default("") @db.VarChar(255)
-  phone     String?  @db.VarChar(20)
-  address   String?  @db.Text
-  ownerName String   @default("") @db.VarChar(200)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  email       String    @unique @db.VarChar(255)
+  password    String    @default("") @db.VarChar(255)
+  phone       String?   @db.VarChar(20)
+  address     String?   @db.Text
+  ownerName   String    @default("") @db.VarChar(200)
+  isActive    Boolean   @default(true)
+  planExpiry  DateTime? @map("plan_expiry")
+  maxHouses   Int?      @map("max_houses")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   users         User[]
   houses        House[]

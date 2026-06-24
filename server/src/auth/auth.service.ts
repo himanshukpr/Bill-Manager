@@ -88,6 +88,13 @@ export class AuthService {
 
     if (!dairy.isActive) throw new UnauthorizedException('Dairy is inactive');
 
+    if (dairy.planExpiry && new Date(dairy.planExpiry) < new Date()) {
+      const expiryDate = new Date(dairy.planExpiry).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric',
+      });
+      throw new UnauthorizedException(`Your dairy plan expired on ${expiryDate}. Please contact the team to renew.`);
+    }
+
     const token = this.jwtService.sign({
       dairyId: dairy.id,
       type: 'dairy',
@@ -99,11 +106,13 @@ export class AuthService {
         id: dairy.id,
         name: dairy.name,
         email: dairy.email,
+        planExpiry: dairy.planExpiry?.toISOString() ?? null,
+        maxHouses: dairy.maxHouses,
       },
     };
   }
 
-  login(user: {
+  async login(user: {
     uuid: string;
     username: string;
     email: string;
@@ -112,6 +121,18 @@ export class AuthService {
     permissions?: Record<string, boolean>;
     dairyId?: number;
   }) {
+    let planExpiry: string | null = null;
+    let maxHouses: number | null = null;
+
+    if (user.dairyId) {
+      const dairy = await this.prisma.dairy.findUnique({
+        where: { id: user.dairyId },
+        select: { planExpiry: true, maxHouses: true },
+      });
+      planExpiry = dairy?.planExpiry?.toISOString() ?? null;
+      maxHouses = dairy?.maxHouses ?? null;
+    }
+
     const payload = {
       sub: user.uuid,
       username: user.username,
@@ -120,10 +141,16 @@ export class AuthService {
       isVerified: user.isVerified,
       permissions: user.permissions ?? {},
       dairyId: user.dairyId ?? 0,
+      planExpiry: planExpiry ?? undefined,
+      maxHouses: maxHouses ?? undefined,
     };
     return {
       access_token: this.jwtService.sign(payload),
-      user,
+      user: {
+        ...user,
+        planExpiry,
+        maxHouses,
+      },
     };
   }
 
@@ -135,10 +162,11 @@ export class AuthService {
     return result;
   }
 
-  async impersonate(adminUuid: string, targetUuid: string) {
+  async impersonate(adminUuid: string, targetUuid: string, adminDairyId: number) {
     const target = await this.usersService.findById(targetUuid);
     if (!target) throw new NotFoundException('User not found');
     if (target.role !== Role.supplier) throw new ForbiddenException('Can only impersonate supplier accounts');
+    if (target.dairyId !== adminDairyId) throw new ForbiddenException('Cannot impersonate users from another dairy');
 
     const permissions = (target.permissions ?? {}) as Record<string, boolean>;
     const payload = {

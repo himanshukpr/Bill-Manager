@@ -9,6 +9,7 @@ import {
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
+import { getSessionAuth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import {
@@ -1469,6 +1470,12 @@ export default function HousesPage() {
   const selectedConfigHouse = houses.find(h => h.id === Number.parseInt(configForm.houseId, 10))
 
   function openAdd() {
+    const auth = getSessionAuth()
+    const maxHouses = auth?.maxHouses
+    if (maxHouses && houses.length >= maxHouses) {
+      toast.error(`Maximum house limit reached (${maxHouses}). You cannot create more houses.`, { duration: 5000 })
+      return
+    }
     setForm(emptyForm)
     setFormConfigId(null)
     setEditingId(null)

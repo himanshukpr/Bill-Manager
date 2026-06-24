@@ -5,6 +5,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download, AlertTriangle } from 'lucide-react'
 import { billsApi, deliveryLogsApi, housesApi, balanceApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory } from '@/lib/api'
+import { getDairySession } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -702,7 +703,8 @@ export default function BillsPage() {
         doc.setFont('helvetica', 'bolditalic')
         doc.setFontSize(9.3)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text('DAIRY', x + cardWidth / 2, innerY + titleY, { align: 'center' })
+        const dairyName = getDairySession()?.dairyName || 'DAIRY'
+        doc.text(dairyName, x + cardWidth / 2, innerY + titleY, { align: 'center' })
 
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(5.5)

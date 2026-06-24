@@ -28,13 +28,14 @@ export class DairiesController {
     return this.dairiesService.findOne(+id);
   }
 
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateDairyDto) {
     return this.dairiesService.create(dto);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateDairyDto) {
     return this.dairiesService.update(+id, dto);

@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 
 import {
     SidebarGroup,
@@ -11,6 +11,7 @@ import {
     SidebarMenuItem,
     useSidebar,
 } from "@/components/ui/sidebar"
+import { clearAllAuth, getSessionAuth } from "@/lib/auth"
 
 export function NavMain({
     items,
@@ -22,7 +23,21 @@ export function NavMain({
     }[]
 }) {
     const pathname = usePathname()
+    const router = useRouter()
     const { isMobile, setOpenMobile } = useSidebar()
+
+    function checkPlanExpiry(): boolean {
+        const session = getSessionAuth()
+        if (session?.planExpiry) {
+            const expiryDate = new Date(session.planExpiry)
+            if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
+                clearAllAuth()
+                router.replace("/?plan-expired=1")
+                return false
+            }
+        }
+        return true
+    }
 
     return (
         <SidebarGroup>
@@ -37,7 +52,11 @@ export function NavMain({
                                 <SidebarMenuButton asChild tooltip={item.title} isActive={isActive}>
                                     <Link
                                         href={item.url}
-                                        onClick={() => {
+                                        onClick={(e) => {
+                                            if (!checkPlanExpiry()) {
+                                                e.preventDefault()
+                                                return
+                                            }
                                             if (isMobile) {
                                                 setOpenMobile(false)
                                             }

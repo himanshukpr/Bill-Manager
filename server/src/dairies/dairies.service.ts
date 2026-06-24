@@ -22,7 +22,10 @@ export class DairiesService {
         address: true,
         ownerName: true,
         isActive: true,
+        planExpiry: true,
+        maxHouses: true,
         createdAt: true,
+        _count: { select: { houses: true } },
       },
     });
   }
@@ -38,6 +41,8 @@ export class DairiesService {
         address: true,
         ownerName: true,
         isActive: true,
+        planExpiry: true,
+        maxHouses: true,
         createdAt: true,
       },
     });
@@ -57,6 +62,8 @@ export class DairiesService {
         address: true,
         ownerName: true,
         isActive: true,
+        planExpiry: true,
+        maxHouses: true,
       },
     });
   }
@@ -76,6 +83,8 @@ export class DairiesService {
         phone: dto.phone,
         address: dto.address,
         ownerName: dto.ownerName ?? '',
+        planExpiry: dto.planExpiry ? new Date(dto.planExpiry) : null,
+        maxHouses: dto.maxHouses ?? null,
         users: {
           create: {
             username: dto.username,
@@ -94,6 +103,8 @@ export class DairiesService {
         address: true,
         ownerName: true,
         isActive: true,
+        planExpiry: true,
+        maxHouses: true,
         createdAt: true,
       },
     });
@@ -103,9 +114,16 @@ export class DairiesService {
 
   async update(id: number, dto: UpdateDairyDto) {
     await this.findOne(id);
+    const data: Record<string, unknown> = { ...dto };
+    if (dto.planExpiry !== undefined) {
+      data.planExpiry = dto.planExpiry ? new Date(dto.planExpiry) : null;
+    }
+    if (dto.maxHouses !== undefined) {
+      data.maxHouses = dto.maxHouses;
+    }
     return this.prisma.dairy.update({
       where: { id },
-      data: dto,
+      data,
       select: {
         id: true,
         name: true,
@@ -114,6 +132,8 @@ export class DairiesService {
         address: true,
         ownerName: true,
         isActive: true,
+        planExpiry: true,
+        maxHouses: true,
         createdAt: true,
       },
     });

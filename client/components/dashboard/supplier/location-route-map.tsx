@@ -8,7 +8,7 @@ import { Loader2, MapPin, Navigation, Save } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { housesApi } from '@/lib/api'
-import { clearSessionAuth } from '@/lib/auth'
+import { clearSessionAuth, getDairyIdFromCookie } from '@/lib/auth'
 
 type LatLng = [number, number]
 
@@ -201,7 +201,8 @@ export function LocationRouteMap({
       if (error instanceof Error && /unauthorized|forbidden|jwt|token/i.test(error.message)) {
         clearSessionAuth()
         setStatus('Session expired. Please login again.')
-        router.replace('/')
+        const dairyId = getDairyIdFromCookie()
+        router.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
         return
       }
 

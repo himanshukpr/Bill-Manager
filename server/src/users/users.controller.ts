@@ -20,39 +20,58 @@ export class UsersController {
 
   @Get()
   findAll(
+    @CurrentUser('dairyId') dairyId: number,
     @Query('role') role?: Role,
-    @CurrentUser('dairyId') dairyId?: number,
   ) {
     return this.usersService.findAll(dairyId, role);
   }
 
   @UseGuards(AdminGuard)
   @Patch(':uuid/verify')
-  verify(@Param('uuid') uuid: string, @Body('isVerified') isVerified: boolean) {
-    return this.usersService.verify(uuid, isVerified);
+  verify(
+    @Param('uuid') uuid: string,
+    @Body('isVerified') isVerified: boolean,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.usersService.verify(uuid, isVerified, dairyId);
   }
 
   @UseGuards(AdminGuard)
   @Patch(':uuid/role')
-  changeRole(@Param('uuid') uuid: string, @Body('role') role: Role) {
-    return this.usersService.changeRole(uuid, role);
+  changeRole(
+    @Param('uuid') uuid: string,
+    @Body('role') role: Role,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.usersService.changeRole(uuid, role, dairyId);
   }
 
   @UseGuards(AdminGuard)
   @Patch(':uuid/permissions')
-  updatePermissions(@Param('uuid') uuid: string, @Body() permissions: Record<string, boolean>) {
-    return this.usersService.updatePermissions(uuid, permissions);
+  updatePermissions(
+    @Param('uuid') uuid: string,
+    @Body() permissions: Record<string, boolean>,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.usersService.updatePermissions(uuid, permissions, dairyId);
   }
 
   @UseGuards(AdminGuard)
   @Patch(':uuid/reset-password')
-  resetPassword(@Param('uuid') uuid: string, @Body('password') password: string) {
-    return this.usersService.resetPassword(uuid, password);
+  resetPassword(
+    @Param('uuid') uuid: string,
+    @Body('password') password: string,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.usersService.resetPassword(uuid, password, dairyId);
   }
 
   @UseGuards(AdminGuard)
   @Delete(':uuid')
-  remove(@Param('uuid') uuid: string) {
-    return this.usersService.remove(uuid);
+  remove(
+    @Param('uuid') uuid: string,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    return this.usersService.remove(uuid, dairyId);
   }
 }

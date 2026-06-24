@@ -32,10 +32,10 @@ export function SupplierSidebar({ variant = "inset", userName = "Supplier", onLo
             <SidebarMenuButton size="lg" asChild>
               <a href="/dashboard/supplier">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500 to-emerald-600">
-                  <span className="text-sm font-bold text-white">B</span>
+                  <span className="text-sm font-bold text-white">D</span>
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-semibold">Bill Manager</span>
+                  <span className="font-semibold">Dairy Vyapar</span>
                   <span className="text-xs text-muted-foreground">Supplier</span>
                 </div>
               </a>

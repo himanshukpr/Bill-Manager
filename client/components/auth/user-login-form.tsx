@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
-import { apiLogin, dashboardPath, getDairySession, getSessionAuth, type DairyInfo } from "@/lib/auth"
+import { apiLogin, apiGetDairy, dashboardPath, getSessionAuth, type DairyInfo } from "@/lib/auth"
 
 type Props = { dairyId: number }
 
@@ -24,13 +24,9 @@ export function UserLoginForm({ dairyId }: Props) {
       router.replace(dashboardPath(userSession.role))
       return
     }
-    const dairySession = getDairySession()
-    if (!dairySession || dairySession.dairyId !== dairyId) {
-      router.replace(`/dairy/${dairyId}/auth`)
-      return
-    }
-    setDairy({ id: dairySession.dairyId, name: dairySession.dairyName, email: dairySession.dairyEmail })
-    setReady(true)
+    apiGetDairy(dairyId)
+      .then((d) => { setDairy(d); setReady(true) })
+      .catch(() => router.replace("/"))
   }, [router, dairyId])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -91,7 +87,7 @@ export function UserLoginForm({ dairyId }: Props) {
         </div>
         <div>
           <p className="text-xs font-semibold tracking-[0.2em] text-slate-500 uppercase dark:text-slate-400">
-            Bill Manager
+            Dairy Vyapar
           </p>
           <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{dairy!.name}</h1>
         </div>
@@ -137,6 +133,13 @@ export function UserLoginForm({ dairyId }: Props) {
             {errorMessage}
           </p>
         ) : null}
+
+        <p className="text-center text-sm text-slate-600 dark:text-slate-400">
+          Don&apos;t have an account?{" "}
+          <Link href={`/dairy/${dairyId}/register`} className="font-semibold text-slate-900 hover:underline dark:text-slate-100">
+            Register New User
+          </Link>
+        </p>
 
         <p className="text-center text-sm text-slate-600 dark:text-slate-400">
           <Link href="/" className="font-semibold text-slate-900 hover:underline dark:text-slate-100">

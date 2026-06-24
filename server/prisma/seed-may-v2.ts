@@ -37,6 +37,8 @@ async function main() {
       phone: '9876543210',
       address: 'Main Market, Ganaur',
       ownerName: 'G.N. Kamboj',
+      planExpiry: new Date('2026-07-31'),
+      maxHouses: 250,
     },
   });
   console.log('  ✓ Dairy created');

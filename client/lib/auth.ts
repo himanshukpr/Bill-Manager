@@ -15,6 +15,8 @@ export type SessionAuth = {
   loginAt: string
   impersonator?: string
   dairyId: number
+  planExpiry?: string | null
+  maxHouses?: number | null
 }
 
 export type DairyInfo = {
@@ -25,7 +27,10 @@ export type DairyInfo = {
   address?: string
   ownerName?: string
   isActive?: boolean
+  planExpiry?: string | null
+  maxHouses?: number | null
   createdAt?: string
+  _count?: { houses: number }
 }
 
 export type DairySession = {
@@ -33,6 +38,8 @@ export type DairySession = {
   dairyId: number
   dairyName: string
   dairyEmail: string
+  planExpiry?: string | null
+  maxHouses?: number | null
 }
 
 // ─── Cookie helpers (used by Edge Middleware) ─────────────────────────────────
@@ -48,6 +55,12 @@ function deleteCookie(name: string): void {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`
 }
 
+export function getDairyIdFromCookie(): number | null {
+  if (typeof document === "undefined") return null
+  const match = document.cookie.match(/(?:^|;\s*)bill-manager-dairy-id=(\d+)/)
+  return match ? Number(match[1]) : null
+}
+
 // ─── Storage helpers (localStorage only) ─────────────────────────────────────
 
 const STORAGE_KEY = "bill-manager-auth"
@@ -61,6 +74,7 @@ export function saveSessionAuth(auth: SessionAuth): void {
   setCookie("bill-manager-role", auth.role)
   setCookie("bill-manager-verified", String(auth.isVerified))
   setCookie("bill-manager-dairy-id", String(auth.dairyId))
+  setCookie("bill-manager-plan-expiry", auth.planExpiry || "")
 }
 
 export function getSessionAuth(): SessionAuth | null {
@@ -83,11 +97,23 @@ export function getSessionAuth(): SessionAuth | null {
 export function clearSessionAuth(): void {
   if (typeof window === "undefined") return
   try { window.localStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
-  // Clear cookies so middleware stops protecting immediately
+  // Clear only user cookies — keep dairy session intact
+  deleteCookie("bill-manager-token")
+  deleteCookie("bill-manager-role")
+  deleteCookie("bill-manager-verified")
+  // bill-manager-dairy-id is kept — it identifies which dairy the user was in
+}
+
+export function clearAllAuth(): void {
+  if (typeof window === "undefined") return
+  try { window.localStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
+  try { window.localStorage.removeItem(DAIRY_STORAGE_KEY) } catch { /* noop */ }
   deleteCookie("bill-manager-token")
   deleteCookie("bill-manager-role")
   deleteCookie("bill-manager-verified")
   deleteCookie("bill-manager-dairy-id")
+  deleteCookie("bill-manager-dairy-token")
+  deleteCookie("bill-manager-plan-expiry")
 }
 
 export function getAuthHeader(): Record<string, string> {
@@ -105,6 +131,7 @@ export function saveDairySession(dairy: DairySession): void {
   try { window.localStorage.setItem(DAIRY_STORAGE_KEY, JSON.stringify(dairy)) } catch { /* noop */ }
   setCookie("bill-manager-dairy-token", dairy.dairyToken)
   setCookie("bill-manager-dairy-id", String(dairy.dairyId))
+  setCookie("bill-manager-plan-expiry", dairy.planExpiry || "")
 }
 
 export function getDairySession(): DairySession | null {
@@ -120,6 +147,7 @@ export function clearDairySession(): void {
   try { window.localStorage.removeItem(DAIRY_STORAGE_KEY) } catch { /* noop */ }
   deleteCookie("bill-manager-dairy-token")
   deleteCookie("bill-manager-dairy-id")
+  deleteCookie("bill-manager-plan-expiry")
 }
 
 // ─── Destination helper ───────────────────────────────────────────────────────
@@ -139,6 +167,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const err = body as ApiError
     const msg = Array.isArray(err.message) ? err.message[0] : err.message ?? "Unknown error"
+    if (msg === 'PLAN_EXPIRED') {
+      if (typeof window !== 'undefined' && !window.location.search.includes('plan-expired=1')) {
+        clearAllAuth()
+        window.location.replace('/?plan-expired=1')
+      }
+      throw new Error('PLAN_EXPIRED')
+    }
     throw new Error(msg)
   }
   return body as T
@@ -182,7 +217,7 @@ export async function apiDairyLogin(email: string, password: string): Promise<Da
 
   const data = await handleResponse<{
     access_token: string
-    dairy: { id: number; name: string; email: string }
+    dairy: { id: number; name: string; email: string; planExpiry?: string | null; maxHouses?: number | null }
   }>(res)
 
   const dairySession: DairySession = {
@@ -190,6 +225,8 @@ export async function apiDairyLogin(email: string, password: string): Promise<Da
     dairyId: data.dairy.id,
     dairyName: data.dairy.name,
     dairyEmail: data.dairy.email,
+    planExpiry: data.dairy.planExpiry,
+    maxHouses: data.dairy.maxHouses,
   }
 
   saveDairySession(dairySession)
@@ -268,6 +305,8 @@ export async function apiLogin(
       role: AppRole
       isVerified: boolean
       dairyId: number
+      planExpiry?: string | null
+      maxHouses?: number | null
     }
   }>(res)
 
@@ -281,6 +320,8 @@ export async function apiLogin(
     permissions: (data.user as { permissions?: Record<string, boolean> }).permissions,
     loginAt: new Date().toISOString(),
     dairyId: data.user.dairyId,
+    planExpiry: data.user.planExpiry,
+    maxHouses: data.user.maxHouses,
   }
 
   saveSessionAuth(session)

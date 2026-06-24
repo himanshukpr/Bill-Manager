@@ -664,10 +664,10 @@ export class BillsService {
     });
   }
 
-  async getMonthlyStats(year: number) {
+  async getMonthlyStats(year: number, dairyId: number) {
     const bills = await this.prisma.bill.groupBy({
       by: ['month'],
-      where: { year },
+      where: { year, dairyId },
       _sum: { totalAmount: true },
       _count: { id: true },
       orderBy: { month: 'asc' },
