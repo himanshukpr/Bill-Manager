@@ -784,6 +784,13 @@ export default function DeliveryPage() {
     const confirmClearToday = useCallback(async () => {
         if (!currentHouse || !selectedShift) return
 
+        const canModify = auth?.permissions?.canModifyDeliveryLogs === true
+        if (!canModify) {
+            toast.error('You do not have permission to modify delivery logs')
+            setClearTodayDialogOpen(false)
+            return
+        }
+
         const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         if (toDelete.length === 0) {
@@ -1137,11 +1144,16 @@ export default function DeliveryPage() {
     }
 
     const removeDeliveryItem = async (idx: number) => {
+        const canModify = auth?.permissions?.canModifyDeliveryLogs === true
         const itemToRemove = deliveryItems[idx]
         const removedProductName = itemToRemove?.milkType.trim() ?? ''
         const itemsAfterDelete = deliveryItems.filter((_, i) => i !== idx)
 
         if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
+            if (!canModify) {
+                toast.error('You do not have permission to modify delivery logs')
+                return
+            }
             // Update local state immediately
             setCurrentHouseLogs([])
             setCompletedHouses((prev) => {
@@ -1185,6 +1197,10 @@ export default function DeliveryPage() {
             // Remove the matching logs from the server before continuing.
             await Promise.all(currentHouseLogs.map((log) => deliveryLogsApi.delete(log.id)))
         } else if (removedProductName && currentHouseLogs.length > 0) {
+            if (!canModify) {
+                toast.error('You do not have permission to modify delivery logs')
+                return
+            }
             const removedQty = currentHouseLogs.reduce((sum, log) => {
                 return sum + log.items.reduce((itemSum, item) => {
                     if (item.milkType.trim() !== removedProductName) return itemSum
@@ -1339,7 +1355,10 @@ export default function DeliveryPage() {
             })
             .filter((item) => item.qty > 0 && item.rate > 0)
 
-        if (payloadItems.length === 0) {
+        // Check modify permission for suppliers
+    const canModify = auth?.permissions?.canModifyDeliveryLogs === true
+
+    if (payloadItems.length === 0) {
             toast.error('Add at least one item with qty and rate before marking delivered')
             return
         }
@@ -1348,6 +1367,10 @@ export default function DeliveryPage() {
         const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
         if (isCompleted && currentHouseLogs.length > 0) {
+            if (!canModify) {
+                toast.error('You do not have permission to modify delivery logs')
+                return
+            }
             const primaryLog = currentHouseLogs[0]
             const duplicateIds = currentHouseLogs.slice(1).map((l) => l.id)
 
@@ -1558,6 +1581,7 @@ export default function DeliveryPage() {
 
     const isCompleted = completedHouses.has(currentHouse.id)
     const canSubmitDelivery = !isCompleted || hasUnsavedChanges
+    const canModify = auth?.permissions?.canModifyDeliveryLogs === true
     const currentRouteNumber = currentIndex + 1
     const houseMotionClass =
         houseChangeDirection === 'next'
@@ -1927,7 +1951,7 @@ export default function DeliveryPage() {
                                                         <div
                                                             className="relative overflow-hidden rounded-xl border border-border/70 bg-card"
                                                             style={{ touchAction: 'pan-y' }}
-                                                            onTouchStart={(event) => handleDeliveryItemTouchStart(idx, event)}
+                                                            onTouchStart={(event) => isCompleted && !canModify ? null : handleDeliveryItemTouchStart(idx, event)}
                                                             onTouchMove={(event) => handleDeliveryItemTouchMove(idx, event)}
                                                             onTouchEnd={() => handleDeliveryItemTouchEnd(idx)}
                                                             onTouchCancel={() => {
@@ -1935,17 +1959,17 @@ export default function DeliveryPage() {
                                                                 setSwipedDeliveryItem({ index: null, offset: 0 })
                                                             }}
                                                         >
-                                                            <div
-                                                                className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
-                                                                style={{
-                                                                    opacity: rowOffset <= -16 ? 1 : 0,
-                                                                    transform: `translate3d(${rowOffset <= -16 ? 0 : 8}px, 0, 0)`,
-                                                                    transition: deliveryItemSwipeStartRef.current?.index === idx
-                                                                        ? 'none'
-                                                                        : 'opacity 180ms ease, transform 180ms ease',
-                                                                    pointerEvents: rowOffset <= -16 ? 'auto' : 'none',
-                                                                }}
-                                                            >
+                                                         <div
+                                                             className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
+                                                             style={{
+                                                                 opacity: (isCompleted && !canModify) ? 0 : (rowOffset <= -16 ? 1 : 0),
+                                                                 transform: `translate3d(${(isCompleted && !canModify) ? 8 : (rowOffset <= -16 ? 0 : 8)}px, 0, 0)`,
+                                                                 transition: deliveryItemSwipeStartRef.current?.index === idx
+                                                                     ? 'none'
+                                                                     : 'opacity 180ms ease, transform 180ms ease',
+                                                                 pointerEvents: (isCompleted && !canModify) ? 'none' : (rowOffset <= -16 ? 'auto' : 'none'),
+                                                             }}
+                                                         >
                                                                 <Button
                                                                     type="button"
                                                                     size="sm"
@@ -1973,6 +1997,7 @@ export default function DeliveryPage() {
                                                                         onValueChange={(val) =>
                                                                             updateDeliveryItem(idx, 'milkType', val)
                                                                         }
+                                                                        disabled={isCompleted && !canModify}
                                                                     >
                                                                         <SelectTrigger className="h-9 w-full">
                                                                             <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
@@ -2011,6 +2036,7 @@ export default function DeliveryPage() {
                                                                             updateDeliveryItem(idx, 'qty', e.target.value)
                                                                         }
                                                                         className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                        disabled={isCompleted && !canModify}
                                                                     />
                                                                 </div>
 
@@ -2033,9 +2059,11 @@ export default function DeliveryPage() {
 
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-2">
-                                    <Button onClick={addItem} size="sm" className="text-xs">
-                                        <Plus className="mr-1 h-3 w-3" /> Add Item
-                                    </Button>
+                                    {(!isCompleted || canModify) && (
+                                        <Button onClick={addItem} size="sm" className="text-xs">
+                                            <Plus className="mr-1 h-3 w-3" /> Add Item
+                                        </Button>
+                                    )}
                                     {!isCompleted && (
                                         <Button
                                             onClick={async () => {
@@ -2102,15 +2130,15 @@ export default function DeliveryPage() {
                                         : saveStatus === 'saved'
                                             ? `Changes saved${lastSavedAt ? ` at ${lastSavedAt}` : ''}.`
                                             : isCompleted
-                                                ? 'No new changes to save.'
+                                                ? canModify ? 'No new changes to save.' : 'View-only — no changes allowed.'
                                                 : ''}
                             </p>
                         </div>
 
                         {/* ACTION */}
                         <div className="sticky bottom-0 z-10 -mx-2 mb-4 rounded-2xl border border-border/70 bg-card px-2 py-2 shadow-lg shadow-black/10 sm:mx-0 sm:mb-0 sm:rounded-none sm:border-0 sm:bg-card sm:px-0 sm:py-0 sm:shadow-none">
-                            <Button onClick={handleMarkDelivered} disabled={!canSubmitDelivery} className="w-full rounded-xl py-2 text-xs shadow-sm sm:rounded-none sm:rounded-b-2xl sm:text-sm">
-                                {isCompleted ? 'Update Delivery' : 'Mark Delivered'}
+                            <Button onClick={handleMarkDelivered} disabled={isCompleted && !canModify ? true : !canSubmitDelivery} className="w-full rounded-xl py-2 text-xs shadow-sm sm:rounded-none sm:rounded-b-2xl sm:text-sm">
+                                {isCompleted ? (canModify ? 'Update Delivery' : 'View Only') : 'Mark Delivered'}
                             </Button>
                         </div>
                     </div>

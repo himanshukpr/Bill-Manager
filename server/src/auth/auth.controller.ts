@@ -33,9 +33,10 @@ export class AuthController {
    * Body: { username, email, password, role?, dairyId? }
    * Creates a new user within a dairy.
    */
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('register')
-  async register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  async register(@Body() dto: RegisterDto, @Request() req: AuthenticatedRequest) {
+    return this.authService.register({ ...dto, dairyId: dto.dairyId ?? req.user.dairyId });
   }
 
   /**

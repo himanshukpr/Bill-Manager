@@ -18,6 +18,7 @@ type UserInfo = {
   role: string;
   isVerified?: boolean;
   dairyId: number;
+  permissions?: Record<string, boolean>;
 };
 
 @Injectable()
@@ -156,6 +157,13 @@ export class DeliveryLogsService {
       throw new BadRequestException('Invalid user context');
     }
 
+    // Check modify permission for suppliers
+    if (user.role === 'supplier' && !user.permissions?.canModifyDeliveryLogs) {
+      throw new ForbiddenException(
+        'You do not have permission to modify delivery logs',
+      );
+    }
+
     const log = await this.prisma.deliveryLog.findFirst({
       where: { id, dairyId: user.dairyId },
     });
@@ -235,6 +243,13 @@ export class DeliveryLogsService {
   async remove(id: number, user: UserInfo) {
     if (!user?.uuid) {
       throw new BadRequestException('Invalid user context');
+    }
+
+    // Check modify permission for suppliers
+    if (user.role === 'supplier' && !user.permissions?.canModifyDeliveryLogs) {
+      throw new ForbiddenException(
+        'You do not have permission to modify delivery logs',
+      );
     }
 
     const log = await this.prisma.deliveryLog.findFirst({

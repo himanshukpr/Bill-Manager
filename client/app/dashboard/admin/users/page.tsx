@@ -43,6 +43,7 @@ export default function UsersPage() {
   const [permEditItems, setPermEditItems] = useState(false)
   const [permEditHouses, setPermEditHouses] = useState(false)
   const [permViewAll, setPermViewAll] = useState(false)
+  const [permModifyDeliveryLogs, setPermModifyDeliveryLogs] = useState(false)
   const [resetPwdUuid, setResetPwdUuid] = useState<string | null>(null)
   const [resetPwdValue, setResetPwdValue] = useState('')
   const [resetPwdSaving, setResetPwdSaving] = useState(false)
@@ -133,6 +134,7 @@ export default function UsersPage() {
           canEditItems: permEditItems,
           canEditHouses: permEditHouses,
           canViewAllHouses: permViewAll,
+          canModifyDeliveryLogs: permModifyDeliveryLogs,
         }),
       ])
       toast.success(`User role changed to ${newRole}`)
@@ -234,6 +236,7 @@ export default function UsersPage() {
               setPermEditItems(u.permissions?.canEditItems ?? false)
               setPermEditHouses(u.permissions?.canEditHouses ?? false)
               setPermViewAll(u.permissions?.canViewAllHouses ?? false)
+              setPermModifyDeliveryLogs(u.permissions?.canModifyDeliveryLogs ?? false)
               setPrivilegeDialogOpen(true)
             }}
             onDelete={setDeleteUuid}
@@ -305,8 +308,8 @@ export default function UsersPage() {
                       className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
                     />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Edit & Delete Items</p>
-                      <p className="text-xs text-muted-foreground">Allow editing and deleting delivery items</p>
+                      <p className="text-sm font-medium text-foreground">Edit Delivery History</p>
+                      <p className="text-xs text-muted-foreground">Allow editing or deleting past delivery entries from the delivery history page</p>
                     </div>
                   </label>
                   <label className="flex items-start gap-3 cursor-pointer">
@@ -317,8 +320,8 @@ export default function UsersPage() {
                       className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
                     />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Edit & Delete Houses</p>
-                      <p className="text-xs text-muted-foreground">Allow editing and deleting house records</p>
+                      <p className="text-sm font-medium text-foreground">Edit House Details</p>
+                      <p className="text-xs text-muted-foreground">Allow editing house name, rates, and other house settings</p>
                     </div>
                   </label>
                   <label className="flex items-start gap-3 cursor-pointer">
@@ -330,7 +333,19 @@ export default function UsersPage() {
                     />
                     <div>
                       <p className="text-sm font-medium text-foreground">View All Houses</p>
-                      <p className="text-xs text-muted-foreground">Show complete house list instead of only assigned routes</p>
+                      <p className="text-xs text-muted-foreground">Show all houses in the list instead of only those assigned to the supplier's route</p>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={permModifyDeliveryLogs}
+                      onChange={(e) => setPermModifyDeliveryLogs(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Modify Daily Deliveries</p>
+                      <p className="text-xs text-muted-foreground">Allow editing quantities or deleting deliveries on the daily delivery screen after submission</p>
                     </div>
                   </label>
                 </div>

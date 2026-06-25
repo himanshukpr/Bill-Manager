@@ -31,7 +31,7 @@ export class AuthService {
     return result;
   }
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto & { dairyId: number }) {
     const emailExists = await this.usersService.findByEmail(dto.email);
     if (emailExists) throw new ConflictException('Email already in use');
 

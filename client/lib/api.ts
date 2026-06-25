@@ -545,6 +545,7 @@ export type User = {
   isVerified: boolean;
   createdAt: string;
   permissions?: Record<string, boolean>;
+  dairyId?: number;
 };
 
 export type HouseStats = {

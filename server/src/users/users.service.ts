@@ -33,9 +33,15 @@ export class UsersService {
     password: string;
     role?: Role;
     isVerified?: boolean;
-    dairyId?: number;
+    dairyId: number;
   }) {
-    return this.prisma.user.create({ data: data as any });
+    const { dairyId, ...fields } = data;
+    return this.prisma.user.create({
+      data: {
+        ...fields,
+        dairy: { connect: { id: dairyId } },
+      },
+    });
   }
 
   async findAll(dairyId: number, role?: Role) {

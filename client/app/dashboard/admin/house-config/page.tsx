@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog'
 import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
+import { getDairyIdFromCookie } from '@/lib/auth'
 import { toast } from 'sonner'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
 
@@ -114,7 +115,10 @@ export default function AdminHouseConfigPage() {
 
   const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
   const cachedHouses = useLiveQuery(() => db.houses.toArray())
-  const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
+  const cachedSuppliers = useLiveQuery(() => {
+    const dairyId = getDairyIdFromCookie()
+    return db.users.where('role').equals('supplier').filter(u => !dairyId || u.dairyId === dairyId).toArray()
+  })
 
   const houses = cachedHouses ?? []
   const suppliers = cachedSuppliers ?? []
