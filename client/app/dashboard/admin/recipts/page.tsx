@@ -274,10 +274,10 @@ export default function ReceiptsPage() {
     const filtered = receivedMonth === 'all'
       ? payments
       : payments.filter(p => {
-        const d = new Date(p.createdAt)
+        const d = new Date(p.paidAt || p.createdAt)
         return d.getMonth() === parseInt(receivedMonth) && d.getFullYear() === parseInt(receivedYear)
       })
-    return [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    return [...filtered].sort((a, b) => new Date(b.paidAt || b.createdAt).getTime() - new Date(a.paidAt || a.createdAt).getTime())
   }, [payments, receivedMonth, receivedYear])
 
   // Form
@@ -1390,6 +1390,7 @@ export default function ReceiptsPage() {
                     {/* <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Bill Period</th> */}
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Note</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
+                    <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Created At</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Action</th>
                   </tr>
                 </thead>
@@ -1436,6 +1437,14 @@ export default function ReceiptsPage() {
                           {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN', {
                             day: 'numeric', month: 'short', year: 'numeric'
                           })}
+                        </td>
+                        <td className="hidden md:table-cell px-4 py-3 text-sm text-muted-foreground">
+                          {new Date(p.createdAt).toLocaleDateString('en-IN', {
+                            day: 'numeric', month: 'short', year: 'numeric'
+                          })}
+                          <span className="text-xs block text-muted-foreground/70">
+                            {new Date(p.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
                           <Button
