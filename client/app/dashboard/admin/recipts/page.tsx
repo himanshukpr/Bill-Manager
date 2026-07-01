@@ -777,7 +777,7 @@ export default function ReceiptsPage() {
 
   function getBillForDateKey(dateKey: string): Bill | undefined {
     const [yearStr, monthStr] = dateKey.split('-')
-    const month = Number.parseInt(monthStr ?? '', 10) - 1
+    const month = Number.parseInt(monthStr ?? '', 10) // bill.month is 1-indexed
     const year = Number.parseInt(yearStr ?? '', 10)
     return summaryBills.find((bill) => bill.month === month && bill.year === year)
   }
@@ -799,11 +799,19 @@ export default function ReceiptsPage() {
     const bill = getBillForDateKey(dateKey)
     if (!bill) return false
 
-    if (bill.generatedDate) {
-      const generatedDate = new Date(bill.generatedDate)
-      const [year, month, day] = dateKey.split('-').map(Number)
-      const deliveryDate = new Date(year, month - 1, day)
-      return deliveryDate.getTime() <= generatedDate.getTime()
+    const [y, m, d] = dateKey.split('-').map(Number)
+    const deliveryTs = new Date(y, m - 1, d).getTime()
+
+    if (bill.fromDate) {
+      const from = new Date(bill.fromDate)
+      const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime()
+      if (deliveryTs < fromTs) return false
+    }
+
+    if (bill.toDate) {
+      const to = new Date(bill.toDate)
+      const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime()
+      return deliveryTs <= toTs
     }
 
     return true

@@ -1678,7 +1678,7 @@ export default function HousesPage() {
   function getBillForDateKey(dateKey: string): Bill | undefined {
     // dateKey format: "YYYY-MM-DD"
     const [yearStr, monthStr] = dateKey.split('-')
-    const month = parseInt(monthStr) - 1 // Convert to 0-indexed month
+    const month = parseInt(monthStr) // bill.month is 1-indexed
     const year = parseInt(yearStr)
     return summaryBills.find((bill) => bill.month === month && bill.year === year)
   }
@@ -1699,16 +1699,23 @@ export default function HousesPage() {
     const bill = getBillForDateKey(dateKey)
     if (!bill) return false
 
-    // If bill has a generatedDate, block edits for deliveries on or before that date
-    if (bill.generatedDate) {
-      const genDate = new Date(bill.generatedDate)
-      const [y, m, d] = dateKey.split('-').map(Number)
-      const deliveryDate = new Date(y, m - 1, d)
-      // If deliveryDate is less than or equal to generated date, it's included in bill
-      return deliveryDate.getTime() <= genDate.getTime()
+    const [y, m, d] = dateKey.split('-').map(Number)
+    const deliveryTs = new Date(y, m - 1, d).getTime()
+
+    // Use fromDate/toDate for period comparison (avoids timezone issues with generatedDate)
+    if (bill.fromDate) {
+      const from = new Date(bill.fromDate)
+      const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime()
+      if (deliveryTs < fromTs) return false
     }
 
-    // Fallback: if bill exists for the month but no generatedDate, block edits for safety
+    if (bill.toDate) {
+      const to = new Date(bill.toDate)
+      const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime()
+      return deliveryTs <= toTs
+    }
+
+    // Fallback: if bill exists for the month, block edits for safety
     return true
   }
 

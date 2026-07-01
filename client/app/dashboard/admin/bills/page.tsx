@@ -195,9 +195,11 @@ function buildItemsFromDeliveryLogs(logs: DeliveryLog[]): BillItem[] {
 
       const key = `${normalizedType}:${rate}`
       const existingItem = itemSummary.get(key)
-      const displayName = normalizedType.endsWith('milk')
-        ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1, -4) + 'Milk'
-        : normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1) + ' Milk';
+      const displayName = normalizedType === 'cow milk' || normalizedType.startsWith('cow milk ')
+        ? 'Cow Milk'
+        : normalizedType === 'buffalo milk' || normalizedType.startsWith('buffalo milk ')
+          ? 'Buffalo Milk'
+          : normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1);
       if (!existingItem) {
         itemSummary.set(key, {
           name: displayName,
