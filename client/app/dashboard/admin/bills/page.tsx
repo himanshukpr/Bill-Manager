@@ -114,7 +114,16 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  return text.charAt(0).toUpperCase() + text.slice(1)
+  const stripped = lower.replace(/ milk$/, '').trim()
+  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+  return lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+function parseDateOnly(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date()
+  const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return new Date(dateStr)
+  return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
 }
 
 function billItemProduct(name: string): 'buffalo' | 'cow' | 'other' {
@@ -1126,7 +1135,7 @@ export default function BillsPage() {
                         <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="font-medium">
                           {b.fromDate && b.toDate
-                            ? `${new Date(b.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(b.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                            ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseDateOnly(b.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                             : `${MONTH_NAMES[b.month]} ${b.year}`
                           }
                         </span>
@@ -1366,7 +1375,7 @@ export default function BillsPage() {
                 <DialogTitle>Bill — House {viewBill.house?.houseNo}</DialogTitle>
                 <DialogDescription>
                   {viewBill.fromDate && viewBill.toDate
-                    ? `${new Date(viewBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${new Date(viewBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                    ? `${parseDateOnly(viewBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseDateOnly(viewBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                     : `${MONTH_NAMES[viewBill.month]} ${viewBill.year}`
                   }
                   {viewBill.house?.area && ` · ${viewBill.house.area}`}

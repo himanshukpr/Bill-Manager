@@ -285,13 +285,22 @@ export class HouseBalanceService {
   async closePeriod(dto: ClosePeriodDto, dairyId: number) {
     const { houseId, fromDate, toDate, note } = dto;
 
-    const periodStart = new Date(fromDate);
-    const periodEnd = new Date(toDate);
-    periodStart.setHours(0, 0, 0, 0);
-    periodEnd.setHours(23, 59, 59, 999);
+    const parseDateParts = (s: string) => {
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return null;
+      return { y: parseInt(m[1]), mo: parseInt(m[2]) - 1, d: parseInt(m[3]) };
+    };
 
-    const month = periodEnd.getMonth() + 1;
-    const year = periodEnd.getFullYear();
+    const fp = parseDateParts(fromDate);
+    const tp = parseDateParts(toDate);
+    if (!fp || !tp) throw new BadRequestException('Invalid date format');
+
+    const periodStart = new Date(Date.UTC(fp.y, fp.mo, fp.d, 0, 0, 0, 0));
+    const periodEnd = new Date(Date.UTC(tp.y, tp.mo, tp.d, 23, 59, 59, 999));
+
+    const toDateStorage = new Date(Date.UTC(tp.y, tp.mo, tp.d, 0, 0, 0, 0));
+    const month = tp.mo + 1;
+    const year = tp.y;
 
     const closureState = await this.billsService.getPeriodClosureState(
       houseId,
@@ -389,7 +398,7 @@ export class HouseBalanceService {
           month,
           year,
           fromDate: periodStart,
-          toDate: periodEnd,
+          toDate: toDateStorage,
           totalAmount: billTotal,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           items: billItems as any,
