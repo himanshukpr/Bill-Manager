@@ -717,6 +717,26 @@ export const housesApi = {
     // Return temp house immediately (optimistic)
     return tempHouse;
   },
+  createSync: async (data: Partial<House>) => {
+    const result = normalizeHouseRecord(await apiPost<House>('/houses', data));
+    if (isBrowser()) {
+      await db.houses.put(result);
+      await updateCachedQueries<House[]>(
+        (cacheKey) => cacheKey === 'GET:/houses',
+        (cached) => {
+          if (!Array.isArray(cached)) return cached;
+          const idx = cached.findIndex((h) => h.id === result.id);
+          if (idx >= 0) {
+            const next = [...cached];
+            next[idx] = result;
+            return next;
+          }
+          return [...cached, result];
+        },
+      );
+    }
+    return result;
+  },
   update: async (id: number, data: Partial<House>) => {
     if (isBrowser()) {
       const existing = await db.houses.get(id);
@@ -1637,6 +1657,14 @@ export const usersApi = {
 
     await syncEngine.enqueue(`/users/${uuid}`, 'DELETE');
     return null;
+  },
+};
+
+// ─── Dairies ───────────────────────────────────────────────────────────────────
+
+export const dairiesApi = {
+  resetPassword: async (id: number, password: string) => {
+    return apiPatch(`/dairies/${id}/password`, { password });
   },
 };
 

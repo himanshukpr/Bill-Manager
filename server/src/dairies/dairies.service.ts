@@ -143,4 +143,13 @@ export class DairiesService {
     await this.findOne(id);
     return this.prisma.dairy.delete({ where: { id } });
   }
+
+  async resetPassword(id: number, newPassword: string) {
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await this.prisma.dairy.update({
+      where: { id },
+      data: { password: hashed },
+    });
+    return { success: true };
+  }
 }

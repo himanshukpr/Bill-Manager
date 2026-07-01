@@ -46,4 +46,10 @@ export class DairiesController {
   remove(@Param('id') id: string) {
     return this.dairiesService.remove(+id);
   }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Patch(':id/password')
+  resetPassword(@Param('id') id: string, @Body() body: { password: string }) {
+    return this.dairiesService.resetPassword(+id, body.password);
+  }
 }

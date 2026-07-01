@@ -1,14 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Plus, Search, X, Phone, MapPin, Building2, Bell, CalendarDays,
-  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2
+  Pencil, Trash2, Eye, Settings2, Save, Rows3, ChevronLeft, ChevronRight, Edit2, FileText, History, PowerOff
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { db } from '@/lib/db'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { toast } from 'sonner'
@@ -64,6 +64,16 @@ type DeliveryEditForm = {
   items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
   note?: string
 }
+
+type PaymentSummaryRow = {
+  id: number
+  paidAt: string
+  paidAmount: number
+  discount: number
+  note: string
+}
+
+const HOUSES_PER_PAGE = 25
 
 function normalizeMilkType(value: unknown): string {
   const text = String(value ?? '').trim()
@@ -448,12 +458,61 @@ export default function HousesPage() {
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [summaryFromDate, setSummaryFromDate] = useState('')
+  const [summaryToDate, setSummaryToDate] = useState('')
+  const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
   const loading = !hydrated && (!cachedHouses || !cachedSuppliers)
+
+  const [visibleCount, setVisibleCount] = useState(() => {
+    const saved = sessionStorage.getItem('supplier-houses-visible')
+    return saved ? parseInt(saved) : HOUSES_PER_PAGE
+  })
+  const loadMoreSentinelRef = useRef<HTMLTableRowElement | null>(null)
+  const houseLoadMoreLockRef = useRef(false)
+
+  useEffect(() => {
+    sessionStorage.setItem('supplier-houses-visible', String(visibleCount))
+  }, [visibleCount])
+
+  const filteredSummaryLogs = useMemo(() => {
+    if (!summaryFromDate || !summaryToDate) return summaryLogs
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d >= from && d <= to
+    })
+  }, [summaryLogs, summaryFromDate, summaryToDate])
 
   const summaryRows = useMemo(() => {
     if (!summaryHouse) return []
-    return buildHouseDeliverySummary(summaryLogs, summaryPeriod.year, summaryPeriod.month)
-  }, [summaryHouse, summaryLogs, summaryPeriod])
+    return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
+
+  const paymentSummaryRows = useMemo((): PaymentSummaryRow[] => {
+    if (!summaryHouse || !summaryBalance) return []
+    return (summaryBalance.payments ?? []).map((p: PaymentHistory) => ({
+      id: p.id,
+      paidAt: p.paidAt || p.createdAt,
+      paidAmount: Number(p.amount),
+      discount: Number(p.discount ?? 0),
+      note: p.note || '',
+    }))
+  }, [summaryHouse, summaryBalance])
+
+  const hasDateRangeFilter = summaryFromDate !== '' && summaryToDate !== ''
+
+  const displaySummaryRows = useMemo(() => {
+    if (!hasDateRangeFilter) return summaryRows
+    const from = new Date(summaryFromDate)
+    const to = new Date(summaryToDate)
+    to.setHours(23, 59, 59, 999)
+    return summaryRows.filter(row => {
+      const d = new Date(row.dateKey)
+      return d >= from && d <= to
+    })
+  }, [summaryRows, summaryFromDate, summaryToDate, hasDateRangeFilter])
 
   const matchingBills = useMemo(() => {
     return summaryBills.filter(
@@ -742,8 +801,8 @@ export default function HousesPage() {
     doc.setTextColor(17, 24, 39)
     doc.text('Daily Deliveries', 14, deliveriesTitleY)
 
-    const daysLeft = summaryRows.slice(0, 15)
-    const daysRight = summaryRows.slice(15)
+    const daysLeft = displaySummaryRows.slice(0, 15)
+    const daysRight = displaySummaryRows.slice(15)
     const splitX = 100
     const makeDeliveriesTable = (rows: any[], marginLeft: number, marginRight: number) => {
       if (rows.length === 0) return
@@ -761,6 +820,15 @@ export default function HousesPage() {
     makeDeliveriesTable(daysLeft, 14, pageWidth - splitX + 4)
     makeDeliveriesTable(daysRight, splitX, 14)
 
+    const totalPages = doc.getNumberOfPages()
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(128, 128, 128)
+      doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' })
+    }
+
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
   }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals])
 
@@ -769,7 +837,7 @@ export default function HousesPage() {
       await Promise.all([
         housesApi.list(),
         productRatesApi.list(),
-        usersApi.list('supplier'),
+        usersApi.list('supplier', true),
       ])
     } catch (error: unknown) {
       if (!silent) {
@@ -800,6 +868,23 @@ export default function HousesPage() {
 
     return getFilteredHouses(filtered, query)
   }, [houses, debouncedSearch, shiftFilter, paymentFilter, houseStatusFilter])
+
+  const visibleFiltered = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount])
+  const hasMoreVisibleHouses = visibleCount < filtered.length
+
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current
+    if (!el || !hasMoreVisibleHouses) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && !houseLoadMoreLockRef.current) {
+        houseLoadMoreLockRef.current = true
+        setVisibleCount((prev) => Math.min(prev + HOUSES_PER_PAGE, filtered.length))
+        setTimeout(() => { houseLoadMoreLockRef.current = false }, 300)
+      }
+    }, { rootMargin: '200px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasMoreVisibleHouses, filtered.length])
 
   const searchSuggestions = useMemo(() => {
     const query = search.trim()
@@ -838,6 +923,7 @@ export default function HousesPage() {
     setFormConfigId(null)
     setEditingId(null)
     setDialogOpen(true)
+    void usersApi.list('supplier', true)
   }
 
   async function openEdit(h: House) {
@@ -858,6 +944,7 @@ export default function HousesPage() {
       setFormConfigId(primaryConfig?.id ?? null)
       setEditingId(fresh.id)
       setDialogOpen(true)
+      void usersApi.list('supplier', true)
       return
     } catch {
       const primaryConfig = getHouseConfigWithAlerts(h.configs)
@@ -904,7 +991,7 @@ export default function HousesPage() {
 
       const savedHouse = editingId
         ? await housesApi.update(editingId, payload)
-        : await housesApi.create(payload)
+        : await housesApi.createSync(payload)
 
       const houseId = editingId ?? savedHouse?.id
       if (!houseId) {
@@ -972,18 +1059,23 @@ export default function HousesPage() {
     setSummaryLogs([])
     setSummaryBills([])
     setProductRates([])
+    setSummaryBalance(null)
+    setSummaryFromDate('')
+    setSummaryToDate('')
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [logs, bills, rates] = await Promise.all([
+      const [logs, bills, rates, balance] = await Promise.all([
         deliveryLogsApi.list({ houseId: house.id }),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
+        balanceApi.get(house.id),
       ])
       setSummaryLogs(logs)
       setSummaryBills(bills)
       setProductRates(rates.filter((rate) => rate.isActive && Number(rate.rate) > 0))
+      setSummaryBalance(balance)
       setSummaryPeriod(getLogPeriod(logs))
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))
@@ -1165,6 +1257,7 @@ export default function HousesPage() {
       dailyAlerts: toAlertInputValue(houseConfig?.dailyAlerts),
     })
     setConfigDialogOpen(true)
+    void usersApi.list('supplier', true)
   }
 
   async function handleConfigSave() {
@@ -1425,60 +1518,53 @@ export default function HousesPage() {
               <thead>
                 <tr className="border-b border-border bg-muted/40">
                   <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">House No</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Area</th>
-                  <th className="hidden md:table-cell whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Phone</th>
-                  <th className="hidden lg:table-cell whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Rate 1</th>
-                  <th className="hidden lg:table-cell whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Rate 2</th>
-                  <th className="whitespace-nowrap px-2 py-2 text-left font-semibold text-muted-foreground sm:px-3">Balance</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-right font-semibold text-muted-foreground sm:px-3">Pre Bal</th>
+                  <th className="whitespace-nowrap px-2 py-2 text-right font-semibold text-muted-foreground sm:px-3">Balance</th>
                   <th className="whitespace-nowrap px-2 py-2 text-right font-semibold text-muted-foreground sm:px-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((h, idx) => (
+                {visibleFiltered.map((h, idx) => (
                   <tr
                     key={h.id}
-                    className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}
+                    className={`border-b border-border/60 transition-colors ${h.active ? 'hover:bg-muted/30' : 'bg-red-500/5 hover:bg-red-500/10'} ${idx === visibleFiltered.length - 1 && !hasMoreVisibleHouses ? 'border-b-0' : ''}`}
                   >
-                    <td className="px-2 py-2 sm:px-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`font-semibold ${h.active ? 'text-foreground' : 'text-red-700 dark:text-red-300'}`}>{h.houseNo}</span>
-                        {!h.active && (
-                          <Badge variant="outline" className="border-red-200 bg-red-50 text-[11px] text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-                            Deactivated
-                          </Badge>
-                        )}
+                    <td className="px-2 py-2 sm:px-2">
+                      <div className="flex flex-col gap-1">
+                        <div>
+                          <span className={`font-extrabold ${h.active ? 'text-foreground' : 'text-red-700 dark:text-red-300'}`}>{h.houseNo}</span>
+                          {!h.active && (
+                            <Badge variant="outline" className="border-red-200 bg-red-50 text-[11px] text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                              Deactivated
+                            </Badge>
+                          )}
+                        </div>
+                        <div className='flex flex-wrap gap-1'>
+                          {h.rate1Type ? (
+                            <Badge variant="outline" className="gap-1 font-medium">
+                              {h.rate1Type.toLowerCase() === 'cow milk' ? 'CM' : h.rate1Type.toLowerCase() === 'buffalo milk' ? 'BM' : h.rate1Type} — ₹{h.rate1}
+                            </Badge>
+                          ) : ''}
+
+                          {h.rate2Type ? (
+                            <Badge variant="outline" className="gap-1 font-medium">
+                              {h.rate2Type.toLowerCase() === 'cow milk' ? 'CM' : h.rate2Type.toLowerCase() === 'buffalo milk' ? 'BM' : h.rate2Type} — ₹{h.rate2}
+                            </Badge>
+                          ) : ''}
+                        </div>
                       </div>
                     </td>
-                    <td className="px-2 py-2 text-muted-foreground sm:px-3">
-                      <div className="flex items-center gap-1">
-                        {h.area && <MapPin className="h-3 w-3 shrink-0" />}
-                        {h.area || '—'}
-                      </div>
-                    </td>
-                    <td className="hidden md:table-cell px-2 py-2 text-muted-foreground sm:px-3">
-                      <div className="flex items-center gap-1">
-                        <Phone className="h-3 w-3 shrink-0" />
-                        {h.phoneNo}
-                      </div>
-                    </td>
-                    <td className="hidden lg:table-cell px-2 py-2 sm:px-3">
-                      {h.rate1Type ? (
-                        <Badge variant="outline" className="gap-1 font-medium">
-                          {h.rate1Type} — ₹{h.rate1}
-                        </Badge>
-                      ) : '—'}
-                    </td>
-                    <td className="hidden lg:table-cell px-2 py-2 sm:px-3">
-                      {h.rate2Type ? (
-                        <Badge variant="outline" className="gap-1 font-medium">
-                          {h.rate2Type} — ₹{h.rate2}
-                        </Badge>
-                      ) : '—'}
-                    </td>
-                    <td className="px-2 py-2 sm:px-3">
+                    <td className="px-2 py-2 text-right sm:px-3">
                       {h.balance ? (
                         <span className={`font-semibold ${Number(h.balance.previousBalance) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                           ₹{Number(h.balance.previousBalance).toLocaleString('en-IN')}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-2 py-2 text-right sm:px-3">
+                      {h.balance ? (
+                        <span className={`font-semibold ${(Number(h.balance.previousBalance) + Number(h.balance.currentBalance)) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          ₹{(Number(h.balance.previousBalance) + Number(h.balance.currentBalance)).toLocaleString('en-IN')}
                         </span>
                       ) : '—'}
                     </td>
@@ -1490,14 +1576,9 @@ export default function HousesPage() {
                         <Button variant="ghost" size="icon" onClick={() => openSummary(h)} title="Summary">
                           <Rows3 className="h-4 w-4" />
                         </Button>
-                        {auth?.permissions?.canEditHouses && (
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(h)} title="Edit">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        )}
                         {auth?.permissions?.canEditHouses && (h.active ? (
                           <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('deactivate-confirm') }} title="Deactivate" className="text-destructive hover:text-destructive">
-                            <Trash2 className="h-4 w-4" />
+                            <PowerOff className="h-4 w-4" />
                           </Button>
                         ) : (
                           <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('inactive-choice') }} title="Activate or delete permanently" className="text-green-600 hover:text-green-700">
@@ -1508,6 +1589,13 @@ export default function HousesPage() {
                     </td>
                   </tr>
                 ))}
+                {hasMoreVisibleHouses && (
+                  <tr ref={loadMoreSentinelRef} className="border-b border-border/60">
+                    <td colSpan={4} className="px-2 py-3 text-center text-sm text-muted-foreground">
+                      Scroll to the end to load more houses...
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -1901,6 +1989,41 @@ export default function HousesPage() {
               </div>
 
               <div className="space-y-6 py-2">
+                {/* Received Payments */}
+                {paymentSummaryRows.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Received Payments</p>
+                    <div className="overflow-x-auto rounded-lg border border-border mb-4">
+                      <table className="w-full min-w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border bg-muted/50">
+                            <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Date</th>
+                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Paid (₹)</th>
+                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Discount (₹)</th>
+                            <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Note</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paymentSummaryRows.map((row) => (
+                            <tr key={row.id} className="border-b border-border/60 hover:bg-muted/30">
+                              <td className="px-3 py-2 text-foreground">
+                                {new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-emerald-600 dark:text-emerald-400">
+                                ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-blue-600 dark:text-blue-400">
+                                {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                              </td>
+                              <td className="px-3 py-2 text-muted-foreground max-w-[120px] truncate">{row.note || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {/* Monthly Summary Grid */}
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-3">Monthly Product Summary</h3>
@@ -2063,6 +2186,35 @@ export default function HousesPage() {
                   )
                 })()}
 
+                {/* Date Range Filter */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-[11px] font-medium text-muted-foreground">From</Label>
+                      <Input
+                        type="date"
+                        value={summaryFromDate}
+                        onChange={(e) => setSummaryFromDate(e.target.value)}
+                        className="h-7 w-[140px] text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-[11px] font-medium text-muted-foreground">To</Label>
+                      <Input
+                        type="date"
+                        value={summaryToDate}
+                        onChange={(e) => setSummaryToDate(e.target.value)}
+                        className="h-7 w-[140px] text-xs"
+                      />
+                    </div>
+                    {hasDateRangeFilter && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }}>
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
                 {/* Daily View */}
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-3">Daily Deliveries</h3>
@@ -2073,7 +2225,7 @@ export default function HousesPage() {
                         <Skeleton className="h-10 w-full rounded-lg" />
                         <Skeleton className="h-10 w-full rounded-lg" />
                       </div>
-                    ) : summaryRows.length === 0 ? (
+                    ) : displaySummaryRows.length === 0 ? (
                       <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
                         <Rows3 className="h-10 w-10 opacity-30" />
                         <p className="font-medium">No delivery summary available</p>
@@ -2089,7 +2241,7 @@ export default function HousesPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {summaryRows.map((row) => {
+                          {displaySummaryRows.map((row) => {
                             const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
                             const isPaid = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
                             return (
@@ -2134,7 +2286,7 @@ export default function HousesPage() {
               </div>
 
               <DialogFooter>
-                <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || summaryRows.length === 0}>
+                <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || displaySummaryRows.length === 0}>
                   Export PDF
                 </Button>
                 <Button onClick={() => setSummaryOpen(false)}>Close</Button>

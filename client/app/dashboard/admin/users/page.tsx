@@ -482,7 +482,16 @@ function UserSection({
                   <span className="hidden sm:inline">Switch</span>
                 </Button>
               )}
-              {onResetPassword && (
+              {/* Reset Password - only for current admin's own account (master ID) */}
+              {onResetPassword && u.uuid === getSessionAuth()?.uuid && (
+                <Button variant="ghost" size="icon" aria-label="Change your password"
+                  className="flex-shrink-0 h-9 w-9 text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                  onClick={() => onResetPassword(u.uuid)}>
+                  <KeyRound className="h-4 w-4" />
+                </Button>
+              )}
+              {/* Reset Password for other users - admin can reset any user's password */}
+              {onResetPassword && u.uuid !== getSessionAuth()?.uuid && (
                 <Button variant="ghost" size="icon" aria-label="Reset password"
                   className="flex-shrink-0 h-9 w-9 text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950/30"
                   onClick={() => onResetPassword(u.uuid)}>

@@ -204,3 +204,12 @@ None.
 - Verified: data isolation between dairies (dairy 2 sees 0 houses)
 - Verified: login works with dairyId, JWT carries dairyId
 - Verified: dairy registration creates new tenant
+
+### 25. Supplier houses-all page — Admin feature parity (`supplier/houses-all/page.tsx`)
+- **Pre Bal column**: Added separate Pre Bal header + data cell in houses table; Balance now shows `previousBalance + currentBalance` sum
+- **Infinite scroll**: Added `visibleCount`/`visibleFiltered`/`hasMoreVisibleHouses` with IntersectionObserver; loads 25 houses at a time; scroll-to-end sentinel row
+- **All Summary PDF Export**: Added `handleExportAllHousesSummaryPdf` (same multi-page PDF as admin: index page with house/page grid, per-house payments + product summary + daily deliveries, Shop→Evening→Morning sort); triggered by "All Summary" button + month/year selector dialog
+- **Date-range filter in summary dialog**: From/To date inputs above Daily Deliveries table; `filteredSummaryLogs` computed via `summaryFromDate/ToDate`
+- **Received Payments panel in summary dialog**: Shows Date/Paid/Discount/Note table above Monthly Product Summary when payments exist; uses `paymentSummaryRows` computed from `summaryBalance.payments`
+- **Pre Bal fill on summary open**: `openSummary` now fetches `balanceApi.get(house.id)` alongside logs/bills/rates; sets `summaryBalance` state
+- **Permission gates preserved**: All supplier privilege gates (`canEditHouses`, `canEditItems`, `canViewAllHouses`) remain unchanged

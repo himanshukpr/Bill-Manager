@@ -28,15 +28,14 @@ interface AuthenticatedRequest {
 export class AuthController {
   constructor(private authService: AuthService) {}
 
-  /**
-   * POST /auth/register
-   * Body: { username, email, password, role?, dairyId? }
-   * Creates a new user within a dairy.
-   */
-  @UseGuards(JwtAuthGuard, AdminGuard)
+/**
+    * POST /auth/register
+    * Body: { username, email, password, role?, dairyId }
+    * Creates a new user within a dairy (public endpoint for joining existing dairy).
+    */
   @Post('register')
-  async register(@Body() dto: RegisterDto, @Request() req: AuthenticatedRequest) {
-    return this.authService.register({ ...dto, dairyId: dto.dairyId ?? req.user.dairyId });
+  async register(@Body() dto: RegisterDto) {
+    return this.authService.register({ ...dto, dairyId: dto.dairyId! });
   }
 
   /**
