@@ -449,13 +449,29 @@ export default function BillsPage() {
             const houseConfig = housesById.get(bill.houseId)?.configs?.[0]
             const supplierName = houseConfig?.supplier?.username
             const shiftLabel = houseConfig?.shift === 'morning' ? (supplierName ?? 'MORNING') : houseConfig?.shift === 'evening' ? 'EVENING' : houseConfig?.shift === 'shop' ? 'SHOP' : ''
-            billsByHouseId.set(bill.houseId, { ...bill, house, _shiftLabel: shiftLabel as string | undefined })
+            const shiftOrder = houseConfig?.shift === 'shop' ? 0 : houseConfig?.shift === 'evening' ? 1 : houseConfig?.shift === 'morning' ? 2 : 3
+            const position = houseConfig?.position ?? 0
+            billsByHouseId.set(bill.houseId, { ...bill, house, _shiftLabel: shiftLabel as string | undefined, _shiftOrder: shiftOrder as number, _position: position as number, _supplierName: supplierName as string | undefined } as any)
           }
         }
 
-        const next = Array.from(billsByHouseId.values()).sort((left, right) =>
-          (left.house?.houseNo ?? '').localeCompare(right.house?.houseNo ?? '', undefined, { numeric: true, sensitivity: 'base' }),
-        )
+        const next = Array.from(billsByHouseId.values()).sort((left, right) => {
+          const ls = (left as any)._shiftOrder ?? 3
+          const rs = (right as any)._shiftOrder ?? 3
+          if (ls !== rs) return ls - rs
+
+          if (ls === 2) {
+            const lsName = (left as any)._supplierName ?? ''
+            const rsName = (right as any)._supplierName ?? ''
+            if (lsName !== rsName) return lsName.localeCompare(rsName, undefined, { sensitivity: 'base' })
+          }
+
+          const lp = (left as any)._position ?? 0
+          const rp = (right as any)._position ?? 0
+          if (lp !== rp) return lp - rp
+
+          return (left.house?.houseNo ?? '').localeCompare(right.house?.houseNo ?? '', undefined, { numeric: true, sensitivity: 'base' })
+        })
 
         if (!cancelled) {
           setPrintBills(next)
@@ -530,7 +546,6 @@ export default function BillsPage() {
             position,
           }
         })
-        .filter(d => d.previousBalance > 0 || d.receiptedThisMonth)
         .sort((a, b) => {
           // Shop first
           if (a.shift === 'shop' && b.shift !== 'shop') return -1
@@ -572,23 +587,43 @@ export default function BillsPage() {
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(15)
-    doc.text('Houses with Pending Balance', 14, 16)
+    doc.text('Pending Houses', 14, 16)
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 14, 23)
 
-    autoTable(doc, {
-      startY: 30,
-      head: [['#', 'House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
-      body: pendingDisplayData.map((d, i) => [
-        i + 1,
+    const body: (string | number)[][] = []
+    let lastShift = ''
+    let lastSupplier = ''
+    let rowIdx = 1
+
+    for (const d of pendingDisplayData) {
+      const shiftKey = d.shift === 'morning' ? `morning:${d.supplier}` : d.shift
+      const prevShiftKey = lastShift === 'morning' ? `morning:${lastSupplier}` : lastShift
+
+      if (shiftKey !== prevShiftKey) {
+        const label = d.shift === 'shop' ? 'SHOP' : d.shift === 'evening' ? 'EVENING' : d.shift === 'morning' ? `MORNING - ${d.supplier || '-'}` : d.shift.toUpperCase()
+        body.push([{ content: label, colSpan: 6, styles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'left' as const } } as any])
+        lastShift = d.shift
+        lastSupplier = d.supplier
+      }
+
+      body.push([
+        rowIdx,
         `HN - ${d.houseNo}`,
         d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
         d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
         d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
         d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
-      ]),
+      ])
+      rowIdx++
+    }
+
+    autoTable(doc, {
+      startY: 30,
+      head: [['#', 'House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
+      body,
       styles: { fontSize: 10, cellPadding: 4, fontStyle: 'bold', textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
       headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
       margin: { left: 27, right: 14 },
@@ -798,18 +833,36 @@ export default function BillsPage() {
 
       const billsPerPage = PDF_COLUMNS * PDF_ROWS
 
-      printBills.forEach((bill, index) => {
-        const pageIndex = Math.floor(index / billsPerPage)
-        const positionInPage = index % billsPerPage
+      let lastGroupKey = ''
+      let cardIndexOnPage = 0
+      let pageCount = 0
 
-        if (positionInPage === 0) {
-          if (pageIndex > 0) doc.addPage()
+      printBills.forEach((bill, index) => {
+        const shiftOrder = (bill as any)._shiftOrder ?? 3
+        const groupKey = shiftOrder === 1 ? `${shiftOrder}` : `${shiftOrder}:${(bill as any)._supplierName ?? ''}`
+        const groupChanged = groupKey !== lastGroupKey
+
+        const needsNewPage = index === 0 || cardIndexOnPage >= billsPerPage || (groupChanged && cardIndexOnPage > 0)
+        if (needsNewPage) {
+          if (index > 0) doc.addPage()
+          pageCount++
+          cardIndexOnPage = 0
           doc.setFont('helvetica', 'normal')
           doc.setFontSize(6)
-          doc.text(`Page No. ${pageIndex + 1}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
+          doc.text(`Page No. ${pageCount}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
         }
 
-        drawBillCard(bill, positionInPage)
+        if (groupChanged) {
+          const label = (bill as any)._shiftLabel || 'OTHER'
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(7)
+          doc.setTextColor(textColor[0], textColor[1], textColor[2])
+          doc.text(`--- ${label} ---`, pageWidth / 2, PDF_PAGE_MARGIN - 2, { align: 'center' })
+        }
+
+        lastGroupKey = groupKey
+        drawBillCard(bill, cardIndexOnPage)
+        cardIndexOnPage++
       })
 
       doc.save(`house-bills-${printYear}-${String(printMonth).padStart(2, '0')}.pdf`)
@@ -1470,9 +1523,9 @@ export default function BillsPage() {
       <Dialog open={pendingOpen} onOpenChange={open => { if (!open) setPendingOpen(false) }}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Houses with Pending Balance</DialogTitle>
+            <DialogTitle>Pending Houses</DialogTitle>
             <DialogDescription>
-              Houses with previous balance or payment receipted this month
+              All active houses with balance and payment status
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/20 p-3">
@@ -1480,9 +1533,9 @@ export default function BillsPage() {
               <div>
                 <p className="text-sm font-semibold text-foreground">Skip receipted this month</p>
                 <p className="text-xs text-muted-foreground">
-                  {skipReceiptedThisMonth
-                    ? `Showing ${pendingDisplayData.length} of ${pendingData.length} houses`
-                    : `Showing ${pendingData.length} houses`}
+                {skipReceiptedThisMonth
+                  ? `Showing ${pendingDisplayData.length} of ${pendingData.length} houses`
+                  : `Showing all ${pendingData.length} active houses`}
                 </p>
               </div>
               <input
@@ -1507,10 +1560,10 @@ export default function BillsPage() {
               <Check className="h-8 w-8" />
               <p className="text-sm">
                 {pendingData.length === 0
-                  ? 'No houses with pending balance'
+                  ? 'No active houses found'
                   : skipReceiptedThisMonth
                     ? 'All receipted houses are hidden'
-                    : 'No houses with pending balance'}
+                    : 'No active houses found'}
               </p>
             </div>
           ) : (
@@ -1518,7 +1571,7 @@ export default function BillsPage() {
               {(() => {
                 const groups = new Map<string, typeof pendingDisplayData>()
                 for (const d of pendingDisplayData) {
-                  const key = d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : `Evening — ${d.supplier || 'No Supplier'}`
+                  const key = d.shift === 'shop' ? 'Shop' : d.shift === 'evening' ? 'Evening' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : d.shift
                   const group = groups.get(key) ?? []
                   group.push(d)
                   groups.set(key, group)
