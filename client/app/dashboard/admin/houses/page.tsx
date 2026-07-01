@@ -8,8 +8,9 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate } from '@/lib/api'
-import { getSessionAuth } from '@/lib/auth'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate, type User } from '@/lib/api'
+import { getSessionAuth, getAuthHeader } from '@/lib/auth'
+import { fetchApi } from '@/lib/api-base'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import {
@@ -437,6 +438,7 @@ export default function HousesPage() {
   const [configSaving, setConfigSaving] = useState(false)
   const [configEditingId, setConfigEditingId] = useState<number | null>(null)
   const [configForm, setConfigForm] = useState<HouseConfigForm>(emptyConfigForm)
+  const [dialogSuppliers, setDialogSuppliers] = useState<User[]>([])
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
   const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
@@ -1470,6 +1472,18 @@ export default function HousesPage() {
 
   const selectedConfigHouse = houses.find(h => h.id === Number.parseInt(configForm.houseId, 10))
 
+  async function loadDialogSuppliers() {
+    try {
+      const res = await fetchApi('/users?role=supplier', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      })
+      if (res.ok) {
+        setDialogSuppliers(await res.json())
+      }
+    } catch { /* ignore */ }
+  }
+
   function openAdd() {
     const auth = getSessionAuth()
     const maxHouses = auth?.maxHouses
@@ -1481,7 +1495,7 @@ export default function HousesPage() {
     setFormConfigId(null)
     setEditingId(null)
     setDialogOpen(true)
-    void usersApi.list('supplier', true)
+    void loadDialogSuppliers()
   }
 
   async function openEdit(h: House) {
@@ -1502,7 +1516,7 @@ export default function HousesPage() {
       setFormConfigId(primaryConfig?.id ?? null)
       setEditingId(fresh.id)
       setDialogOpen(true)
-      void usersApi.list('supplier', true)
+      void loadDialogSuppliers()
       return
     } catch {
       const primaryConfig = getHouseConfigWithAlerts(h.configs)
@@ -1869,7 +1883,7 @@ export default function HousesPage() {
       dailyAlerts: toAlertInputValue(houseConfig?.dailyAlerts),
     })
     setConfigDialogOpen(true)
-    void usersApi.list('supplier', true)
+    void loadDialogSuppliers()
   }
 
   async function handleConfigSave() {
@@ -2364,7 +2378,7 @@ export default function HousesPage() {
                     </SelectTrigger>
                     <SelectContent className="max-w-[min(92vw,28rem)]">
                       <SelectItem value="__none__">Unassigned </SelectItem>
-                      {suppliers.map(supplier => (
+                      {dialogSuppliers.map(supplier => (
                         <SelectItem key={supplier.uuid} value={supplier.uuid} className="max-w-full">
                           {supplier.username} - {supplier.email}
                         </SelectItem>
@@ -2978,7 +2992,7 @@ export default function HousesPage() {
                 </SelectTrigger>
                 <SelectContent className="max-w-[min(92vw,28rem)]">
                   <SelectItem value="__none__">Unassigned / shared</SelectItem>
-                  {suppliers.map(supplier => (
+                  {dialogSuppliers.map(supplier => (
                     <SelectItem key={supplier.uuid} value={supplier.uuid} className="max-w-full">
                       {supplier.username} - {supplier.email}
                     </SelectItem>
