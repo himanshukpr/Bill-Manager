@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { balanceApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { date } from 'zod/mini'
 
 type DeliveryEntryRow = {
   id: string
@@ -402,6 +403,32 @@ export default function DeliveryEntryPage() {
     [items],
   )
 
+  const existingHouseLogs = useMemo(() => {
+    if (!houseId) return []
+    const { fromDate, toDate } = getDateRangeForDateKey(deliveryDate || getTodayDateKey())
+    return logs
+      .filter((log) => String(log.houseId) === houseId && log.deliveredAt >= fromDate && log.deliveredAt <= toDate)
+      .sort((a, b) => new Date(a.deliveredAt).getTime() - new Date(b.deliveredAt).getTime())
+  }, [logs, houseId, deliveryDate])
+
+  const existingItems = useMemo(() => {
+    return existingHouseLogs.flatMap((log) =>
+      (log.items ?? []).map((item, idx) => ({
+        key: `${log.id}-${idx}`,
+        milkType: item.milkType,
+        qty: Number(item.qty) || 0,
+        rate: Number(item.rate) || 0,
+        amount: Number(item.amount) || 0,
+        shift: log.shift,
+      }))
+    )
+  }, [existingHouseLogs])
+
+  const existingTotalAmount = useMemo(
+    () => existingItems.reduce((sum, item) => sum + item.amount, 0),
+    [existingItems],
+  )
+
   useEffect(() => {
     setRows((current) =>
       current.map((row) => {
@@ -445,6 +472,23 @@ export default function DeliveryEntryPage() {
     },
     [logs, logDate, logHouseSearch],
   )
+
+  const logItemSummary = useMemo(() => {
+    const map = new Map<string, { qty: number; amount: number }>()
+    for (const log of shopLogs) {
+      if (!Array.isArray(log.items)) continue
+      for (const item of log.items) {
+        const name = item.milkType
+        const existing = map.get(name) ?? { qty: 0, amount: 0 }
+        existing.qty += Number(item.qty) || 0
+        existing.amount += Number(item.amount) || 0
+        map.set(name, existing)
+      }
+    }
+    return Array.from(map.entries())
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.qty - a.qty)
+  }, [shopLogs])
 
   function updateRowQty(id: string, qty: string) {
     setRows((current) =>
@@ -663,12 +707,8 @@ export default function DeliveryEntryPage() {
   return (
     <div className="space-y-6">
 
-      <div className=" grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
-        <Card className="relative overflow-visible rounded-3xl border border-border bg-card py-0">
-          {/* <CardHeader className="border-b border-border px-5 py-4">
-            <CardTitle>Direct entry</CardTitle>
-          </CardHeader> */}
-
+      <div className="flex flex-col gap-3 xl:grid xl:grid-cols-[1.2fr_0.8fr]">
+        <Card className="relative min-w-0 overflow-visible rounded-3xl border border-border bg-card py-0">
           <CardContent className="space-y-2 px-5 p-2">
             {loading ? (
               <div className="space-y-4">
@@ -680,42 +720,42 @@ export default function DeliveryEntryPage() {
               <>
                 <div className="space-y-1">
 
-                    <div className="flex gap-2 items-end">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                        <Input
-                          id="delivery-house"
-                          placeholder="Search by house number or area..."
-                          value={houseSearch}
-                          onChange={(e) => setHouseSearch(e.target.value)}
-                          className="pl-9"
-                        />
-                      </div>
-                      <div className="relative">
-                        <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
-                          <Plus className="h-3.5 w-3.5" />
-                          Add new item
-                        </Button>
-
-                        {productPickerOpen && (
-                          <div className="absolute right-0 top-full z-40 mt-2 w-72 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
-                            <div className="max-h-72 overflow-y-auto p-2">
-                              {rates.filter((rate) => rate.isActive).map((rate) => (
-                                <button
-                                  key={rate.id}
-                                  type="button"
-                                  onClick={() => addRowWithProduct(rate.name)}
-                                  className="w-full text-left px-3 py-2.5 text-sm rounded-lg transition-colors hover:bg-muted/70"
-                                >
-                                  <p className="font-medium">{rate.name}</p>
-                                  <p className="text-xs text-muted-foreground">₹{Number(rate.rate).toLocaleString('en-IN')} / {rate.unit}</p>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                  <div className="flex gap-2 items-end">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <Input
+                        id="delivery-house"
+                        placeholder="Search by house number or area..."
+                        value={houseSearch}
+                        onChange={(e) => setHouseSearch(e.target.value)}
+                        className="pl-9"
+                      />
                     </div>
+                    <div className="relative">
+                      <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
+                        <Plus className="h-3.5 w-3.5" />
+                        Add new item
+                      </Button>
+
+                      {productPickerOpen && (
+                        <div className="absolute right-0 top-full z-40 mt-2 w-72 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+                          <div className="max-h-72 overflow-y-auto p-2">
+                            {rates.filter((rate) => rate.isActive).map((rate) => (
+                              <button
+                                key={rate.id}
+                                type="button"
+                                onClick={() => addRowWithProduct(rate.name)}
+                                className="w-full text-left px-3 py-2.5 text-sm rounded-lg transition-colors hover:bg-muted/70"
+                              >
+                                <p className="font-medium">{rate.name}</p>
+                                <p className="text-xs text-muted-foreground">₹{Number(rate.rate).toLocaleString('en-IN')} / {rate.unit}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
                   {houseSearch && filteredHouses.length > 0 && (
                     <div className="mt-2 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
@@ -761,6 +801,9 @@ export default function DeliveryEntryPage() {
                     value={deliveryDate}
                     onChange={(event) => {
                       setDeliveryDate(event.target.value)
+                      const nextDate = event.target.value
+                      setLogDate(nextDate)
+                      void loadLogsForDate(nextDate)
                     }}
                   />
                 </div>
@@ -787,14 +830,14 @@ export default function DeliveryEntryPage() {
                             size="sm"
                             className="gap-1.5 text-muted-foreground"
                             onClick={() => removeRow(row.id)}
-                                                        disabled={false}
+                            disabled={false}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                             Remove
                           </Button>
                         </div>
 
-                        <div className="grid gap-4 grid-cols-2">
+                        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
                           <div className="space-y-1.5">
                             <Label htmlFor={`milkType-${row.id}`}>Product</Label>
                             <Input
@@ -854,6 +897,35 @@ export default function DeliveryEntryPage() {
                   />
                 </div>
 
+                {houseId && selectedHouse && existingItems.length > 0 && (
+                  <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">Existing entries</Badge>
+                        <Badge variant="secondary">{existingItems.length} item{existingItems.length !== 1 ? 's' : ''}</Badge>
+                      </div>
+                      <span className="text-sm font-semibold text-primary">{formatMoney(existingTotalAmount)}</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {existingItems.map((item) => (
+                        <div
+                          key={item.key}
+                          className="grid items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 grid-cols-2 sm:grid-cols-[1fr_0.6fr_0.6fr_0.8fr]"
+                        >
+                          <div className="col-span-2 sm:col-span-1">
+                            <p className="text-sm font-medium text-foreground">{item.milkType}</p>
+                            <p className="text-[10px] text-muted-foreground">{item.shift}</p>
+                          </div>
+                          <p className="hidden text-right text-sm text-foreground sm:block">{item.qty.toFixed(2)}</p>
+                          <p className="hidden text-right text-sm text-foreground sm:block">{formatMoney(item.rate)}</p>
+                          <p className="text-right text-sm font-semibold text-foreground">{formatMoney(item.amount)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div
                   className={cn(
                     rows.length > 1
@@ -880,11 +952,11 @@ export default function DeliveryEntryPage() {
                             : 'Select a house to continue'}
                         </p>
 
-                          {itemSummary && (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {itemSummary}
-                            </p>
-                          )}
+                        {itemSummary && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {itemSummary}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-3">
@@ -927,156 +999,181 @@ export default function DeliveryEntryPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl border border-border bg-card py-0">
-          <CardHeader className="border-b border-border px-5 py-4">
-            <CardTitle>Recent delivery logs</CardTitle>
-            <CardDescription>
-              Today’s entries. Change date or search a house.
-            </CardDescription>
-          </CardHeader>
+        <div className="flex flex-col gap-3">
+          {logItemSummary.length > 0 && (
+            <Card className="gap-0">
+              <CardHeader className="py-0">
+                <CardTitle>Summary ( {Intl.DateTimeFormat('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric'
+                }).format(new Date(logDate))} )</CardTitle>
+              </CardHeader>
 
-          <CardContent className="px-0 py-0">
-            <div className="flex flex-col gap-3 border-b border-border p-5 sm:flex-row sm:items-end">
-              <div className="space-y-1.5 flex-1">
-                <Label htmlFor="log-date">Date</Label>
-                <Input
-                  id="log-date"
-                  type="date"
-                  value={logDate}
-                  onChange={(event) => {
-                    const nextDate = event.target.value
-                    setLogDate(nextDate)
-                    void loadLogsForDate(nextDate)
-                  }}
-                />
-              </div>
-
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="log-house-search"
-                  placeholder="Search house number or area..."
-                  value={logHouseSearch}
-                  onChange={(event) => setLogHouseSearch(event.target.value)}
-                  className="pl-9"
-                />
-              </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const today = getTodayDateKey()
-                  setLogDate(today)
-                  setLogHouseSearch('')
-                  void loadLogsForDate(today)
-                }}
-              >
-                Today
-              </Button>
-            </div>
-
-            {loading || logLoading ? (
-              <div className="space-y-3 p-5">
-                {[...Array(4)].map((_, index) => (
-                  <Skeleton key={index} className="h-20 w-full rounded-2xl" />
-                ))}
-              </div>
-            ) : shopLogs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center px-6 py-14 text-center text-muted-foreground">
-                <Package2 className="h-12 w-12 opacity-30" />
-                <p className="mt-3 font-medium text-foreground">No delivery logs yet</p>
-                <p className="mt-1 text-sm">
-                  Use the form on the left to create the first record.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-hidden">
-                <div className="max-h-176 overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 z-10 bg-card">
-                      <tr className="border-b border-border bg-muted/40">
-                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
-                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Products</th>
-                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Shift</th>
-                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
-                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Time</th>
-                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
+              <CardContent className="overflow-x-auto px-5 py-0">
+                <table className="min-w-[240px] w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="py-2.5 text-left font-semibold text-muted-foreground">Product</th>
+                      <th className="py-2.5 text-right font-semibold text-muted-foreground">Total Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logItemSummary.map((item) => (
+                      <tr key={item.name} className="border-b border-border/50 last:border-b-0">
+                        <td className="py-2 font-medium text-foreground">{item.name}</td>
+                        <td className="py-2 text-right font-semibold text-foreground">{item.qty.toFixed(2)}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {shopLogs.map((log, index) => (
-                        <tr
-                          key={log.id}
-                          className={cn(
-                            'border-b border-border/60 transition-colors hover:bg-muted/30',
-                            index === shopLogs.length - 1 && 'border-b-0',
-                          )}
-                        >
-                          <td className="px-4 py-3">
-                            <div>
-                              <p className="font-semibold">House {log.house?.houseNo ?? log.houseId}</p>
-                              {log.house?.area ? (
-                                <p className="text-xs text-muted-foreground">{log.house.area}</p>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="space-y-1">
-                              <p className="font-medium">{(log.items ?? []).length} item{(log.items ?? []).length === 1 ? '' : 's'}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {Array.isArray(log.items)
-                                  ? log.items.slice(0, 2).map((item) => item.milkType).join(', ')
-                                  : ''}
-                                {Array.isArray(log.items) && log.items.length > 2 ? '...' : ''}
-                              </p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge variant={log.shift === 'morning' ? 'default' : 'secondary'}>
-                              {log.shift}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-primary">
-                            {formatMoney(log.totalAmount)}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground">
-                            {formatDateTime(log.deliveredAt)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                                title="Edit entry"
-                                onClick={() => openEdit(log)}
-                                disabled={Boolean(log.billGenerated)}
-                              >
-                                <Edit2 className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                title="Delete entry"
-                                onClick={() => setDeletingLog(log)}
-                                disabled={Boolean(log.billGenerated)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="rounded-3xl border border-border bg-card py-0 gap-0">
+            <CardHeader className="border-b border-border px-5 py-4">
+              <CardTitle>Delivery logs</CardTitle>
+              <CardDescription>
+                {Intl.DateTimeFormat('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric'
+                }).format(new Date(logDate))}
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent className="px-0 py-0">
+              <div className="flex flex-col gap-3 border-b border-border p-2 sm:flex-row sm:items-end">
+
+                <div className="relative flex-1 flex-row">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <Input
+                    id="log-house-search"
+                    placeholder="Search house number or area..."
+                    value={logHouseSearch}
+                    onChange={(event) => setLogHouseSearch(event.target.value)}
+                    className="pl-9"
+                  />
                 </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const today = getTodayDateKey()
+                    setLogDate(today)
+                    setLogHouseSearch('')
+                    void loadLogsForDate(today)
+                    setDeliveryDate(today)
+                  }}
+                >
+                  Today
+                </Button>
               </div>
-            )}
-          </CardContent>
-        </Card>
+
+              {loading || logLoading ? (
+                <div className="space-y-3 p-5">
+                  {[...Array(4)].map((_, index) => (
+                    <Skeleton key={index} className="h-20 w-full rounded-2xl" />
+                  ))}
+                </div>
+              ) : shopLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center px-6 py-14 text-center text-muted-foreground">
+                  <Package2 className="h-12 w-12 opacity-30" />
+                  <p className="mt-3 font-medium text-foreground">No delivery logs yet</p>
+                  <p className="mt-1 text-sm">
+                    Use the form on the left to create the first record.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <div className="max-h-176 overflow-auto">
+                    <table className="min-w-[600px] w-full text-sm">
+                      <thead className="sticky top-0 z-10 bg-card">
+                        <tr className="border-b border-border bg-muted/40">
+                          <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
+                          <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Products</th>
+                          <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Shift</th>
+                          <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
+                          <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Time</th>
+                          <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shopLogs.map((log, index) => (
+                          <tr
+                            key={log.id}
+                            className={cn(
+                              'border-b border-border/60 transition-colors hover:bg-muted/30',
+                              index === shopLogs.length - 1 && 'border-b-0',
+                            )}
+                          >
+                            <td className="px-4 py-3">
+                              <div>
+                                <p className="font-semibold">House {log.house?.houseNo ?? log.houseId}</p>
+                                {log.house?.area ? (
+                                  <p className="text-xs text-muted-foreground">{log.house.area}</p>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="space-y-1">
+                                <p className="font-medium">{(log.items ?? []).length} item{(log.items ?? []).length === 1 ? '' : 's'}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {Array.isArray(log.items)
+                                    ? log.items.slice(0, 2).map((item) => item.milkType).join(', ')
+                                    : ''}
+                                  {Array.isArray(log.items) && log.items.length > 2 ? '...' : ''}
+                                </p>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <Badge variant={log.shift === 'morning' ? 'default' : 'secondary'}>
+                                {log.shift}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-primary">
+                              {formatMoney(log.totalAmount)}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground">
+                              {formatDateTime(log.deliveredAt)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0"
+                                  title="Edit entry"
+                                  onClick={() => openEdit(log)}
+                                  disabled={Boolean(log.billGenerated)}
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                  title="Delete entry"
+                                  onClick={() => setDeletingLog(log)}
+                                  disabled={Boolean(log.billGenerated)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Edit Dialog */}
