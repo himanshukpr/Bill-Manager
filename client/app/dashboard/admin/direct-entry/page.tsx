@@ -140,6 +140,15 @@ function getTodayDateKey(): string {
   return `${year}-${month}-${day}`
 }
 
+function getYesterdayDatekey(): string {
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  const year = yesterday.getFullYear()
+  const month = String(yesterday.getMonth() + 1).padStart(2, '0')
+  const day = String(yesterday.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function buildDeliveredAtForDate(dateKey: string): string {
   const [year, month, day] = dateKey.split('-').map(Number)
   const deliveredAt = new Date(year, month - 1, day)
@@ -693,7 +702,7 @@ export default function DeliveryEntryPage() {
               </div>
             ) : (
               <>
-                <div className="sticky top-4 space-y-1 rounded-2xl bg-background/50 backdrop-blur supports-backdrop-filter:bg-background/70 p-4">
+                <div className="sticky z-10 top-4 space-y-1 rounded-2xl bg-background/50 backdrop-blur supports-backdrop-filter:bg-background/70 p-4">
 
                   <div className="flex gap-2 items-end ">
                     <div className="relative flex-1">
@@ -750,7 +759,7 @@ export default function DeliveryEntryPage() {
                                 : 'hover:bg-muted/50',
                             )}
                           >
-                            <p className="font-semibold">House {house.houseNo} </p> 
+                            <p className="font-semibold">House {house.houseNo} </p>
                             {house.area && <span className="text-xs text-muted-foreground">{house.area}</span>}
                           </button>
                         ))}
@@ -761,26 +770,60 @@ export default function DeliveryEntryPage() {
                   {houseId && selectedHouse && (
                     <div className="flex justify-start items-center gap-2 mt-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
                       <p className="text-sm font-medium">House {selectedHouse.houseNo}</p>
-                      <span className='text-xs text-muted-foreground'>( {selectedHouse.area && <span className="text-xs text-muted-foreground">{selectedHouse.area}</span>} )</span>
+                      <span className='text-xs text-muted-foreground'>{selectedHouse.area && <span className="text-xs text-muted-foreground">( {selectedHouse.area} )</span>} </span>
                     </div>
                   )}
                 </div>
 
 
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="delivery-date">Date</Label>
-                  <Input
-                    id="delivery-date"
-                    type="date"
-                    value={deliveryDate}
-                    onChange={(event) => {
-                      setDeliveryDate(event.target.value)
-                      const nextDate = event.target.value
-                      setLogDate(nextDate)
-                      void loadLogsForDate(nextDate)
-                    }}
-                  />
+                <div className="flex flex-col gap-3 border-b border-border p-2 sm:flex-row sm:items-end">
+                  <div className="space-y-1.5 relative flex-2 flex-row">
+                    <Label htmlFor="delivery-date">Date</Label>
+                    <Input
+                      id="delivery-date"
+                      type="date"
+                      value={deliveryDate}
+                      onChange={(event) => {
+                        setDeliveryDate(event.target.value)
+                        const nextDate = event.target.value
+                        setLogDate(nextDate)
+                        void loadLogsForDate(nextDate)
+                      }}
+                    />
+                  </div>
+                  <div className='flex flex-1 gap-1'>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className='flex-1'
+                      onClick={() => {
+                        const yesterday = getYesterdayDatekey()
+                        setLogDate(yesterday)
+                        setLogHouseSearch('')
+                        void loadLogsForDate(yesterday)
+                        setDeliveryDate(yesterday)
+                      }}
+                    >
+                      Yesterday
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className='flex-1'
+                      onClick={() => {
+                        const today = getTodayDateKey()
+                        setLogDate(today)
+                        setLogHouseSearch('')
+                        void loadLogsForDate(today)
+                        setDeliveryDate(today)
+                      }}
+                    >
+                      Today
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-4">
@@ -899,6 +942,64 @@ export default function DeliveryEntryPage() {
                   )}
                 </div>
 
+                  {selectedHouse && (
+                      <div className='rounded-2xl border border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80 p-4 shadow-sm'>
+                        <div className="mb-3">
+                          <p className="text-sm font-semibold">
+                            Deliveries for {deliveryDate ? new Date(deliveryDate).toLocaleDateString('en-IN', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric'
+                            }) : 'today'}
+                          </p>
+                        </div>
+                        {(() => {
+                          const safeDate = deliveryDate || getTodayDateKey()
+                          const { fromDate, toDate } = getDateRangeForDateKey(safeDate)
+                          const houseLogs = logs.filter((log) => {
+                            return log.houseId === selectedHouse.id &&
+                              log.deliveredAt >= fromDate &&
+                              log.deliveredAt <= toDate
+                          })
+                          const productTotals = new Map<string, { qty: number; amount: number }>()
+                          for (const log of houseLogs) {
+                            for (const item of log.items || []) {
+                              const milkType = item.milkType
+                              const qty = Number(item.qty) || 0
+                              const itemAmount = Number(item.amount) || 0
+                              const current = productTotals.get(milkType) || { qty: 0, amount: 0 }
+                              productTotals.set(milkType, { qty: current.qty + qty, amount: current.amount + itemAmount })
+                            }
+                          }
+                          const totalQty = Array.from(productTotals.values()).reduce((a, b) => a + b.qty, 0)
+                          const totalAmount = Array.from(productTotals.values()).reduce((a, b) => a + b.amount, 0)
+                          const products = Array.from(productTotals.entries())
+                            .map(([name, data]) => ({ name, qty: data.qty, amount: data.amount }))
+                            .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name))
+
+                          return products.length > 0 ? (
+                            <div className="space-y-2">
+                              
+                              <div className="space-y-1">
+                                {products.map((p) => (
+                                  <div key={p.name} className="flex justify-between text-xs">
+                                    <span className="text-muted-foreground">{p.name}</span>
+                                    <span>{p.qty.toFixed(2)}L @ ₹{selectedHouse ? Number(getResolvedRateByProductName(selectedHouse, rates, p.name)).toFixed(2) : '—'} = ₹{p.amount.toFixed(2)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="flex justify-end items-baseline">
+                                <p className="text-xs text-muted-foreground">Total: ₹{totalAmount.toFixed(2)}</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">No deliveries recorded for this date</p>
+                          )
+                        })()}
+                      </div>
+                    )}
+                
+
 
                 <div
                   className={cn(
@@ -913,6 +1014,61 @@ export default function DeliveryEntryPage() {
                       rows.length > 1 && 'border-t'
                     )}
                   >
+                    {/* {selectedHouse && (
+                      <>
+                        <div className="mb-3">
+                          <p className="text-sm font-semibold">
+                            Deliveries for {deliveryDate ? new Date(deliveryDate).toLocaleDateString('en-IN', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric'
+                            }) : 'today'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            House {selectedHouse.houseNo}
+                          </p>
+                        </div>
+                        {(() => {
+                          const safeDate = deliveryDate || getTodayDateKey()
+                          const { fromDate, toDate } = getDateRangeForDateKey(safeDate)
+                          const houseLogs = logs.filter((log) => {
+                            return log.houseId === selectedHouse.id &&
+                              log.deliveredAt >= fromDate &&
+                              log.deliveredAt <= toDate
+                          })
+                          const productTotals = new Map<string, number>()
+                          for (const log of houseLogs) {
+                            for (const item of log.items || []) {
+                              const current = productTotals.get(item.milkType) || 0
+                              productTotals.set(item.milkType, current + (Number(item.qty) || 0))
+                            }
+                          }
+                          const totalQty = Array.from(productTotals.values()).reduce((a, b) => a + b, 0)
+                          const products = Array.from(productTotals.entries())
+                            .map(([name, qty]) => ({ name, qty }))
+                            .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name))
+
+                          return products.length > 0 ? (
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-baseline">
+                                <p className="text-xs text-muted-foreground">Total: {totalQty.toFixed(2)}L</p>
+                              </div>
+                              <div className="space-y-1">
+                                {products.map((p) => (
+                                  <div key={p.name} className="flex justify-between text-xs">
+                                    <span className="text-muted-foreground">{p.name}</span>
+                                    <span>{p.qty.toFixed(2)}L</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">No deliveries recorded for this date</p>
+                          )
+                        })()}
+                      </>
+                    )} */}
+
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-sm font-semibold">Ready to save</p>
@@ -1007,8 +1163,7 @@ export default function DeliveryEntryPage() {
 
           <Card className="rounded-3xl border border-border bg-card py-0 gap-0">
             <CardHeader className="border-b border-border px-5 py-4">
-              <CardTitle>Delivery logs ( 
-                {Intl.DateTimeFormat('en-IN', {
+              <CardTitle>Delivery logs ( {Intl.DateTimeFormat('en-IN', {
                   day: 'numeric',
                   month: 'short',
                   year: 'numeric'
@@ -1017,9 +1172,7 @@ export default function DeliveryEntryPage() {
             </CardHeader>
 
             <CardContent className="px-0 py-0">
-              <div className="flex flex-col gap-3 border-b border-border p-2 sm:flex-row sm:items-end">
-
-                <div className="relative flex-1 flex-row">
+                <div className="relative flex-1 flex-row m-1">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                   <Input
                     id="log-house-search"
@@ -1029,22 +1182,6 @@ export default function DeliveryEntryPage() {
                     className="pl-9"
                   />
                 </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const today = getTodayDateKey()
-                    setLogDate(today)
-                    setLogHouseSearch('')
-                    void loadLogsForDate(today)
-                    setDeliveryDate(today)
-                  }}
-                >
-                  Today
-                </Button>
-              </div>
 
               {loading || logLoading ? (
                 <div className="space-y-3 p-5">
