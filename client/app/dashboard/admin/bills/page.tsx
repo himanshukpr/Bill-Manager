@@ -550,20 +550,12 @@ export default function BillsPage() {
           // Shop first
           if (a.shift === 'shop' && b.shift !== 'shop') return -1
           if (a.shift !== 'shop' && b.shift === 'shop') return 1
-          // Then evening
+          // Then evening, then morning — same order as supplier drag planner
           if (a.shift === 'evening' && b.shift === 'morning') return -1
           if (a.shift === 'morning' && b.shift === 'evening') return 1
-          // Same shift
-          if (a.shift === 'evening' && b.shift === 'evening') {
-            if (a.position !== b.position) return a.position - b.position
-            return a.houseNo.localeCompare(b.houseNo, undefined, { numeric: true, sensitivity: 'base' })
-          }
-          if (a.shift === 'morning' && b.shift === 'morning') {
-            if (a.supplier !== b.supplier) return a.supplier.localeCompare(b.supplier)
-            if (a.position !== b.position) return a.position - b.position
-            return a.houseNo.localeCompare(b.houseNo, undefined, { numeric: true, sensitivity: 'base' })
-          }
-          return 0
+          // Within same shift: order by position (matching drag planner route order)
+          if (a.position !== b.position) return a.position - b.position
+          return a.houseNo.localeCompare(b.houseNo, undefined, { numeric: true, sensitivity: 'base' })
         })
 
       setPendingData(data)
@@ -594,30 +586,30 @@ export default function BillsPage() {
     doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 14, 23)
 
     const body: (string | number)[][] = []
-    let lastShift = ''
-    let lastSupplier = ''
     let rowIdx = 1
 
+    const groups = new Map<string, typeof pendingDisplayData>()
     for (const d of pendingDisplayData) {
-      const shiftKey = d.shift === 'morning' ? `morning:${d.supplier}` : d.shift
-      const prevShiftKey = lastShift === 'morning' ? `morning:${lastSupplier}` : lastShift
+      const key = d.shift === 'shop' ? 'Shop' : d.shift === 'evening' ? 'Evening' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : d.shift
+      const group = groups.get(key) ?? []
+      group.push(d)
+      groups.set(key, group)
+    }
 
-      if (shiftKey !== prevShiftKey) {
-        const label = d.shift === 'shop' ? 'SHOP' : d.shift === 'evening' ? 'EVENING' : d.shift === 'morning' ? `MORNING - ${d.supplier || '-'}` : d.shift.toUpperCase()
-        body.push([{ content: label, colSpan: 6, styles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'left' as const } } as any])
-        lastShift = d.shift
-        lastSupplier = d.supplier
+    for (const [groupName, rows] of groups.entries()) {
+      body.push([{ content: groupName, colSpan: 6, styles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'left' as const } } as any])
+
+      for (const d of rows) {
+        body.push([
+          rowIdx,
+          `HN - ${d.houseNo}`,
+          d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
+          d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+          d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
+          d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
+        ])
+        rowIdx++
       }
-
-      body.push([
-        rowIdx,
-        `HN - ${d.houseNo}`,
-        d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
-        d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
-        d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
-        d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
-      ])
-      rowIdx++
     }
 
     autoTable(doc, {

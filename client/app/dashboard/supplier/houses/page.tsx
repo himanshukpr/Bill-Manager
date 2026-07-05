@@ -144,8 +144,11 @@ export default function SupplierHousesPage() {
     }, [auth, selectedShift])
 
     function filterHousesByShift(data: House[], configs: HouseConfig[], session: SessionAuth, shift: 'morning' | 'evening') {
+        const activeHouseIds = new Set(data.map((h) => h.id))
+        const activeConfigs = configs.filter((c) => activeHouseIds.has(c.houseId))
+
         const configsByHouse = new Map<number, HouseConfig[]>()
-        for (const config of configs) {
+        for (const config of activeConfigs) {
             const supplier = suppliers.find((s) => s.uuid === config.supplierId)
             const enriched: HouseConfig = supplier ? { ...config, supplier: { uuid: supplier.uuid, username: supplier.username } } : config
             const next = configsByHouse.get(config.houseId) ?? []
@@ -171,7 +174,7 @@ export default function SupplierHousesPage() {
                     return leftOrder - rightOrder
                 })
 
-            const morningConfigs = configs
+            const morningConfigs = activeConfigs
                 .filter((c) => c.shift === 'morning' && c.supplierId === session.uuid)
                 .map((c) => {
                     const supplier = suppliers.find((s) => s.uuid === c.supplierId)
@@ -196,7 +199,7 @@ export default function SupplierHousesPage() {
                     return leftOrder - rightOrder
                 })
 
-            const eveningConfigs = configs
+            const eveningConfigs = activeConfigs
                 .filter((c) => c.shift === 'evening')
                 .map((c) => {
                     const supplier = suppliers.find((s) => s.uuid === c.supplierId)
@@ -207,14 +210,14 @@ export default function SupplierHousesPage() {
         }
 
         // Keep both planner sections hydrated regardless of selected shift
-        const allMorningForSupplier = configs
+        const allMorningForSupplier = activeConfigs
             .filter((c) => c.shift === 'morning' && c.supplierId === session.uuid)
             .map((c) => {
                 const supplier = suppliers.find((s) => s.uuid === c.supplierId)
                 return supplier ? { ...c, supplier: { uuid: supplier.uuid, username: supplier.username } } : c
             })
             .sort((a, b) => a.position - b.position)
-        const allEvening = configs
+        const allEvening = activeConfigs
             .filter((c) => c.shift === 'evening')
             .map((c) => {
                 const supplier = suppliers.find((s) => s.uuid === c.supplierId)

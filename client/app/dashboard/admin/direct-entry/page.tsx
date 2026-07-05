@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { balanceApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { date } from 'zod/mini'
+
 
 type DeliveryEntryRow = {
   id: string
@@ -230,6 +230,7 @@ export default function DeliveryEntryPage() {
   const [logLoading, setLogLoading] = useState(false)
   const [productPickerOpen, setProductPickerOpen] = useState(false)
   const [note, setNote] = useState('')
+  const [showNote, setShowNote] = useState(false);
   const [rows, setRows] = useState<DeliveryEntryRow[]>([])
   const newRowIdRef = useRef<string | null>(null)
 
@@ -401,32 +402,6 @@ export default function DeliveryEntryPage() {
   const itemSummary = useMemo(
     () => items.map((item) => `${item.milkType}: ${item.qty}`).join(', '),
     [items],
-  )
-
-  const existingHouseLogs = useMemo(() => {
-    if (!houseId) return []
-    const { fromDate, toDate } = getDateRangeForDateKey(deliveryDate || getTodayDateKey())
-    return logs
-      .filter((log) => String(log.houseId) === houseId && log.deliveredAt >= fromDate && log.deliveredAt <= toDate)
-      .sort((a, b) => new Date(a.deliveredAt).getTime() - new Date(b.deliveredAt).getTime())
-  }, [logs, houseId, deliveryDate])
-
-  const existingItems = useMemo(() => {
-    return existingHouseLogs.flatMap((log) =>
-      (log.items ?? []).map((item, idx) => ({
-        key: `${log.id}-${idx}`,
-        milkType: item.milkType,
-        qty: Number(item.qty) || 0,
-        rate: Number(item.rate) || 0,
-        amount: Number(item.amount) || 0,
-        shift: log.shift,
-      }))
-    )
-  }, [existingHouseLogs])
-
-  const existingTotalAmount = useMemo(
-    () => existingItems.reduce((sum, item) => sum + item.amount, 0),
-    [existingItems],
   )
 
   useEffect(() => {
@@ -718,9 +693,9 @@ export default function DeliveryEntryPage() {
               </div>
             ) : (
               <>
-                <div className="space-y-1">
+                <div className="sticky top-4 space-y-1 rounded-2xl bg-background/50 backdrop-blur supports-backdrop-filter:bg-background/70 p-4">
 
-                  <div className="flex gap-2 items-end">
+                  <div className="flex gap-2 items-end ">
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                       <Input
@@ -775,8 +750,8 @@ export default function DeliveryEntryPage() {
                                 : 'hover:bg-muted/50',
                             )}
                           >
-                            <p className="font-semibold">House {house.houseNo}</p>
-                            {house.area && <p className="text-xs text-muted-foreground">{house.area}</p>}
+                            <p className="font-semibold">House {house.houseNo} </p> 
+                            {house.area && <span className="text-xs text-muted-foreground">{house.area}</span>}
                           </button>
                         ))}
                       </div>
@@ -784,9 +759,9 @@ export default function DeliveryEntryPage() {
                   )}
 
                   {houseId && selectedHouse && (
-                    <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex justify-start items-center gap-2 mt-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
                       <p className="text-sm font-medium">House {selectedHouse.houseNo}</p>
-                      {selectedHouse.area && <p className="text-xs text-muted-foreground">{selectedHouse.area}</p>}
+                      <span className='text-xs text-muted-foreground'>( {selectedHouse.area && <span className="text-xs text-muted-foreground">{selectedHouse.area}</span>} )</span>
                     </div>
                   )}
                 </div>
@@ -837,7 +812,7 @@ export default function DeliveryEntryPage() {
                           </Button>
                         </div>
 
-                        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+                        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
                           <div className="space-y-1.5">
                             <Label htmlFor={`milkType-${row.id}`}>Product</Label>
                             <Input
@@ -887,44 +862,43 @@ export default function DeliveryEntryPage() {
                   })}
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="delivery-note">Note</Label>
-                  <Textarea
-                    id="delivery-note"
-                    placeholder="Optional note for this direct entry"
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                  />
+                <div className="space-y-2">
+                  {!showNote ? (
+                    <div className='flex justify-center'>
+                      <button
+                        type="button"
+                        onClick={() => setShowNote(true)}
+                        className="text-sm text-blue-600 hover:underline"
+                      >
+                        + Add Note
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="delivery-note">Note</Label>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowNote(false)}
+                            className="text-xs text-muted-foreground hover:text-red-500"
+                          >
+                            Hide
+                          </button>
+                        </div>
+
+                        <Textarea
+                          id="delivery-note"
+                          placeholder="Optional note for this direct entry"
+                          value={note}
+                          onChange={(event) => setNote(event.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {houseId && selectedHouse && existingItems.length > 0 && (
-                  <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">Existing entries</Badge>
-                        <Badge variant="secondary">{existingItems.length} item{existingItems.length !== 1 ? 's' : ''}</Badge>
-                      </div>
-                      <span className="text-sm font-semibold text-primary">{formatMoney(existingTotalAmount)}</span>
-                    </div>
-
-                    <div className="space-y-2">
-                      {existingItems.map((item) => (
-                        <div
-                          key={item.key}
-                          className="grid items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 grid-cols-2 sm:grid-cols-[1fr_0.6fr_0.6fr_0.8fr]"
-                        >
-                          <div className="col-span-2 sm:col-span-1">
-                            <p className="text-sm font-medium text-foreground">{item.milkType}</p>
-                            <p className="text-[10px] text-muted-foreground">{item.shift}</p>
-                          </div>
-                          <p className="hidden text-right text-sm text-foreground sm:block">{item.qty.toFixed(2)}</p>
-                          <p className="hidden text-right text-sm text-foreground sm:block">{formatMoney(item.rate)}</p>
-                          <p className="text-right text-sm font-semibold text-foreground">{formatMoney(item.amount)}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 <div
                   className={cn(
@@ -1033,14 +1007,13 @@ export default function DeliveryEntryPage() {
 
           <Card className="rounded-3xl border border-border bg-card py-0 gap-0">
             <CardHeader className="border-b border-border px-5 py-4">
-              <CardTitle>Delivery logs</CardTitle>
-              <CardDescription>
+              <CardTitle>Delivery logs ( 
                 {Intl.DateTimeFormat('en-IN', {
                   day: 'numeric',
                   month: 'short',
                   year: 'numeric'
-                }).format(new Date(logDate))}
-              </CardDescription>
+                }).format(new Date(logDate))} )
+              </CardTitle>
             </CardHeader>
 
             <CardContent className="px-0 py-0">
