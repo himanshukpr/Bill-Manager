@@ -11,7 +11,7 @@ import {
 import { DEFAULT_CACHE_FRESH_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
 const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'theme', 'next-theme']);
-const SESSION_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth']);
+const SESSION_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'adminSession']);
 const revalidationLocks = new Map<string, Promise<void>>();
 const activeGetQueries = new Map<
   string,

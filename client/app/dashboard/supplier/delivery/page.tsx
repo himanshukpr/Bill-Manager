@@ -16,6 +16,8 @@ import {
     Trash2,
     Map as MapIcon,
 } from 'lucide-react'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +27,8 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
+    DialogFooter,
+    DialogDescription,
 } from '@/components/ui/dialog'
 import {
     AlertDialog,
@@ -37,15 +41,22 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
     houseConfigApi,
     housesApi,
     deliveryLogsApi,
     productRatesApi,
+    balanceApi,
+    billsApi,
     type DeliveryLog,
     type ProductRate,
     type House,
     type HouseConfig,
+    type PaymentHistory,
+    type Bill,
+    type BillItem,
+    type HouseBalance,
 } from '@/lib/api'
 import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
@@ -193,6 +204,24 @@ function parseHouseLocation(location?: string): { lat: number; lon: number } | n
     return { lat, lon }
 }
 
+function hasPaymentThisMonth(houseId: number, payments: PaymentHistory[]): boolean {
+    const now = new Date()
+    const currentMonth = now.getMonth()
+    const currentYear = now.getFullYear()
+    return payments.some((p) => {
+        const paymentHouseId = p.balance?.house?.id
+        if (paymentHouseId !== houseId) return false
+        const date = new Date(p.paidAt || p.createdAt)
+        return date.getMonth() === currentMonth && date.getFullYear() === currentYear
+    })
+}
+
+function getHouseTotalBalance(house: House): number {
+    const prev = Number(house.balance?.previousBalance ?? 0)
+    const curr = Number(house.balance?.currentBalance ?? 0)
+    return prev + curr
+}
+
 function updateAllocatedProductsOptimistically(
     houseId: number,
     items: Array<{ milkType: string; qty: number }>,
@@ -227,6 +256,177 @@ function updateAllocatedProductsOptimistically(
     })
 }
 
+const MONTH_NAMES = [
+    '', 'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+]
+
+type HouseDeliverySummaryRow = {
+    dateKey: string
+    dayLabel: string
+    productsLabel: string
+    hasDelivery: boolean
+    logId?: number
+    log?: DeliveryLog
+}
+
+type MonthlyProductSummary = {
+    product: string
+    months: { month: number; year: number; quantity: number }[]
+    totalQuantity: number
+}
+
+type DeliveryEditForm = {
+    items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
+    note?: string
+}
+
+type PaymentSummaryRow = {
+    id: number
+    paidAt: string
+    paidAmount: number
+    discount: number
+    note: string
+}
+
+function summaryNormalizeMilkType(value: unknown): string {
+    const text = String(value ?? '').trim()
+    if (!text) return ''
+    const lower = text.toLowerCase()
+    if (lower === 'milk') return ''
+    if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+    if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+    const stripped = lower.replace(/ milk$/, '').trim()
+    if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+    return lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+function summaryCleanItemName(name: string): string {
+    const text = name.trim()
+    if (!text) return ''
+    const lower = text.toLowerCase()
+    if (lower === 'milk') return ''
+    if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+    if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+    const stripped = lower.replace(/ milk$/, '').trim()
+    if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+    return lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+function summaryParseDateOnly(dateStr: string | null | undefined): Date {
+    if (!dateStr) return new Date()
+    const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (!match) return new Date(dateStr)
+    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
+}
+
+function summaryNormalizeRateType(value: unknown): string {
+    const text = String(value ?? '').trim().toLowerCase()
+    if (text.includes('buffalo')) return 'buffalo'
+    if (text.includes('cow')) return 'cow'
+    return text
+}
+
+function summaryGetRateByProductName(rates: ProductRate[], productName: string): number {
+    const normalized = (productName || '').toLowerCase().trim()
+    for (const rate of rates) {
+        if ((rate.name || '').toLowerCase().trim() === normalized) {
+            return Number(rate.rate)
+        }
+    }
+    return 0
+}
+
+function summaryGetLogPeriod(logs: DeliveryLog[]): { year: number; month: number } {
+    const latest = logs
+        .map((log) => new Date(log.deliveredAt))
+        .filter((date) => Number.isFinite(date.getTime()))
+        .sort((left, right) => right.getTime() - left.getTime())[0]
+
+    if (!latest) {
+        const now = new Date()
+        return { year: now.getFullYear(), month: now.getMonth() }
+    }
+
+    return {
+        year: latest.getFullYear(),
+        month: latest.getMonth(),
+    }
+}
+
+function summaryBuildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: number): HouseDeliverySummaryRow[] {
+    const byDate = new Map<string, HouseDeliverySummaryRow>()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+    for (const log of logs) {
+        const deliveredAt = new Date(log.deliveredAt)
+        if (deliveredAt.getFullYear() !== year || deliveredAt.getMonth() !== month) continue
+
+        const dateKey = getLocalDateKey(deliveredAt)
+        const existing = byDate.get(dateKey) ?? {
+            dateKey,
+            dayLabel: deliveredAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+            productsLabel: '',
+            hasDelivery: false,
+            logId: undefined,
+            log: undefined,
+        }
+
+        existing.hasDelivery = true
+        if (!existing.logId) {
+            existing.logId = log.id
+            existing.log = log
+        }
+
+        const productParts = (log.items ?? []).map((item) => {
+            const qty = Number(item.qty ?? 0)
+            if (!qty) return null
+            const milkType = summaryNormalizeMilkType(item.milkType)
+            if (!milkType) return null
+            return `${milkType} ${qty.toLocaleString('en-IN')}L`
+        }).filter((part): part is string => Boolean(part))
+
+        const productText = productParts.join(', ')
+        existing.productsLabel = existing.productsLabel ? `${existing.productsLabel}, ${productText}` : productText || '-'
+
+        byDate.set(dateKey, existing)
+    }
+
+    const rows: HouseDeliverySummaryRow[] = []
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        const date = new Date(year, month, day)
+        const dateKey = getLocalDateKey(date)
+        const row = byDate.get(dateKey)
+        rows.push(row ?? {
+            dateKey,
+            dayLabel: date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+            productsLabel: '-',
+            hasDelivery: false,
+            logId: undefined,
+            log: undefined,
+        })
+    }
+
+    return rows
+}
+
+function summaryIsValidMonth(year: number, month: number): boolean {
+    return month >= 0 && month <= 11 && year > 0
+}
+
+function summaryGetPreviousMonth(year: number, month: number): { year: number; month: number } {
+    return month === 0 ? { year: year - 1, month: 11 } : { year, month: month - 1 }
+}
+
+function summaryGetNextMonth(year: number, month: number): { year: number; month: number } {
+    return month === 11 ? { year: year + 1, month: 0 } : { year, month: month + 1 }
+}
+
+function summaryGetErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message
+    return 'Something went wrong'
+}
+
 export default function DeliveryPage() {
     const router = useRouter()
 
@@ -238,6 +438,7 @@ export default function DeliveryPage() {
     const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
     const [productRates, setProductRates] = useState<ProductRate[]>([])
     const [globalRateMap, setGlobalRateMap] = useState<Record<string, number>>({})
+    const [allPayments, setAllPayments] = useState<PaymentHistory[]>([])
     const [loading, setLoading] = useState(true)
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
@@ -299,6 +500,26 @@ export default function DeliveryPage() {
     const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
     const [historyLogs, setHistoryLogs] = useState<DeliveryLog[]>([])
     const [historyLoading, setHistoryLoading] = useState(false)
+
+    const [summaryOpen, setSummaryOpen] = useState(false)
+    const [summaryHouse, setSummaryHouse] = useState<House | null>(null)
+    const [summaryLogs, setSummaryLogs] = useState<DeliveryLog[]>([])
+    const [summaryLoading, setSummaryLoading] = useState(false)
+    const [summaryBills, setSummaryBills] = useState<Bill[]>([])
+    const [summaryProductRates, setSummaryProductRates] = useState<ProductRate[]>([])
+    const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
+        const now = new Date()
+        return { year: now.getFullYear(), month: now.getMonth() }
+    })
+    const [editDeliveryDialogOpen, setEditDeliveryDialogOpen] = useState(false)
+    const [editingDeliveryLog, setEditingDeliveryLog] = useState<DeliveryLog | null>(null)
+    const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
+    const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
+    const [editDeliverySaving, setEditDeliverySaving] = useState(false)
+    const [summaryFromDate, setSummaryFromDate] = useState('')
+    const [summaryToDate, setSummaryToDate] = useState('')
+    const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
+    const summaryRequestIdRef = useRef(0)
 
     const containerStyle = useMemo(
         () => ({ height: availableHeight ? `${availableHeight}px` : 'calc(100dvh - 0.5rem)' }),
@@ -399,13 +620,15 @@ export default function DeliveryPage() {
         try {
             setLoading(true)
 
-            const [data, rates] = await Promise.all([
+            const [data, rates, payments] = await Promise.all([
                 housesApi.list(),
                 productRatesApi.list(),
+                balanceApi.allPayments(),
             ])
 
             setProductRates(rates)
             setGlobalRateMap(resolveGlobalRateMap(rates))
+            setAllPayments(payments)
             setDeliveryItems((prev) => {
                 const defaultProduct = rates.find((rate) => rate.isActive && Number(rate.rate) > 0)?.name.trim() ?? ''
                 return prev.map((item) => (item.milkType ? item : { ...item, milkType: defaultProduct }))
@@ -872,6 +1095,578 @@ export default function DeliveryPage() {
             setHistoryLoading(false)
         }
     }, [currentHouse])
+
+    const summaryFilteredSummaryLogs = useMemo(() => {
+        if (!summaryFromDate || !summaryToDate) return summaryLogs
+        const from = new Date(summaryFromDate)
+        const to = new Date(summaryToDate)
+        to.setHours(23, 59, 59, 999)
+        return summaryLogs.filter(log => {
+            const d = new Date(log.deliveredAt)
+            return d >= from && d <= to
+        })
+    }, [summaryLogs, summaryFromDate, summaryToDate])
+
+    const summarySummaryRows = useMemo(() => {
+        if (!summaryHouse) return []
+        return summaryBuildHouseDeliverySummary(summaryFilteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
+    }, [summaryHouse, summaryFilteredSummaryLogs, summaryPeriod])
+
+    const summaryPaymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
+        if (!summaryHouse) return []
+
+        const allPaymentsList = [...(summaryBalance?.payments ?? [])].sort(
+            (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+        )
+
+        const payments = allPaymentsList.filter((payment) => {
+            const d = new Date(payment.paidAt || payment.createdAt)
+            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+        })
+
+        const baseOutstanding = Number(
+            summaryBalance?.previousBalance ??
+            summaryBalance?.currentBalance ??
+            summaryHouse.balance?.previousBalance ??
+            summaryHouse.balance?.currentBalance ??
+            0,
+        )
+
+        const totalApplied = payments.reduce(
+            (sum, payment) => sum + Number(payment.amount ?? 0) + Number(payment.discount ?? 0),
+            0,
+        )
+
+        let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
+
+        return payments.map((payment) => {
+            const paidAmount = Number(payment.amount ?? 0)
+            const discount = Number(payment.discount ?? 0)
+            remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
+
+            return {
+                id: payment.id,
+                paidAt: payment.paidAt || payment.createdAt,
+                paidAmount,
+                discount,
+                remainingAmount,
+                note: payment.note ?? '',
+            }
+        })
+    }, [summaryBalance, summaryHouse, summaryPeriod])
+
+    const summaryHasDateRangeFilter = summaryFromDate !== '' && summaryToDate !== ''
+
+    const summaryDisplaySummaryRows = useMemo(() => {
+        if (!summaryHasDateRangeFilter) return summarySummaryRows
+        const from = new Date(summaryFromDate)
+        const to = new Date(summaryToDate)
+        to.setHours(23, 59, 59, 999)
+        return summarySummaryRows.filter(row => {
+            const d = new Date(row.dateKey)
+            return d >= from && d <= to
+        })
+    }, [summarySummaryRows, summaryFromDate, summaryToDate, summaryHasDateRangeFilter])
+
+    const summaryMatchingBills = useMemo(() => {
+        const monthStart = new Date(summaryPeriod.year, summaryPeriod.month, 1)
+        const monthEnd = new Date(summaryPeriod.year, summaryPeriod.month + 1, 1)
+        return summaryBills.filter(b => {
+            const bFrom = new Date(b.fromDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-01`)
+            const bTo = new Date(b.toDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-28`)
+            return bFrom < monthEnd && bTo > monthStart
+        })
+    }, [summaryBills, summaryPeriod])
+
+    const summaryMonthlyProductSummary = useMemo(() => {
+        if (!summaryHouse) return []
+
+        const allMonthLogs = summaryFilteredSummaryLogs.filter(log => {
+            const d = new Date(log.deliveredAt)
+            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+        })
+
+        const totalMap = new Map<string, number>()
+        for (const log of allMonthLogs) {
+            for (const item of log.items ?? []) {
+                const product = summaryNormalizeMilkType(item.milkType)
+                const qty = Number(item.qty ?? 0)
+                if (product && qty > 0) {
+                    totalMap.set(product, (totalMap.get(product) ?? 0) + qty)
+                }
+            }
+        }
+
+        for (const bill of summaryMatchingBills) {
+            if (bill.items?.length) {
+                const items = bill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>
+                for (const item of items) {
+                    if (item.name && item.qty > 0) {
+                        const product = summaryCleanItemName(item.name)
+                        const current = totalMap.get(product) ?? 0
+                        totalMap.set(product, Math.max(0, current - item.qty))
+                    }
+                }
+            }
+        }
+
+        return Array.from(totalMap.entries())
+            .filter(([, qty]) => qty > 0)
+            .map(([product, quantity]) => ({
+                product,
+                months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity }],
+                totalQuantity: quantity,
+            }))
+            .sort((a, b) => b.totalQuantity - a.totalQuantity)
+    }, [summaryHouse, summaryFilteredSummaryLogs, summaryPeriod, summaryMatchingBills])
+
+    const summaryPdfMonthlyProductSummary = useMemo(() => {
+        if (!summaryHouse) return []
+
+        const allMonthLogs = summaryFilteredSummaryLogs.filter(log => {
+            const d = new Date(log.deliveredAt)
+            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+        })
+
+        const totalMap = new Map<string, { qty: number; amount: number }>()
+        for (const log of allMonthLogs) {
+            for (const item of log.items ?? []) {
+                const product = summaryNormalizeMilkType(item.milkType)
+                const qty = Number(item.qty ?? 0)
+                const amount = Number(item.amount ?? 0)
+                if (product && qty > 0) {
+                    const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+                    totalMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+                }
+            }
+        }
+
+        return Array.from(totalMap.entries())
+            .filter(([, data]) => data.qty > 0)
+            .map(([product, data]) => ({
+                product,
+                months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity: data.qty }],
+                totalQuantity: data.qty,
+                totalAmount: data.amount,
+            }))
+            .sort((a, b) => b.totalQuantity - a.totalQuantity)
+    }, [summaryHouse, summaryFilteredSummaryLogs, summaryPeriod])
+
+    const summaryTotals = useMemo(() => {
+        if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0, pendingTotal: 0 }
+
+        const allMonthLogs = summaryFilteredSummaryLogs.filter(log => {
+            const d = new Date(log.deliveredAt)
+            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+        })
+
+        const totalMap = new Map<string, { qty: number; amount: number }>()
+        let allLogsGrandTotal = 0
+        for (const log of allMonthLogs) {
+            allLogsGrandTotal += Number(log.totalAmount ?? 0)
+            for (const item of log.items ?? []) {
+                const product = summaryNormalizeMilkType(item.milkType)
+                const qty = Number(item.qty ?? 0)
+                const amount = Number(item.amount ?? 0)
+                if (product && qty > 0) {
+                    const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+                    totalMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+                }
+            }
+        }
+
+        for (const bill of summaryMatchingBills) {
+            const billItems = (bill.items as Array<{ name?: string; qty: number; rate: number; amount: number }>) ?? []
+            for (const item of billItems) {
+                if (item.name && item.qty > 0) {
+                    const product = summaryCleanItemName(item.name)
+                    const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+                    totalMap.set(product, {
+                        qty: Math.max(0, existing.qty - item.qty),
+                        amount: Math.max(0, existing.amount - item.amount),
+                    })
+                }
+            }
+        }
+
+        const billsTotalAmount = summaryMatchingBills.reduce((sum, b) => sum + Number(b.totalAmount), 0)
+        const pendingGrandTotal = allLogsGrandTotal - billsTotalAmount
+        const pendingTotal = Array.from(totalMap.values()).reduce((sum, d) => sum + d.amount, 0)
+
+        return {
+            productTotals: Array.from(totalMap.entries())
+                .filter(([, data]) => data.qty > 0)
+                .map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
+            grandTotal: summaryMatchingBills.length > 0 ? billsTotalAmount + Math.max(0, pendingGrandTotal) : allLogsGrandTotal,
+            previousBalance: summaryMatchingBills.length > 0 ? Number(summaryMatchingBills[0].previousBalance ?? 0) : Number(summaryBalance?.previousBalance ?? 0),
+            pendingTotal,
+        }
+    }, [summaryHouse, summaryFilteredSummaryLogs, summaryPeriod, summaryMatchingBills, summaryBalance])
+
+    const summaryEditDeliveryTotal = useMemo(() => {
+        return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
+    }, [editDeliveryForm.items])
+
+    async function handleOpenSummary() {
+        if (!currentHouse) return
+        const requestId = summaryRequestIdRef.current + 1
+        summaryRequestIdRef.current = requestId
+
+        setSummaryHouse(currentHouse)
+        setSummaryLogs([])
+        setSummaryBills([])
+        setSummaryProductRates([])
+        setSummaryBalance(null)
+        setSummaryFromDate('')
+        setSummaryToDate('')
+        setDeletingDeliveryLog(null)
+        setEditDeliveryDialogOpen(false)
+        setSummaryOpen(true)
+        setSummaryLoading(true)
+
+        try {
+            const [freshHouse, logs, bills, rates, balance] = await Promise.all([
+                housesApi.get(currentHouse.id),
+                deliveryLogsApi.list({ houseId: currentHouse.id }, true),
+                billsApi.list({ houseId: currentHouse.id }),
+                productRatesApi.list(),
+                balanceApi.get(currentHouse.id),
+            ])
+            if (summaryRequestIdRef.current !== requestId) return
+            setSummaryHouse(freshHouse)
+            setSummaryLogs(logs)
+            setSummaryBills(bills)
+            setSummaryProductRates(rates.filter((rate) => rate.isActive && Number(rate.rate) > 0))
+            setSummaryBalance(balance)
+            setSummaryPeriod(summaryGetLogPeriod(logs))
+        } catch (error: unknown) {
+            if (summaryRequestIdRef.current === requestId) {
+                toast.error(summaryGetErrorMessage(error))
+            }
+        } finally {
+            if (summaryRequestIdRef.current === requestId) {
+                setSummaryLoading(false)
+            }
+        }
+    }
+
+    function summaryGetPreferredRateForHouse(milkType: string): number {
+        const mt = summaryNormalizeRateType(milkType)
+        if (summaryHouse) {
+            const r1Type = summaryNormalizeRateType(summaryHouse.rate1Type)
+            const r2Type = summaryNormalizeRateType(summaryHouse.rate2Type)
+            if (r1Type && r1Type === mt && Number(summaryHouse.rate1) > 0) return Number(summaryHouse.rate1)
+            if (r2Type && r2Type === mt && Number(summaryHouse.rate2) > 0) return Number(summaryHouse.rate2)
+        }
+        return summaryGetRateByProductName(summaryProductRates, milkType)
+    }
+
+    function summaryGetBillForDateKey(dateKey: string): Bill | undefined {
+        const [yearStr, monthStr] = dateKey.split('-')
+        const month = parseInt(monthStr)
+        const year = parseInt(yearStr)
+        return summaryBills.find((bill) => bill.month === month && bill.year === year)
+    }
+
+    function summaryIsDeliveryBlockedByBill(dateKey: string): boolean {
+        const bill = summaryGetBillForDateKey(dateKey)
+        if (!bill) return false
+
+        const [y, m, d] = dateKey.split('-').map(Number)
+        const deliveryTs = new Date(y, m - 1, d).getTime()
+
+        if (bill.fromDate) {
+            const from = new Date(bill.fromDate)
+            const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime()
+            if (deliveryTs < fromTs) return false
+        }
+
+        if (bill.toDate) {
+            const to = new Date(bill.toDate)
+            const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime()
+            return deliveryTs <= toTs
+        }
+
+        return true
+    }
+
+    function summaryOpenEditDeliveryDialog(row: HouseDeliverySummaryRow) {
+        if (summaryIsDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)) {
+            toast.error('Cannot edit deliveries that were included in a generated bill')
+            return
+        }
+
+        if (row.log) {
+            setEditingDeliveryLog(row.log)
+            const normalized = (row.log.items ?? []).map((item) => {
+                const milkType = summaryNormalizeMilkType(item.milkType)
+                const qty = Number(item.qty ?? 0)
+                const rate = summaryGetPreferredRateForHouse(milkType)
+                return { milkType, qty, rate, amount: qty * rate }
+            })
+            setEditDeliveryForm({ items: normalized, note: row.log.note })
+        } else {
+            const [year, month, day] = row.dateKey.split('-').map(Number)
+            const deliveryDate = new Date(year, month - 1, day)
+            const newLog: DeliveryLog = {
+                id: 0,
+                houseId: summaryHouse?.id ?? 0,
+                deliveredAt: deliveryDate.toISOString(),
+                createdAt: new Date().toISOString(),
+                shift: (summaryHouse?.configs?.[0]?.shift ?? 'morning') as 'morning' | 'evening' | 'shop',
+                items: [],
+                billGenerated: false,
+                isClosed: false,
+                totalAmount: '0',
+                openingBalance: '0',
+                closingBalance: '0',
+                note: '',
+            }
+            setEditingDeliveryLog(newLog)
+            setEditDeliveryForm({ items: [], note: '' })
+        }
+        setEditDeliveryDialogOpen(true)
+    }
+
+    async function handleSaveDeliveryEdit() {
+        if (!editingDeliveryLog || !summaryHouse) return
+
+        setEditDeliverySaving(true)
+        try {
+            const isNewDelivery = editingDeliveryLog.id === 0
+
+            if (isNewDelivery) {
+                await deliveryLogsApi.create({
+                    houseId: summaryHouse.id,
+                    shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
+                    items: editDeliveryForm.items,
+                    note: editDeliveryForm.note,
+                    deliveredAt: editingDeliveryLog.deliveredAt,
+                })
+                toast.success('Delivery created successfully')
+            } else {
+                await deliveryLogsApi.update(editingDeliveryLog.id, {
+                    items: editDeliveryForm.items,
+                    note: editDeliveryForm.note,
+                })
+                toast.success('Delivery updated successfully')
+            }
+
+            const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
+            setSummaryLogs(logs)
+
+            setEditDeliveryDialogOpen(false)
+            setEditingDeliveryLog(null)
+            setEditDeliveryForm({ items: [], note: '' })
+        } catch (error: unknown) {
+            toast.error(summaryGetErrorMessage(error))
+        } finally {
+            setEditDeliverySaving(false)
+        }
+    }
+
+    async function handleDeleteDeliveryLog() {
+        if (!deletingDeliveryLog || !summaryHouse) return
+        const deleteDateKey = deletingDeliveryLog.deliveredAt ? new Date(deletingDeliveryLog.deliveredAt).toISOString().split('T')[0] : ''
+        if (deleteDateKey && summaryIsDeliveryBlockedByBill(deleteDateKey)) {
+            toast.error('Cannot delete a delivery that was included in a generated bill')
+            return
+        }
+        setEditDeliverySaving(true)
+        try {
+            await deliveryLogsApi.delete(deletingDeliveryLog.id)
+            const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
+            setSummaryLogs(logs)
+            setDeletingDeliveryLog(null)
+            toast.success('Delivery log deleted successfully')
+        } catch (error: unknown) {
+            toast.error(summaryGetErrorMessage(error))
+        } finally {
+            setEditDeliverySaving(false)
+        }
+    }
+
+    const handleExportSummaryPdf = useCallback(() => {
+        if (!summaryHouse) return
+        if (summarySummaryRows.length === 0) {
+            toast.error('No summary data available to export')
+            return
+        }
+
+        const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+        const title = `House ${summaryHouse.houseNo} Delivery Summary`
+        const periodLabel = `${MONTH_NAMES[summaryPeriod.month + 1]} ${summaryPeriod.year}`
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(13)
+        doc.text(title, 14, 14)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9)
+        doc.text(`Period: ${periodLabel}`, 14, 21)
+        if (summaryHouse.area) {
+            doc.text(`Area: ${summaryHouse.area}`, 14, 26)
+        }
+
+        const monthKeys = Array.from(new Set(summaryPdfMonthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+        const monthLabels = monthKeys.map((monthKey) => {
+            const [year, month] = monthKey.split('-').map(Number)
+            return `${MONTH_NAMES[month]} ${year}`
+        })
+
+        const pageWidth = doc.internal.pageSize.getWidth()
+        const pageHeight = doc.internal.pageSize.getHeight()
+        const left = 14
+        const headerBottomY = summaryHouse.area ? 26 : 21
+        const monthlyTitleY = headerBottomY + 7
+        const top = monthlyTitleY + 4
+        const bottom = 10
+        const tableWidth = pageWidth - left - 14
+        const productColWidth = monthLabels.length > 0 ? Math.max(58, Math.min(76, tableWidth * 0.36)) : tableWidth
+        const monthColWidth = monthLabels.length > 0 ? (tableWidth - productColWidth) / monthLabels.length : 0
+        const headerHeight = 9
+        const rowHeight = 8
+        const paddingX = 2
+        const lineHeight = 3.6
+
+        const toLines = (text: string, width: number): string[] => {
+            const lines = doc.splitTextToSize(text, Math.max(8, width - (paddingX * 2)))
+            return Array.isArray(lines) ? lines : [String(lines)]
+        }
+
+        const drawCell = (
+            x: number, y: number, width: number, height: number,
+            text: string | string[], align: 'left' | 'right' = 'left', bold = false,
+            fillColor: [number, number, number] = [255, 255, 255],
+            textColor: [number, number, number] = [17, 24, 39],
+        ) => {
+            doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
+            doc.setDrawColor(210, 214, 220)
+            doc.rect(x, y, width, height, 'FD')
+            doc.setFont('helvetica', bold ? 'bold' : 'normal')
+            doc.setTextColor(textColor[0], textColor[1], textColor[2])
+            const lines = Array.isArray(text) ? text : toLines(text, width)
+            const contentHeight = lines.length * lineHeight
+            const textY = y + Math.max(2, (height - contentHeight) / 2) + (lineHeight - 1)
+            const textX = align === 'right' ? x + width - paddingX : x + paddingX
+            doc.text(lines, textX, textY, { align })
+        }
+
+        let currentY = top
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(11)
+        doc.setTextColor(17, 24, 39)
+        doc.text('Monthly Product Summary', 14, monthlyTitleY)
+
+        drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+        monthLabels.forEach((label, index) => {
+            const x = left + productColWidth + (index * monthColWidth)
+            drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+        })
+        currentY += headerHeight
+
+        if (summaryPdfMonthlyProductSummary.length === 0) {
+            drawCell(left, currentY, tableWidth, rowHeight, 'No product data available', 'left', false)
+            currentY += rowHeight
+        } else {
+            summaryPdfMonthlyProductSummary.forEach((row) => {
+                if (currentY > pageHeight - bottom - rowHeight) {
+                    doc.addPage()
+                    currentY = top
+                    drawCell(left, currentY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+                    monthLabels.forEach((label, index) => {
+                        const x = left + productColWidth + (index * monthColWidth)
+                        drawCell(x, currentY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+                    })
+                    currentY += headerHeight
+                }
+
+                const productTotal = summaryPdfMonthlyProductSummary.find((item) => item.product === row.product)
+                const rowValues = monthKeys.map((monthKey) => {
+                    const [year, month] = monthKey.split('-').map(Number)
+                    const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
+                    return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+                })
+
+                const productLines = toLines(row.product, productColWidth)
+                const valueLines = rowValues.map((value) => toLines(value, monthColWidth))
+                const maxLines = Math.max(productLines.length, ...valueLines.map((lines) => lines.length))
+                const cellHeight = Math.max(rowHeight, (maxLines * lineHeight) + 4)
+
+                drawCell(left, currentY, productColWidth, cellHeight, productLines, 'left')
+                valueLines.forEach((value, index) => {
+                    const x = left + productColWidth + (index * monthColWidth)
+                    drawCell(x, currentY, monthColWidth, cellHeight, value, 'right')
+                })
+                currentY += cellHeight
+            })
+
+            const pdfTotalAmount = summaryPdfMonthlyProductSummary.reduce((sum, row) => sum + row.totalAmount, 0)
+            drawCell(left, currentY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
+            monthLabels.forEach((_, index) => {
+                const x = left + productColWidth + (index * monthColWidth)
+                drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pdfTotalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+            })
+            currentY += rowHeight
+
+            if (summaryTotals.previousBalance > 0) {
+                drawCell(left, currentY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
+                monthLabels.forEach((_, index) => {
+                    const x = left + productColWidth + (index * monthColWidth)
+                    drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${summaryTotals.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
+                })
+                currentY += rowHeight
+
+                const grandTotalWithPrev = pdfTotalAmount + summaryTotals.previousBalance
+                drawCell(left, currentY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
+                monthLabels.forEach((_, index) => {
+                    const x = left + productColWidth + (index * monthColWidth)
+                    drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${grandTotalWithPrev.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
+                })
+                currentY += rowHeight
+            }
+        }
+
+        let deliveriesTitleY = currentY + 10
+        if (deliveriesTitleY > pageHeight - 16) {
+            doc.addPage()
+            deliveriesTitleY = 14
+        }
+
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(11)
+        doc.setTextColor(17, 24, 39)
+        doc.text('Daily Deliveries', 14, deliveriesTitleY)
+
+        const daysLeft = summaryDisplaySummaryRows.slice(0, 15)
+        const daysRight = summaryDisplaySummaryRows.slice(15)
+        const splitX = 100
+        const makeDeliveriesTable = (rows: HouseDeliverySummaryRow[], marginLeft: number, marginRight: number) => {
+            if (rows.length === 0) return
+            autoTable(doc, {
+                startY: deliveriesTitleY + 4,
+                head: [['Date', 'Products']],
+                body: rows.map((row) => [row.dayLabel, row.hasDelivery ? row.productsLabel : '-']),
+                styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+                headStyles: { fillColor: [17, 24, 39], textColor: 255 },
+                columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 'auto' } },
+                alternateRowStyles: { fillColor: [248, 250, 252] },
+                margin: { left: marginLeft, right: marginRight },
+            })
+        }
+        makeDeliveriesTable(daysLeft, 14, pageWidth - splitX + 4)
+        makeDeliveriesTable(daysRight, splitX, 14)
+
+        const totalPages = doc.getNumberOfPages()
+        for (let i = 1; i <= totalPages; i++) {
+            doc.setPage(i)
+            doc.setFont('helvetica', 'normal')
+            doc.setFontSize(8)
+            doc.setTextColor(128, 128, 128)
+            doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' })
+        }
+
+        doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
+    }, [summaryHouse, summaryPeriod, summarySummaryRows, summaryPdfMonthlyProductSummary, summaryTotals, summaryDisplaySummaryRows])
 
     // Navigate to previous day
     const handlePreviousDay = useCallback(() => {
@@ -1356,9 +2151,9 @@ export default function DeliveryPage() {
             .filter((item) => item.qty > 0 && item.rate > 0)
 
         // Check modify permission for suppliers
-    const canModify = auth?.permissions?.canModifyDeliveryLogs === true
+        const canModify = auth?.permissions?.canModifyDeliveryLogs === true
 
-    if (payloadItems.length === 0) {
+        if (payloadItems.length === 0) {
             toast.error('Add at least one item with qty and rate before marking delivered')
             return
         }
@@ -1745,29 +2540,33 @@ export default function DeliveryPage() {
                     <div className="pointer-events-none absolute inset-0 z-0" style={swipePreviewStyle}>
                         <div className="flex h-full min-h-0 flex-col">
                             <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                                <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2">
-                                    <div className="absolute inset-0 bg-emerald-900/10" />
-                                    <div className="absolute inset-x-0 bottom-2 flex items-center justify-between px-2">
+                                {/* <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"> */}
+                                    {/* <div className="absolute inset-0 bg-emerald-900/10" /> */}
+                                    {/* <div className="absolute inset-x-0 bottom-2 flex items-center justify-between px-2"> */}
                                         <span className="rounded-md bg-background/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                                             {swipePreviewDirection === 'next' ? 'Next House' : 'Previous House'}
                                         </span>
-                                        <Maximize2 className="h-3.5 w-3.5 text-foreground/80" />
-                                    </div>
-                                </div>
+                                        {/* <Maximize2 className="h-3.5 w-3.5 text-foreground/80" /> */}
+                                    {/* </div> */}
+                                {/* </div> */}
 
                                 <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
                                     <div className="space-y-1.5 sm:col-span-2">
                                         <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
                                             <div>
                                                 <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
-                                                <h2 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{swipePreviewHouse.houseNo}</h2>
+
+                                                <h2 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{swipePreviewHouse.houseNo}<span>{completedHouses.has(swipePreviewHouse.id) ? <p className="bg-green-600 w-2 h-2 rounded"></p> : <p className="bg-yellow-600 w-2 h-2 rounded-full"></p>}</span></h2>
                                                 <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                                                     Route #{swipePreviewRouteNumber}
                                                 </p>
                                             </div>
                                             <div>
-                                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
-                                                {completedHouses.has(swipePreviewHouse.id) ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
+                                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Balance</p>
+                                                {hasPaymentThisMonth(swipePreviewHouse.id, allPayments)
+                                                    ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Paid</p>
+                                                    : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(swipePreviewHouse).toLocaleString('en-IN')}</p>
+                                                }
                                             </div>
                                         </div>
 
@@ -1784,14 +2583,18 @@ export default function DeliveryPage() {
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
-                                        <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                            <span className="sm:hidden">Buf ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
-                                            <span className="hidden sm:inline">Buffalo ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
-                                        </Badge>
+                                        {getEffectiveRate(swipePreviewHouse, 'buffalo').rate > 0 ? (
+                                            <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                                <span className="sm:hidden">Buf ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
+                                                <span className="hidden sm:inline">Buffalo ₹{getEffectiveRate(swipePreviewHouse, 'buffalo').rate}/L</span>
+                                            </Badge>
+                                        ) : null}
+                                        {getEffectiveRate(swipePreviewHouse, 'cow').rate > 0 ? (
                                         <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
                                             <span className="sm:hidden">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
                                             <span className="hidden sm:inline">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
                                         </Badge>
+                                        ) : null}
                                     </div>
                                 </div>
                             </div>
@@ -1868,7 +2671,8 @@ export default function DeliveryPage() {
                                 <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
                                     <div>
                                         <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
-                                        <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl">{currentHouse.houseNo}</h1>
+
+                                        <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl flex items-center gap-2">{currentHouse.houseNo}<span>{isCompleted ? <p className="bg-green-600 w-2 h-2 rounded"></p> : <p className="bg-yellow-600 w-2 h-2 rounded-full"></p>}</span></h1>
                                         <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                                             Route #{currentRouteNumber}
                                         </p>
@@ -1884,8 +2688,11 @@ export default function DeliveryPage() {
                                         >
                                             <Trash2 className="h-4 w-4 text-destructive" />
                                         </Button>
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Status</p>
-                                        {isCompleted ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Delivered</p> : <p className="mt-0.5 font-semibold text-yellow-600 sm:mt-1">Pending</p>}
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Balance</p>
+                                        {hasPaymentThisMonth(currentHouse.id, allPayments)
+                                            ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Paid</p>
+                                            : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(currentHouse).toLocaleString('en-IN')}</p>
+                                        }
                                     </div>
                                 </div>
 
@@ -1908,14 +2715,18 @@ export default function DeliveryPage() {
 
                                     return (
                                         <>
+                                        {buffalo.rate !== 0 &&
                                             <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
                                                 <span className="sm:hidden">Buf ₹{buffalo.rate}/L</span>
                                                 <span className="hidden sm:inline">Buffalo ₹{buffalo.rate}/L</span>
                                             </Badge>
+                                        }
+                                        {cow.rate !== 0 && 
                                             <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
                                                 <span className="sm:hidden">Cow ₹{cow.rate}/L</span>
                                                 <span className="hidden sm:inline">Cow ₹{cow.rate}/L</span>
                                             </Badge>
+                                        }
                                         </>
                                     )
                                 })()}
@@ -1959,17 +2770,17 @@ export default function DeliveryPage() {
                                                                 setSwipedDeliveryItem({ index: null, offset: 0 })
                                                             }}
                                                         >
-                                                         <div
-                                                             className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
-                                                             style={{
-                                                                 opacity: (isCompleted && !canModify) ? 0 : (rowOffset <= -16 ? 1 : 0),
-                                                                 transform: `translate3d(${(isCompleted && !canModify) ? 8 : (rowOffset <= -16 ? 0 : 8)}px, 0, 0)`,
-                                                                 transition: deliveryItemSwipeStartRef.current?.index === idx
-                                                                     ? 'none'
-                                                                     : 'opacity 180ms ease, transform 180ms ease',
-                                                                 pointerEvents: (isCompleted && !canModify) ? 'none' : (rowOffset <= -16 ? 'auto' : 'none'),
-                                                             }}
-                                                         >
+                                                            <div
+                                                                className="absolute inset-y-0 right-0 z-0 flex w-10 items-stretch"
+                                                                style={{
+                                                                    opacity: (isCompleted && !canModify) ? 0 : (rowOffset <= -16 ? 1 : 0),
+                                                                    transform: `translate3d(${(isCompleted && !canModify) ? 8 : (rowOffset <= -16 ? 0 : 8)}px, 0, 0)`,
+                                                                    transition: deliveryItemSwipeStartRef.current?.index === idx
+                                                                        ? 'none'
+                                                                        : 'opacity 180ms ease, transform 180ms ease',
+                                                                    pointerEvents: (isCompleted && !canModify) ? 'none' : (rowOffset <= -16 ? 'auto' : 'none'),
+                                                                }}
+                                                            >
                                                                 <Button
                                                                     type="button"
                                                                     size="sm"
@@ -2278,8 +3089,414 @@ export default function DeliveryPage() {
                             </div>
                         )
                     })()}
+                    <div className="pt-2">
+                        <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                                setHistoryDialogOpen(false)
+                                handleOpenSummary()
+                            }}
+                        >
+                            <Rows3 className="mr-2 h-4 w-4" />
+                            View Full Summary
+                        </Button>
+                    </div>
                 </DialogContent>
             </Dialog>
+
+            <Dialog open={summaryOpen} onOpenChange={(open) => {
+                summaryRequestIdRef.current++
+                setSummaryOpen(open)
+                if (!open) {
+                    setSummaryHouse(null)
+                    setSummaryBalance(null)
+                    setSummaryLogs([])
+                    setSummaryBills([])
+                    setSummaryProductRates([])
+                    setSummaryLoading(false)
+                    setSummaryFromDate('')
+                    setSummaryToDate('')
+                    setDeletingDeliveryLog(null)
+                    setEditDeliveryDialogOpen(false)
+                    setEditingDeliveryLog(null)
+                    setEditDeliveryForm({ items: [], note: '' })
+                }
+            }}>
+                <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+                    {summaryHouse && (
+                        <>
+                            <DialogHeader>
+                                <DialogTitle className="flex items-center gap-2">
+                                    <Rows3 className="h-5 w-5 text-primary" />
+                                    House {summaryHouse.houseNo} Delivery Summary
+                                </DialogTitle>
+                            </DialogHeader>
+
+                            <div className="flex items-center justify-center gap-2 border-b border-border pb-3">
+                                <Button variant="ghost" size="sm" onClick={() => { const p = summaryGetPreviousMonth(summaryPeriod.year, summaryPeriod.month); if (summaryIsValidMonth(p.year, p.month)) setSummaryPeriod(p) }} className="h-8 w-8 p-0">
+                                    <ChevronLeft className="h-4 w-4" />
+                                </Button>
+                                <span className="min-w-48 text-center text-sm font-medium">
+                                    {MONTH_NAMES[summaryPeriod.month + 1]} {summaryPeriod.year}
+                                </span>
+                                <Button variant="ghost" size="sm" onClick={() => { const p = summaryGetNextMonth(summaryPeriod.year, summaryPeriod.month); if (summaryIsValidMonth(p.year, p.month)) setSummaryPeriod(p) }} className="h-8 w-8 p-0">
+                                    <ChevronRight className="h-4 w-4" />
+                                </Button>
+                            </div>
+
+                            <div className="space-y-6 py-2">
+                                {/* Date Range Filter */}
+                                <div>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <div className="flex items-center gap-1.5">
+                                            <Label className="text-[11px] font-medium text-muted-foreground">From</Label>
+                                            <Input type="date" value={summaryFromDate} onChange={(e) => setSummaryFromDate(e.target.value)} className="h-7 w-[140px] text-xs" />
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <Label className="text-[11px] font-medium text-muted-foreground">To</Label>
+                                            <Input type="date" value={summaryToDate} onChange={(e) => setSummaryToDate(e.target.value)} className="h-7 w-[140px] text-xs" />
+                                        </div>
+                                        {summaryHasDateRangeFilter && (
+                                            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }}>
+                                                Clear
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Received Payments */}
+                                <div>
+                                    <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
+                                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                                        {summaryLoading ? (
+                                            <div className="space-y-3">
+                                                <Skeleton className="h-10 w-full rounded-lg" />
+                                                <Skeleton className="h-10 w-full rounded-lg" />
+                                            </div>
+                                        ) : summaryPaymentSummaryRows.length === 0 ? (
+                                            <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                                                <History className="h-8 w-8 opacity-30" />
+                                                <p className="text-sm">No received payments found</p>
+                                                <p className="text-xs">This house has no recorded payment history yet.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-sm">
+                                                    <thead>
+                                                        <tr className="border-b border-border bg-muted/50">
+                                                            <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
+                                                            <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
+                                                            <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {summaryPaymentSummaryRows.map((row, idx) => (
+                                                            <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                                                <td className="px-4 py-3 font-medium text-foreground">
+                                                                    {new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                                                    ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-right text-red-500">
+                                                                    {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                        <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                                            <td className="px-4 py-3 text-foreground">Total Received</td>
+                                                            <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                                                                ₹{summaryPaymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-right text-red-500">
+                                                                ₹{summaryPaymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                            </td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Generated Bills */}
+                                {summaryMatchingBills.length > 0 && (() => {
+                                    const combinedMap = new Map<string, { name: string; qty: number; rate: number; amount: number }>()
+                                    for (const bill of summaryMatchingBills) {
+                                        for (const item of (bill.items as BillItem[])) {
+                                            if (!item.name || item.qty <= 0) continue
+                                            const cleanName = summaryCleanItemName(item.name)
+                                            const key = `${cleanName}:${item.rate}`
+                                            const existing = combinedMap.get(key)
+                                            if (existing) {
+                                                existing.qty += item.qty
+                                                existing.amount += item.amount
+                                            } else {
+                                                combinedMap.set(key, { name: cleanName, qty: item.qty, rate: item.rate, amount: item.amount })
+                                            }
+                                        }
+                                    }
+                                    const combinedItems = Array.from(combinedMap.values())
+                                    const totalBillAmount = summaryMatchingBills.reduce((s, b) => s + Number(b.totalAmount), 0)
+                                    const latestPreviousBalance = Number(summaryMatchingBills[0].previousBalance ?? 0)
+                                    const dateRanges = summaryMatchingBills.map(b =>
+                                        b.fromDate && b.toDate
+                                            ? `${summaryParseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${summaryParseDateOnly(b.toDate).toLocaleDateString('en-IN')}`
+                                            : null
+                                    ).filter(Boolean)
+
+                                    return (
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bills</h3>
+                                            {dateRanges.length > 0 && (
+                                                <div className="mb-2 text-xs text-muted-foreground">{dateRanges.join(' | ')}</div>
+                                            )}
+                                            <div className="rounded-xl border border-border bg-muted/30 p-4">
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-sm">
+                                                        <thead>
+                                                            <tr className="border-b border-border bg-muted/50">
+                                                                <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                                                                <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                                                                <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                                                                <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {combinedItems.map((item, idx) => (
+                                                                <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                                                    <td className="px-4 py-3 font-medium text-foreground">{item.name}</td>
+                                                                    <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                                                    <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                                                    <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                                                </tr>
+                                                            ))}
+                                                            <tr className="border-t border-border bg-muted/50 font-semibold">
+                                                                <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                                                                <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                                                    ₹{latestPreviousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                                </td>
+                                                            </tr>
+                                                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                                                <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                                                                <td className="px-4 py-3 text-right text-primary">
+                                                                    ₹{(totalBillAmount + latestPreviousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
+                                })()}
+
+                                {/* Monthly Product Summary */}
+                                <div>
+                                    <h3 className="text-sm font-semibold text-foreground mb-3">Monthly Product Summary</h3>
+                                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                                        {summaryLoading ? (
+                                            <div className="space-y-3">
+                                                <Skeleton className="h-10 w-full rounded-lg" />
+                                                <Skeleton className="h-10 w-full rounded-lg" />
+                                            </div>
+                                        ) : summaryMonthlyProductSummary.length === 0 ? (
+                                            <div className="flex min-h-32 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                                                <Rows3 className="h-8 w-8 opacity-30" />
+                                                <p className="text-sm">No product data available</p>
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-sm">
+                                                    <thead>
+                                                        <tr className="border-b border-border bg-muted/50">
+                                                            <th className="px-4 py-3 text-left font-semibold text-foreground min-w-32">Product</th>
+                                                            {Array.from(new Set(summaryMonthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => {
+                                                                const [year, month] = monthKey.split('-').map(Number)
+                                                                return (
+                                                                    <th key={monthKey} className="px-3 py-3 text-right font-semibold text-foreground min-w-20">{MONTH_NAMES[month]} {year}</th>
+                                                                )
+                                                            })}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {summaryMonthlyProductSummary.map((row, idx) => {
+                                                            const uniqueMonths = Array.from(new Set(summaryMonthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort()
+                                                            const productTotal = summaryTotals.productTotals.find(p => p.product === row.product)
+                                                            return (
+                                                                <tr key={row.product} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                                                    <td className="px-4 py-3 font-medium text-foreground">{row.product}</td>
+                                                                    {uniqueMonths.map((monthKey) => {
+                                                                        const monthData = row.months.find(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === monthKey)
+                                                                        return (
+                                                                            <td key={monthKey} className="px-3 py-3 text-right text-foreground whitespace-nowrap">
+                                                                                {monthData ? `${monthData.quantity.toLocaleString('en-IN')}L — ₹${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                                                                            </td>
+                                                                        )
+                                                                    })}
+                                                                </tr>
+                                                            )
+                                                        })}
+                                                        {summaryMonthlyProductSummary.length > 0 && (
+                                                            <>
+                                                                <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                                                                    <td className="px-4 py-3 text-foreground">Total</td>
+                                                                    {Array.from(new Set(summaryMonthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => (
+                                                                        <td key={monthKey} className="px-3 py-3 text-right text-foreground">
+                                                                            ₹{summaryTotals.pendingTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                                        </td>
+                                                                    ))}
+                                                                </tr>
+                                                                <tr className="border-t border-border bg-muted/50 font-semibold">
+                                                                    <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Previous Balance</td>
+                                                                    {Array.from(new Set(summaryMonthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => (
+                                                                        <td key={monthKey} className="px-3 py-3 text-right text-amber-600 dark:text-amber-400">
+                                                                            ₹{summaryTotals.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                                        </td>
+                                                                    ))}
+                                                                </tr>
+                                                                <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                                                    <td className="px-4 py-3 text-foreground">Grand Total</td>
+                                                                    {Array.from(new Set(summaryMonthlyProductSummary.flatMap(p => p.months.map(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}`)))).sort().map((monthKey) => (
+                                                                        <td key={monthKey} className="px-3 py-3 text-right text-primary">
+                                                                            ₹{(summaryTotals.pendingTotal + summaryTotals.previousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                                        </td>
+                                                                    ))}
+                                                                </tr>
+                                                            </>
+                                                        )}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Daily View */}
+                                <div>
+                                    <h3 className="text-sm font-semibold text-foreground mb-3">Daily Deliveries</h3>
+                                    <div className="rounded-xl border border-border bg-muted/30 p-4">
+                                        {summaryLoading ? (
+                                            <div className="space-y-3">
+                                                <Skeleton className="h-10 w-full rounded-lg" />
+                                                <Skeleton className="h-10 w-full rounded-lg" />
+                                            </div>
+                                        ) : summaryDisplaySummaryRows.length === 0 ? (
+                                            <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                                                <Rows3 className="h-10 w-10 opacity-30" />
+                                                <p className="font-medium">No delivery summary available</p>
+                                                <p className="text-sm">This house has no delivery logs for the selected month.</p>
+                                            </div>
+                                        ) : (
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead className="min-w-35">Date</TableHead>
+                                                        <TableHead>Products</TableHead>
+                                                        <TableHead className="w-16 text-right">Action</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {summaryDisplaySummaryRows.map((row) => {
+                                                        const blocked = summaryIsDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
+                                                        return (
+                                                            <TableRow key={row.dateKey} className={blocked ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
+                                                                <TableCell className={`font-medium ${blocked ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</TableCell>
+                                                                <TableCell className={`whitespace-normal ${blocked ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
+                                                                    {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                                                                </TableCell>
+                                                                <TableCell className="text-right">
+                                                                    <div className="flex items-center justify-end gap-1">
+                                                                        <Button variant="ghost" size="sm" onClick={() => summaryOpenEditDeliveryDialog(row)} title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'} disabled={blocked} className="h-8 w-8 p-0">
+                                                                            <Edit2 className="h-4 w-4" />
+                                                                        </Button>
+                                                                        {!blocked && row.log && (
+                                                                            <Button variant="ghost" size="sm" onClick={() => setDeletingDeliveryLog(row.log!)} title="Delete delivery" className="h-8 w-8 p-0 text-destructive hover:text-destructive">
+                                                                                <Trash2 className="h-4 w-4" />
+                                                                            </Button>
+                                                                        )}
+                                                                    </div>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )
+                                                    })}
+                                                </TableBody>
+                                            </Table>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <DialogFooter>
+                                <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || summaryDisplaySummaryRows.length === 0}>
+                                    Export PDF
+                                </Button>
+                                <Button onClick={() => setSummaryOpen(false)}>Close</Button>
+                            </DialogFooter>
+                        </>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Edit Delivery Dialog */}
+            <Dialog open={editDeliveryDialogOpen} onOpenChange={setEditDeliveryDialogOpen}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Edit Delivery</DialogTitle>
+                    </DialogHeader>
+                    {editingDeliveryLog && (
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <Label>Note</Label>
+                                <Input value={editDeliveryForm.note ?? ''} onChange={(e) => setEditDeliveryForm((prev) => ({ ...prev, note: e.target.value }))} placeholder="Optional note" />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Items</Label>
+                                {editDeliveryForm.items.map((item, idx) => (
+                                    <div key={idx} className="flex items-center gap-2">
+                                        <span className="flex-1 text-sm">{item.milkType}</span>
+                                        <Input type="number" value={item.qty} onChange={(e) => {
+                                            const qty = Number(e.target.value)
+                                            const rate = summaryGetPreferredRateForHouse(item.milkType)
+                                            setEditDeliveryForm((prev) => ({
+                                                ...prev,
+                                                items: prev.items.map((it, i) => i === idx ? { ...it, qty, rate, amount: qty * rate } : it),
+                                            }))
+                                        }} className="w-20" />
+                                        <span className="text-sm text-muted-foreground">₹{item.amount.toLocaleString('en-IN')}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="text-right text-sm font-semibold">Total: ₹{summaryEditDeliveryTotal.toLocaleString('en-IN')}</div>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setEditDeliveryDialogOpen(false)}>Cancel</Button>
+                                <Button onClick={handleSaveDeliveryEdit} disabled={editDeliverySaving}>
+                                    {editDeliverySaving ? 'Saving...' : 'Save'}
+                                </Button>
+                            </DialogFooter>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Delivery Confirmation */}
+            <AlertDialog open={!!deletingDeliveryLog} onOpenChange={() => setDeletingDeliveryLog(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Delivery?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will permanently delete this delivery record. This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleDeleteDeliveryLog} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

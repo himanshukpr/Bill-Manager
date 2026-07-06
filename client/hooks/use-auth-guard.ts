@@ -21,10 +21,24 @@ export function useAuthGuard(requiredRole: AppRole) {
 
       const session = getSessionAuth()
 
-      if (!session?.token || session.role !== requiredRole) {
+      if (!session?.token) {
         clearAllAuth()
         const dairyId = getDairyIdFromCookie()
         router.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
+        return false
+      }
+
+      if (session.role !== requiredRole) {
+        // Role mismatch — redirect to the correct dashboard WITHOUT clearing the session.
+        // This prevents a race condition where switching accounts briefly triggers the
+        // old layout's auth guard, which would wipe the newly-saved session.
+        const dest =
+          session.role === "admin"
+            ? "/dashboard/admin"
+            : session.role === "supplier"
+              ? "/dashboard/supplier"
+              : "/dashboard/member"
+        router.replace(dest)
         return false
       }
 
