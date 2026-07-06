@@ -552,6 +552,38 @@ export default function HousesPage() {
       .sort((a, b) => b.totalQuantity - a.totalQuantity)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBills])
 
+  const pdfMonthlyProductSummary = useMemo(() => {
+    if (!summaryHouse) return []
+
+    const allMonthLogs = filteredSummaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+    })
+
+    const totalMap = new Map<string, { qty: number; amount: number }>()
+    for (const log of allMonthLogs) {
+      for (const item of log.items ?? []) {
+        const product = normalizeMilkType(item.milkType)
+        const qty = Number(item.qty ?? 0)
+        const amount = Number(item.amount ?? 0)
+        if (product && qty > 0) {
+          const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+          totalMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+        }
+      }
+    }
+
+    return Array.from(totalMap.entries())
+      .filter(([, data]) => data.qty > 0)
+      .map(([product, data]) => ({
+        product,
+        months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity: data.qty }],
+        totalQuantity: data.qty,
+        totalAmount: data.amount,
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
+
   const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
     if (!summaryHouse) return []
 
@@ -694,7 +726,7 @@ export default function HousesPage() {
 
     let currentY = 30
 
-    const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+    const monthKeys = Array.from(new Set(pdfMonthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
     const monthLabels = monthKeys.map((monthKey) => {
       const [year, month] = monthKey.split('-').map(Number)
       return `${MONTH_NAMES[month]} ${year}`
@@ -793,11 +825,11 @@ export default function HousesPage() {
 
     summaryY += headerHeight
 
-    if (monthlyProductSummary.length === 0) {
+    if (pdfMonthlyProductSummary.length === 0) {
       drawCell(rightSideX, summaryY, rightTableWidth, rowHeight, 'No product data available', 'left', false)
       summaryY += rowHeight
     } else {
-      monthlyProductSummary.forEach((row) => {
+      pdfMonthlyProductSummary.forEach((row) => {
         if (summaryY > pageHeight - bottom - rowHeight) {
           doc.addPage()
           summaryY = 10
@@ -809,11 +841,11 @@ export default function HousesPage() {
           summaryY += headerHeight
         }
 
-        const productTotal = summaryTotals.productTotals.find((item) => item.product === row.product)
+        const productTotal = pdfMonthlyProductSummary.find((item) => item.product === row.product)
         const rowValues = monthKeys.map((monthKey) => {
           const [year, month] = monthKey.split('-').map(Number)
           const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
-          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
         })
 
         const productLines = toLines(row.product, productColWidth)
@@ -841,10 +873,11 @@ export default function HousesPage() {
       }
 
       // Total row
+      const pdfTotalAmount = pdfMonthlyProductSummary.reduce((sum, row) => sum + row.totalAmount, 0)
       drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
       monthLabels.forEach((_, index) => {
         const x = rightSideX + productColWidth + (index * monthColWidth)
-        drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${summaryTotals.pendingTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+        drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${pdfTotalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
       })
       summaryY += rowHeight
 
@@ -857,7 +890,7 @@ export default function HousesPage() {
         })
         summaryY += rowHeight
 
-        const grandTotalWithPrev = summaryTotals.pendingTotal + summaryTotals.previousBalance
+        const grandTotalWithPrev = pdfTotalAmount + summaryTotals.previousBalance
         drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
         monthLabels.forEach((_, index) => {
           const x = rightSideX + productColWidth + (index * monthColWidth)
@@ -909,7 +942,7 @@ export default function HousesPage() {
     }
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
-  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
+  }, [summaryHouse, summaryPeriod, summaryRows, pdfMonthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
   const handleExportAllHousesSummaryPdf = useCallback(async (month: number, year: number) => {
     const activeHouses = houses.filter(h => h.active)
@@ -1002,7 +1035,7 @@ export default function HousesPage() {
       const allHouseIds = sortedHouses.map(h => h.id)
       const [allBalances, allLogs, allBills, rates] = await Promise.all([
         Promise.all(allHouseIds.map(id => balanceApi.get(id).catch(() => ({ id: 0, houseId: id, previousBalance: '0', currentBalance: '0' } as HouseBalance)))),
-        Promise.all(allHouseIds.map(id => deliveryLogsApi.list({ houseId: id }))),
+        Promise.all(allHouseIds.map(id => deliveryLogsApi.list({ houseId: id }, true))),
         Promise.all(allHouseIds.map(id => billsApi.list({ houseId: id }))),
         productRatesApi.list(),
       ])
@@ -1667,7 +1700,7 @@ export default function HousesPage() {
       const [freshHouse, balance, logs, bills, rates] = await Promise.all([
         housesApi.get(house.id),
         balanceApi.get(house.id),
-        deliveryLogsApi.list({ houseId: house.id }),
+        deliveryLogsApi.list({ houseId: house.id }, true),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
@@ -1854,7 +1887,7 @@ export default function HousesPage() {
       }
 
       // Reload logs to get clean updated data
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
       setSummaryLogs(logs)
 
       setEditDeliveryDialogOpen(false)
@@ -1880,7 +1913,7 @@ export default function HousesPage() {
     setEditDeliverySaving(true)
     try {
       await deliveryLogsApi.delete(deletingDeliveryLog.id)
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
       setSummaryLogs(logs)
       setDeletingDeliveryLog(null)
       toast.success('Delivery log deleted successfully')
@@ -2586,6 +2619,9 @@ export default function HousesPage() {
           setSummaryToDate('')
           setDeletingDeliveryLog(null)
           setEditDeliveryDialogOpen(false)
+          setEditingDeliveryLog(null)
+          setEditingDeliveryAllLogs([])
+          setEditDeliveryForm({ items: [], note: '' })
         }
       }}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">

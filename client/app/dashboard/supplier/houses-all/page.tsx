@@ -482,6 +482,7 @@ export default function HousesPage() {
   })
   const loadMoreSentinelRef = useRef<HTMLTableRowElement | null>(null)
   const houseLoadMoreLockRef = useRef(false)
+  const summaryRequestIdRef = useRef(0)
 
   useEffect(() => {
     sessionStorage.setItem('supplier-houses-visible', String(visibleCount))
@@ -503,16 +504,48 @@ export default function HousesPage() {
     return buildHouseDeliverySummary(filteredSummaryLogs, summaryPeriod.year, summaryPeriod.month)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
-  const paymentSummaryRows = useMemo((): PaymentSummaryRow[] => {
-    if (!summaryHouse || !summaryBalance) return []
-    return (summaryBalance.payments ?? []).map((p: PaymentHistory) => ({
-      id: p.id,
-      paidAt: p.paidAt || p.createdAt,
-      paidAmount: Number(p.amount),
-      discount: Number(p.discount ?? 0),
-      note: p.note || '',
-    }))
-  }, [summaryHouse, summaryBalance])
+  const paymentSummaryRows = useMemo<PaymentSummaryRow[]>(() => {
+    if (!summaryHouse) return []
+
+    const allPayments = [...(summaryBalance?.payments ?? [])].sort(
+      (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )
+
+    const payments = allPayments.filter((payment) => {
+      const d = new Date(payment.paidAt || payment.createdAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+    })
+
+    const baseOutstanding = Number(
+      summaryBalance?.previousBalance ??
+      summaryBalance?.currentBalance ??
+      summaryHouse.balance?.previousBalance ??
+      summaryHouse.balance?.currentBalance ??
+      0,
+    )
+
+    const totalApplied = payments.reduce(
+      (sum, payment) => sum + Number(payment.amount ?? 0) + Number(payment.discount ?? 0),
+      0,
+    )
+
+    let remainingAmount = Math.max(0, baseOutstanding + totalApplied)
+
+    return payments.map((payment) => {
+      const paidAmount = Number(payment.amount ?? 0)
+      const discount = Number(payment.discount ?? 0)
+      remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
+
+      return {
+        id: payment.id,
+        paidAt: payment.paidAt || payment.createdAt,
+        paidAmount,
+        discount,
+        remainingAmount,
+        note: payment.note ?? '',
+      }
+    })
+  }, [summaryBalance, summaryHouse, summaryPeriod])
 
   const hasDateRangeFilter = summaryFromDate !== '' && summaryToDate !== ''
 
@@ -541,7 +574,7 @@ export default function HousesPage() {
     if (!summaryHouse) return []
 
     // Compute ALL logs for this month (don't rely on billGenerated flag which may be stale)
-    const allMonthLogs = summaryLogs.filter(log => {
+    const allMonthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
@@ -579,13 +612,45 @@ export default function HousesPage() {
         totalQuantity: quantity,
       }))
       .sort((a, b) => b.totalQuantity - a.totalQuantity)
-  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBills])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBills])
+
+  const pdfMonthlyProductSummary = useMemo(() => {
+    if (!summaryHouse) return []
+
+    const allMonthLogs = filteredSummaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+    })
+
+    const totalMap = new Map<string, { qty: number; amount: number }>()
+    for (const log of allMonthLogs) {
+      for (const item of log.items ?? []) {
+        const product = normalizeMilkType(item.milkType)
+        const qty = Number(item.qty ?? 0)
+        const amount = Number(item.amount ?? 0)
+        if (product && qty > 0) {
+          const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+          totalMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+        }
+      }
+    }
+
+    return Array.from(totalMap.entries())
+      .filter(([, data]) => data.qty > 0)
+      .map(([product, data]) => ({
+        product,
+        months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity: data.qty }],
+        totalQuantity: data.qty,
+        totalAmount: data.amount,
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const summaryTotals = useMemo(() => {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0, pendingTotal: 0 }
 
     // Compute ALL logs for this month (don't rely on stale billGenerated flag)
-    const allMonthLogs = summaryLogs.filter(log => {
+    const allMonthLogs = filteredSummaryLogs.filter(log => {
       const d = new Date(log.deliveredAt)
       return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
     })
@@ -629,10 +694,10 @@ export default function HousesPage() {
         .filter(([, data]) => data.qty > 0)
         .map(([product, data]) => ({ product, quantity: data.qty, amount: data.amount })),
       grandTotal: matchingBills.length > 0 ? billsTotalAmount + Math.max(0, pendingGrandTotal) : allLogsGrandTotal,
-      previousBalance: matchingBills.length > 0 ? Number(matchingBills[0].previousBalance ?? 0) : 0,
+      previousBalance: matchingBills.length > 0 ? Number(matchingBills[0].previousBalance ?? 0) : Number(summaryBalance?.previousBalance ?? 0),
       pendingTotal,
     }
-  }, [summaryHouse, summaryLogs, summaryPeriod, matchingBills])
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBills, summaryBalance])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, it) => sum + Number(it?.amount ?? 0), 0)
@@ -671,7 +736,7 @@ export default function HousesPage() {
       doc.text(`Area: ${summaryHouse.area}`, 14, 26)
     }
 
-    const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+    const monthKeys = Array.from(new Set(pdfMonthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
     const monthLabels = monthKeys.map((monthKey) => {
       const [year, month] = monthKey.split('-').map(Number)
       return `${MONTH_NAMES[month]} ${year}`
@@ -735,11 +800,11 @@ export default function HousesPage() {
 
     currentY += headerHeight
 
-    if (monthlyProductSummary.length === 0) {
+    if (pdfMonthlyProductSummary.length === 0) {
       drawCell(left, currentY, tableWidth, rowHeight, 'No product data available', 'left', false)
       currentY += rowHeight
     } else {
-      monthlyProductSummary.forEach((row) => {
+      pdfMonthlyProductSummary.forEach((row) => {
         if (currentY > pageHeight - bottom - rowHeight) {
           doc.addPage()
           currentY = top
@@ -751,11 +816,11 @@ export default function HousesPage() {
           currentY += headerHeight
         }
 
-        const productTotal = summaryTotals.productTotals.find((item) => item.product === row.product)
+        const productTotal = pdfMonthlyProductSummary.find((item) => item.product === row.product)
         const rowValues = monthKeys.map((monthKey) => {
           const [year, month] = monthKey.split('-').map(Number)
           const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
-          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
         })
 
         const productLines = toLines(row.product, productColWidth)
@@ -782,10 +847,11 @@ export default function HousesPage() {
         currentY += headerHeight
       }
 
+      const pdfTotalAmount = pdfMonthlyProductSummary.reduce((sum, row) => sum + row.totalAmount, 0)
       drawCell(left, currentY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
       monthLabels.forEach((_, index) => {
         const x = left + productColWidth + (index * monthColWidth)
-        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${summaryTotals.grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+        drawCell(x, currentY, monthColWidth, rowHeight, `Rs ${pdfTotalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
       })
       currentY += rowHeight
 
@@ -797,7 +863,7 @@ export default function HousesPage() {
         })
         currentY += rowHeight
 
-        const grandTotalWithPrev = summaryTotals.grandTotal + summaryTotals.previousBalance
+        const grandTotalWithPrev = pdfTotalAmount + summaryTotals.previousBalance
         drawCell(left, currentY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
         monthLabels.forEach((_, index) => {
           const x = left + productColWidth + (index * monthColWidth)
@@ -847,7 +913,7 @@ export default function HousesPage() {
     }
 
     doc.save(`house-${summaryHouse.houseNo}-summary-${summaryPeriod.year}-${String(summaryPeriod.month + 1).padStart(2, '0')}.pdf`)
-  }, [summaryHouse, summaryPeriod, summaryRows, monthlyProductSummary, summaryTotals])
+  }, [summaryHouse, summaryPeriod, summaryRows, pdfMonthlyProductSummary, summaryTotals])
 
   const refreshCachedData = useCallback(async (silent = false) => {
     try {
@@ -1084,6 +1150,9 @@ export default function HousesPage() {
   }
 
   async function openSummary(house: House) {
+    const requestId = summaryRequestIdRef.current + 1
+    summaryRequestIdRef.current = requestId
+
     setSummaryHouse(house)
     setSummaryLogs([])
     setSummaryBills([])
@@ -1091,25 +1160,34 @@ export default function HousesPage() {
     setSummaryBalance(null)
     setSummaryFromDate('')
     setSummaryToDate('')
+    setDeletingDeliveryLog(null)
+    setEditDeliveryDialogOpen(false)
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [logs, bills, rates, balance] = await Promise.all([
-        deliveryLogsApi.list({ houseId: house.id }),
+      const [freshHouse, logs, bills, rates, balance] = await Promise.all([
+        housesApi.get(house.id),
+        deliveryLogsApi.list({ houseId: house.id }, true),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
         balanceApi.get(house.id),
       ])
+      if (summaryRequestIdRef.current !== requestId) return
+      setSummaryHouse(freshHouse)
       setSummaryLogs(logs)
       setSummaryBills(bills)
       setProductRates(rates.filter((rate) => rate.isActive && Number(rate.rate) > 0))
       setSummaryBalance(balance)
       setSummaryPeriod(getLogPeriod(logs))
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error))
+      if (summaryRequestIdRef.current === requestId) {
+        toast.error(getErrorMessage(error))
+      }
     } finally {
-      setSummaryLoading(false)
+      if (summaryRequestIdRef.current === requestId) {
+        setSummaryLoading(false)
+      }
     }
   }
 
@@ -1237,7 +1315,7 @@ export default function HousesPage() {
       }
 
       // Reload logs to get updated data
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
       setSummaryLogs(logs)
 
       setEditDeliveryDialogOpen(false)
@@ -1260,7 +1338,7 @@ export default function HousesPage() {
     setEditDeliverySaving(true)
     try {
       await deliveryLogsApi.delete(deletingDeliveryLog.id)
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
       setSummaryLogs(logs)
       setDeletingDeliveryLog(null)
       toast.success('Delivery log deleted successfully')
@@ -1984,10 +2062,21 @@ export default function HousesPage() {
       </Dialog>
 
       <Dialog open={summaryOpen} onOpenChange={(open) => {
+        summaryRequestIdRef.current++
         setSummaryOpen(open)
         if (!open) {
           setSummaryHouse(null)
+          setSummaryBalance(null)
           setSummaryLogs([])
+          setSummaryBills([])
+          setProductRates([])
+          setSummaryLoading(false)
+          setSummaryFromDate('')
+          setSummaryToDate('')
+          setDeletingDeliveryLog(null)
+          setEditDeliveryDialogOpen(false)
+          setEditingDeliveryLog(null)
+          setEditDeliveryForm({ items: [], note: '' })
         }
       }}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -2023,40 +2112,167 @@ export default function HousesPage() {
               </div>
 
               <div className="space-y-6 py-2">
-                {/* Received Payments */}
-                {paymentSummaryRows.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Received Payments</p>
-                    <div className="overflow-x-auto rounded-lg border border-border mb-4">
-                      <table className="w-full min-w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/50">
-                            <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Date</th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Paid (₹)</th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Discount (₹)</th>
-                            <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Note</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {paymentSummaryRows.map((row) => (
-                            <tr key={row.id} className="border-b border-border/60 hover:bg-muted/30">
-                              <td className="px-3 py-2 text-foreground">
-                                {new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                              </td>
-                              <td className="px-3 py-2 text-right font-medium text-emerald-600 dark:text-emerald-400">
-                                ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                              </td>
-                              <td className="px-3 py-2 text-right font-medium text-blue-600 dark:text-blue-400">
-                                {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
-                              </td>
-                              <td className="px-3 py-2 text-muted-foreground max-w-[120px] truncate">{row.note || '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                {/* Date Range Filter */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-[11px] font-medium text-muted-foreground">From</Label>
+                      <Input
+                        type="date"
+                        value={summaryFromDate}
+                        onChange={(e) => setSummaryFromDate(e.target.value)}
+                        className="h-7 w-[140px] text-xs"
+                      />
                     </div>
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-[11px] font-medium text-muted-foreground">To</Label>
+                      <Input
+                        type="date"
+                        value={summaryToDate}
+                        onChange={(e) => setSummaryToDate(e.target.value)}
+                        className="h-7 w-[140px] text-xs"
+                      />
+                    </div>
+                    {hasDateRangeFilter && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }}>
+                        Clear
+                      </Button>
+                    )}
                   </div>
-                )}
+                </div>
+
+                {/* Received Payments */}
+                <div>
+                  <h3 className="mb-3 text-sm font-semibold">Received Payments</h3>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    {summaryLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                        <Skeleton className="h-10 w-full rounded-lg" />
+                      </div>
+                    ) : paymentSummaryRows.length === 0 ? (
+                      <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <History className="h-8 w-8 opacity-30" />
+                        <p className="text-sm">No received payments found</p>
+                        <p className="text-xs">This house has no recorded payment history yet.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {paymentSummaryRows.map((row, idx) => (
+                              <tr key={row.id} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                <td className="px-4 py-3 font-medium text-foreground">
+                                  {new Date(row.paidAt).toLocaleDateString('en-IN', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })}
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ₹{row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-3 text-right text-red-500">
+                                  {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                                </td>
+                              </tr>
+                            ))}
+                            <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                              <td className="px-4 py-3 text-foreground">Total Received</td>
+                              <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                                ₹{paymentSummaryRows.reduce((sum, row) => sum + row.paidAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="px-4 py-3 text-right text-red-500">
+                                ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                                {matchingBills.length > 0 && (() => {
+                  const combinedMap = new Map<string, { name: string; qty: number; rate: number; amount: number }>()
+                  for (const bill of matchingBills) {
+                    for (const item of (bill.items as BillItem[])) {
+                      if (!item.name || item.qty <= 0) continue
+                      const cleanName = cleanItemName(item.name)
+                      const key = `${cleanName}:${item.rate}`
+                      const existing = combinedMap.get(key)
+                      if (existing) {
+                        existing.qty += item.qty
+                        existing.amount += item.amount
+                      } else {
+                        combinedMap.set(key, { name: cleanName, qty: item.qty, rate: item.rate, amount: item.amount })
+                      }
+                    }
+                  }
+                  const combinedItems = Array.from(combinedMap.values())
+                  const totalBillAmount = matchingBills.reduce((s, b) => s + Number(b.totalAmount), 0)
+                  const latestPreviousBalance = Number(matchingBills[0].previousBalance ?? 0)
+                  const dateRanges = matchingBills.map(b =>
+                    b.fromDate && b.toDate
+                      ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${parseDateOnly(b.toDate).toLocaleDateString('en-IN')}`
+                      : null
+                  ).filter(Boolean)
+
+                  return (
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bills</h3>
+                      {dateRanges.length > 0 && (
+                        <div className="mb-2 text-xs text-muted-foreground">
+                          {dateRanges.join(' | ')}
+                        </div>
+                      )}
+                      <div className="rounded-xl border border-border bg-muted/30 p-4">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/50">
+                                <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
+                                <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {combinedItems.map((item, idx) => (
+                                <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                                  <td className="px-4 py-3 font-medium text-foreground">{item.name}</td>
+                                  <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
+                                  <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                  <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                </tr>
+                              ))}
+                              <tr className="border-t border-border bg-muted/50 font-semibold">
+                                <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
+                                <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
+                                  ₹{latestPreviousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                              <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
+                                <td className="px-4 py-3 text-right text-primary">
+                                  ₹{(totalBillAmount + latestPreviousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Monthly Summary Grid */}
                 <div>
@@ -2147,108 +2363,6 @@ export default function HousesPage() {
                   </div>
                 </div>
 
-                {matchingBills.length > 0 && (() => {
-                  const combinedMap = new Map<string, { name: string; qty: number; rate: number; amount: number }>()
-                  for (const bill of matchingBills) {
-                    for (const item of (bill.items as BillItem[])) {
-                      if (!item.name || item.qty <= 0) continue
-                      const cleanName = cleanItemName(item.name)
-                      const key = `${cleanName}:${item.rate}`
-                      const existing = combinedMap.get(key)
-                      if (existing) {
-                        existing.qty += item.qty
-                        existing.amount += item.amount
-                      } else {
-                        combinedMap.set(key, { name: cleanName, qty: item.qty, rate: item.rate, amount: item.amount })
-                      }
-                    }
-                  }
-                  const combinedItems = Array.from(combinedMap.values())
-                  const totalBillAmount = matchingBills.reduce((s, b) => s + Number(b.totalAmount), 0)
-                  const latestPreviousBalance = Number(matchingBills[0].previousBalance ?? 0)
-                  const dateRanges = matchingBills.map(b =>
-                    b.fromDate && b.toDate
-                      ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${parseDateOnly(b.toDate).toLocaleDateString('en-IN')}`
-                      : null
-                  ).filter(Boolean)
-
-                  return (
-                    <div>
-                      <h3 className="text-sm font-semibold text-foreground mb-3">Generated Bills</h3>
-                      {dateRanges.length > 0 && (
-                        <div className="mb-2 text-xs text-muted-foreground">
-                          {dateRanges.join(' | ')}
-                        </div>
-                      )}
-                      <div className="rounded-xl border border-border bg-muted/30 p-4">
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b border-border bg-muted/50">
-                                <th className="px-4 py-3 text-left font-semibold text-foreground">Item</th>
-                                <th className="px-4 py-3 text-right font-semibold text-foreground">Qty (L)</th>
-                                <th className="px-4 py-3 text-right font-semibold text-foreground">Rate (₹)</th>
-                                <th className="px-4 py-3 text-right font-semibold text-foreground">Amount (₹)</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {combinedItems.map((item, idx) => (
-                                <tr key={idx} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
-                                  <td className="px-4 py-3 font-medium text-foreground">{item.name}</td>
-                                  <td className="px-4 py-3 text-right text-foreground">{item.qty.toLocaleString('en-IN')}</td>
-                                  <td className="px-4 py-3 text-right text-foreground">{item.rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                                  <td className="px-4 py-3 text-right font-semibold text-foreground">₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                                </tr>
-                              ))}
-                              <tr className="border-t border-border bg-muted/50 font-semibold">
-                                <td className="px-4 py-3 text-amber-600 dark:text-amber-400" colSpan={3}>Previous Balance</td>
-                                <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
-                                  ₹{latestPreviousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </td>
-                              </tr>
-                              <tr className="border-t-2 border-border bg-muted/50 font-bold">
-                                <td className="px-4 py-3 text-foreground" colSpan={3}>Total</td>
-                                <td className="px-4 py-3 text-right text-primary">
-                                  ₹{(totalBillAmount + latestPreviousBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })()}
-
-                {/* Date Range Filter */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="flex items-center gap-1.5">
-                      <Label className="text-[11px] font-medium text-muted-foreground">From</Label>
-                      <Input
-                        type="date"
-                        value={summaryFromDate}
-                        onChange={(e) => setSummaryFromDate(e.target.value)}
-                        className="h-7 w-[140px] text-xs"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Label className="text-[11px] font-medium text-muted-foreground">To</Label>
-                      <Input
-                        type="date"
-                        value={summaryToDate}
-                        onChange={(e) => setSummaryToDate(e.target.value)}
-                        className="h-7 w-[140px] text-xs"
-                      />
-                    </div>
-                    {hasDateRangeFilter && (
-                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setSummaryFromDate(''); setSummaryToDate('') }}>
-                        Clear
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
                 {/* Daily View */}
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-3">Daily Deliveries</h3>
@@ -2285,30 +2399,30 @@ export default function HousesPage() {
                                   {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  {auth?.permissions?.canEditItems && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => openEditDeliveryDialog(row)}
-                                      title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
-                                      disabled={blocked}
-                                      className="h-8 w-8 p-0"
-                                    >
-                                      <Edit2 className="h-4 w-4" />
-                                    </Button>
-                                  )}
-                                  {auth?.permissions?.canEditItems && !blocked && row.log && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => setDeletingDeliveryLog(row.log!)}
-                                      title="Delete delivery"
-                                      className="h-8 w-8 p-0"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  )}
-                                </TableCell>
+                                    <div className="flex items-center justify-end gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => openEditDeliveryDialog(row)}
+                                        title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                        disabled={blocked}
+                                        className="h-8 w-8 p-0"
+                                      >
+                                        <Edit2 className="h-4 w-4" />
+                                      </Button>
+                                      {!blocked && row.log && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => setDeletingDeliveryLog(row.log!)}
+                                          title="Delete delivery"
+                                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
                               </TableRow>
                             )
                           })}

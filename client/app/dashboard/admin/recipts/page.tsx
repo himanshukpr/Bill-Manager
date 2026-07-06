@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2, Eye, Calendar } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -348,6 +349,7 @@ export default function ReceiptsPage() {
   })
   const [summaryFromDate, setSummaryFromDate] = useState<string>('')
   const [summaryToDate, setSummaryToDate] = useState<string>('')
+  const summaryRequestIdRef = useRef(0)
 
   const setCachedFormPaidAt = useCallback((value: string) => {
     paymentDateCache = value
@@ -423,6 +425,38 @@ export default function ReceiptsPage() {
       }))
       .sort((a, b) => b.totalQuantity - a.totalQuantity)
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod, matchingBills])
+
+  const pdfMonthlyProductSummary = useMemo(() => {
+    if (!summaryHouse) return []
+
+    const allMonthLogs = filteredSummaryLogs.filter(log => {
+      const d = new Date(log.deliveredAt)
+      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
+    })
+
+    const totalMap = new Map<string, { qty: number; amount: number }>()
+    for (const log of allMonthLogs) {
+      for (const item of log.items ?? []) {
+        const product = normalizeMilkType(item.milkType)
+        const qty = Number(item.qty ?? 0)
+        const amount = Number(item.amount ?? 0)
+        if (product && qty > 0) {
+          const existing = totalMap.get(product) ?? { qty: 0, amount: 0 }
+          totalMap.set(product, { qty: existing.qty + qty, amount: existing.amount + amount })
+        }
+      }
+    }
+
+    return Array.from(totalMap.entries())
+      .filter(([, data]) => data.qty > 0)
+      .map(([product, data]) => ({
+        product,
+        months: [{ month: summaryPeriod.month, year: summaryPeriod.year, quantity: data.qty }],
+        totalQuantity: data.qty,
+        totalAmount: data.amount,
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity)
+  }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const editDeliveryTotal = useMemo(() => {
     return (editDeliveryForm.items || []).reduce((sum, item) => sum + Number(item?.amount ?? 0), 0)
@@ -760,28 +794,44 @@ export default function ReceiptsPage() {
   const amountHelperLabel = `Use balance ₹${amountHelperAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 
   async function openSummary(house: House) {
+    const requestId = summaryRequestIdRef.current + 1
+    summaryRequestIdRef.current = requestId
+
     setSummaryHouse(house)
     setSummaryBalance(null)
     setSummaryLogs([])
+    setSummaryBills([])
+    setProductRates([])
+    setSummaryFromDate('')
+    setSummaryToDate('')
+    setDeletingDeliveryLog(null)
+    setEditDeliveryDialogOpen(false)
     setSummaryOpen(true)
     setSummaryLoading(true)
 
     try {
-      const [balance, logs, bills, rates] = await Promise.all([
+      const [freshHouse, balance, logs, bills, rates] = await Promise.all([
+        housesApi.get(house.id),
         balanceApi.get(house.id),
-        deliveryLogsApi.list({ houseId: house.id }),
+        deliveryLogsApi.list({ houseId: house.id }, true),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
+      if (summaryRequestIdRef.current !== requestId) return
+      setSummaryHouse(freshHouse)
       setSummaryBalance(balance)
       setSummaryLogs(logs)
       setSummaryBills(bills)
       setProductRates(rates.filter(r => r.isActive && Number(r.rate) > 0))
       setSummaryPeriod(getLogPeriod(logs))
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load summary')
+      if (summaryRequestIdRef.current === requestId) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load summary')
+      }
     } finally {
-      setSummaryLoading(false)
+      if (summaryRequestIdRef.current === requestId) {
+        setSummaryLoading(false)
+      }
     }
   }
 
@@ -937,7 +987,7 @@ export default function ReceiptsPage() {
         }
       }
 
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
       setSummaryLogs(logs)
 
       setEditDeliveryDialogOpen(false)
@@ -963,7 +1013,7 @@ export default function ReceiptsPage() {
     setEditDeliverySaving(true)
     try {
       await deliveryLogsApi.delete(deletingDeliveryLog.id)
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id })
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
       setSummaryLogs(logs)
       setDeletingDeliveryLog(null)
       toast.success('Delivery log deleted successfully')
@@ -999,7 +1049,7 @@ export default function ReceiptsPage() {
 
     let currentY = 30
 
-    const monthKeys = Array.from(new Set(monthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
+    const monthKeys = Array.from(new Set(pdfMonthlyProductSummary.flatMap((row) => row.months.map((month) => `${month.year}-${String(month.month + 1).padStart(2, '0')}`)))).sort()
     const monthLabels = monthKeys.map((monthKey) => {
       const [year, month] = monthKey.split('-').map(Number)
       return `${MONTH_NAMES[month]} ${year}`
@@ -1098,11 +1148,11 @@ export default function ReceiptsPage() {
 
     summaryY += headerHeight
 
-    if (monthlyProductSummary.length === 0) {
+    if (pdfMonthlyProductSummary.length === 0) {
       drawCell(rightSideX, summaryY, rightTableWidth, rowHeight, 'No product data available', 'left', false)
       summaryY += rowHeight
     } else {
-      monthlyProductSummary.forEach((row) => {
+      pdfMonthlyProductSummary.forEach((row) => {
         if (summaryY > pageHeight - bottom - rowHeight) {
           doc.addPage()
           summaryY = 10
@@ -1114,11 +1164,11 @@ export default function ReceiptsPage() {
           summaryY += headerHeight
         }
 
-        const productTotal = summaryTotals.productTotals.find((item) => item.product === row.product)
+        const productTotal = pdfMonthlyProductSummary.find((item) => item.product === row.product)
         const rowValues = monthKeys.map((monthKey) => {
           const [year, month] = monthKey.split('-').map(Number)
           const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
-          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
         })
 
         const productLines = toLines(row.product, productColWidth)
@@ -1145,10 +1195,11 @@ export default function ReceiptsPage() {
         summaryY += headerHeight
       }
 
+      const pdfTotalAmount = pdfMonthlyProductSummary.reduce((sum, row) => sum + row.totalAmount, 0)
       drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
       monthLabels.forEach((_, index) => {
         const x = rightSideX + productColWidth + (index * monthColWidth)
-        drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${summaryTotals.pendingTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+        drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${pdfTotalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
       })
       summaryY += rowHeight
 
@@ -1160,7 +1211,7 @@ export default function ReceiptsPage() {
         })
         summaryY += rowHeight
 
-        const grandTotalWithPrev = summaryTotals.pendingTotal + summaryTotals.previousBalance
+        const grandTotalWithPrev = pdfTotalAmount + summaryTotals.previousBalance
         drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
         monthLabels.forEach((_, index) => {
           const x = rightSideX + productColWidth + (index * monthColWidth)
@@ -1203,7 +1254,7 @@ export default function ReceiptsPage() {
     makeDeliveriesTable(daysRight, deliveriesSplitX, 14)
 
     doc.save(`House_${summaryHouse.houseNo}_Summary_${periodLabel.replace(' ', '_')}.pdf`)
-  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod, monthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
+  }, [summaryHouse, summaryRows, summaryLogs, summaryPeriod, pdfMonthlyProductSummary, summaryTotals, paymentSummaryRows, hasDateRangeFilter, summaryFromDate, summaryToDate, displaySummaryRows])
 
   async function handleEditPayment() {
     if (!editingPayment) return
@@ -1897,11 +1948,22 @@ export default function ReceiptsPage() {
       </Dialog>
 
       <Dialog open={summaryOpen} onOpenChange={(open) => {
+        summaryRequestIdRef.current++
         setSummaryOpen(open)
         if (!open) {
           setSummaryHouse(null)
           setSummaryBalance(null)
           setSummaryLogs([])
+          setSummaryBills([])
+          setProductRates([])
+          setSummaryLoading(false)
+          setSummaryFromDate('')
+          setSummaryToDate('')
+          setDeletingDeliveryLog(null)
+          setEditDeliveryDialogOpen(false)
+          setEditingDeliveryLog(null)
+          setEditingDeliveryAllLogs([])
+          setEditDeliveryForm({ items: [], note: '' })
         }
       }}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -2190,56 +2252,54 @@ export default function ReceiptsPage() {
                         <p className="text-sm">This house has no delivery logs for the selected month.</p>
                       </div>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-muted/50">
-                              <th className="px-4 py-3 text-left font-semibold">Date</th>
-                              <th className="px-4 py-3 text-left font-semibold">Products</th>
-                              <th className="px-4 py-3 text-left font-semibold">Action</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {displaySummaryRows.map((row, idx) => {
-                              const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
-                              const isPaid = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
-                              return (
-                                <tr key={row.dateKey} className={`border-b border-border ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/20'} ${isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>
-                                  <td className={`px-4 py-3 font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</td>
-                                  <td className={`px-4 py-3 whitespace-normal ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
-                                    {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <div className="flex items-center justify-start gap-1">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="min-w-35">Date</TableHead>
+                            <TableHead>Products</TableHead>
+                            <TableHead className="w-16 text-right">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {displaySummaryRows.map((row) => {
+                            const blocked = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
+                            const isPaid = isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.isClosed)
+                            return (
+                              <TableRow key={row.dateKey} className={isPaid ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
+                                <TableCell className={`font-medium ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>{row.dayLabel}</TableCell>
+                                <TableCell className={`whitespace-normal ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
+                                  {row.hasDelivery ? row.productsLabel : <span className="text-muted-foreground">-</span>}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => openEditDeliveryDialog(row)}
+                                      title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
+                                      disabled={blocked}
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      <Edit2 className="h-4 w-4" />
+                                    </Button>
+                                    {!blocked && row.log && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={() => openEditDeliveryDialog(row)}
-                                        title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'}
-                                        disabled={blocked}
-                                        className="h-8 w-8 p-0"
+                                        onClick={() => setDeletingDeliveryLog(row.log!)}
+                                        title="Delete delivery"
+                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                                       >
-                                        <Edit2 className="h-4 w-4" />
+                                        <Trash2 className="h-4 w-4" />
                                       </Button>
-                                      {!blocked && row.log && (
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => setDeletingDeliveryLog(row.log!)}
-                                          title="Delete delivery"
-                                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
                     )}
                   </div>
                 </div>
