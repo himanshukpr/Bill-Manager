@@ -772,6 +772,18 @@ export default function ReceiptsPage() {
 
   const totalReceived = filteredPaymentsByMonth.reduce((sum, p) => sum + Number(p.amount), 0)
 
+  const totalBilled = useMemo(() => {
+    const allBills = Array.from(billsCache.values())
+    if (receivedMonth === 'all') {
+      return allBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0), 0)
+    }
+    const month = parseInt(receivedMonth) + 1
+    const year = parseInt(receivedYear)
+    return allBills
+      .filter(b => b.month === month && b.year === year)
+      .reduce((sum, b) => sum + Number(b.totalAmount ?? 0), 0)
+  }, [billsCache, receivedMonth, receivedYear])
+
   const selectedHouse = useMemo(
     () => houses.find((house) => String(house.id) === formHouseId) ?? null,
     [houses, formHouseId],
@@ -1399,6 +1411,7 @@ export default function ReceiptsPage() {
               ₹{totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">{filteredPaymentsByMonth.length} payment{filteredPaymentsByMonth.length !== 1 ? 's' : ''} recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">Bills Generated: ₹{totalBilled.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
           </div>
           <div className="flex items-center gap-2">
             <Select value={receivedMonth} onValueChange={setReceivedMonth}>
