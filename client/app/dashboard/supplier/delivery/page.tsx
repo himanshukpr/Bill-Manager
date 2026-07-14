@@ -222,6 +222,11 @@ function getHouseTotalBalance(house: House): number {
     return prev + curr
 }
 
+function getHouseBillBalance(house: House): number {
+    const prev = Number(house.balance?.previousBalance ?? 0);
+    return prev
+}
+
 function updateAllocatedProductsOptimistically(
     houseId: number,
     items: Array<{ milkType: string; qty: number }>,
@@ -2688,11 +2693,13 @@ export default function DeliveryPage() {
                                         >
                                             <Trash2 className="h-4 w-4 text-destructive" />
                                         </Button>
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Balance</p>
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Bill Balance</p>
                                         {hasPaymentThisMonth(currentHouse.id, allPayments)
                                             ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Paid</p>
-                                            : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(currentHouse).toLocaleString('en-IN')}</p>
+                                            : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseBillBalance(currentHouse).toLocaleString('en-IN')}</p>
                                         }
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Total Balance</p>
+                                         <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(currentHouse).toLocaleString('en-IN')}</p>
                                     </div>
                                 </div>
 
