@@ -84,12 +84,13 @@ import { toast } from 'sonner'
 type DeliveryItemForm = {
     milkType: string
     qty: string
+    amount: string
 }
 
 
 const defaultDeliveryItems: DeliveryItemForm[] = [
-    { milkType: 'Buffalo Milk', qty: '' },
-    { milkType: 'Cow Milk', qty: '' },
+    { milkType: 'Buffalo Milk', qty: '', amount: '' },
+    { milkType: 'Cow Milk', qty: '', amount: '' },
 ]
 
 const DEFAULT_MAP_CENTER = { lat: 28.6139, lon: 77.2090 }
@@ -913,6 +914,7 @@ export default function DeliveryPage() {
         const nextItems = Array.from(grouped.entries()).map(([milkType, qty]) => ({
             milkType,
             qty: String(qty),
+            amount: '',
         }))
 
         return nextItems.length > 0 ? nextItems : [...defaultDeliveryItems]
@@ -1803,6 +1805,38 @@ export default function DeliveryPage() {
         }
     }
 
+    const handleJumpToNextPending = () => {
+        let lastCompletedIdx = -1
+        for (let i = visibleHouses.length - 1; i >= 0; i--) {
+            if (completedHouses.has(visibleHouses[i].id)) {
+                lastCompletedIdx = i
+                break
+            }
+        }
+        const targetIdx = lastCompletedIdx + 1
+        if (targetIdx >= visibleHouses.length) {
+            toast.info('All houses delivered!')
+            return
+        }
+        if (targetIdx === currentIndex) {
+            toast.info('Already on next pending house')
+            return
+        }
+        setSwipeOffset(0)
+        const targetHouse = visibleHouses[targetIdx]
+        setHouseChangeDirection(targetIdx > currentIndex ? 'next' : 'prev')
+        setHouseChangeMessage(`Jumped to House ${targetHouse.houseNo}`)
+        if (houseChangeTimerRef.current) {
+            clearTimeout(houseChangeTimerRef.current)
+        }
+        houseChangeTimerRef.current = setTimeout(() => {
+            setHouseChangeMessage('')
+            setHouseChangeDirection(null)
+        }, 1100)
+        setCurrentIndex(targetIdx)
+        resetForm()
+    }
+
     useEffect(() => {
         if (!houseChangeMessage) return
 
@@ -1919,9 +1953,34 @@ export default function DeliveryPage() {
                 if (trimmed === '' && prev.length > 1) {
                     return prev.filter((_, i) => i !== idx)
                 }
-                return prev.map((item, i) =>
-                    i === idx ? { ...item, qty: value } : item
-                )
+                return prev.map((item, i) => {
+                    if (i !== idx) return item
+                    const qty = value
+                    const rate = getEffectiveRate(currentHouse, item.milkType).rate
+                    const numQty = Number(qty)
+                    const amount = numQty > 0 && rate > 0 ? String(numQty * rate) : ''
+                    return { ...item, qty, amount }
+                })
+            })
+            setHasUnsavedChanges(true)
+            setSaveStatus('idle')
+            return
+        }
+
+        if (field === 'amount') {
+            const trimmed = value.trim()
+            setDeliveryItems((prev) => {
+                if (trimmed === '' && prev.length > 1) {
+                    return prev.filter((_, i) => i !== idx)
+                }
+                return prev.map((item, i) => {
+                    if (i !== idx) return item
+                    const amount = value
+                    const rate = getEffectiveRate(currentHouse, item.milkType).rate
+                    const numAmount = Number(amount)
+                    const qty = numAmount > 0 && rate > 0 ? String(Math.round((numAmount / rate) * 100) / 100) : ''
+                    return { ...item, amount, qty }
+                })
             })
             setHasUnsavedChanges(true)
             setSaveStatus('idle')
@@ -1938,7 +1997,7 @@ export default function DeliveryPage() {
     }
 
     const addItem = () => {
-        setDeliveryItems((prev) => [...prev, { milkType: 'Buffalo Milk', qty: '' }])
+        setDeliveryItems((prev) => [...prev, { milkType: 'Buffalo Milk', qty: '', amount: '' }])
         setHasUnsavedChanges(true)
         setSaveStatus('idle')
     }
@@ -2693,12 +2752,12 @@ export default function DeliveryPage() {
                                         >
                                             <Trash2 className="h-4 w-4 text-destructive" />
                                         </Button>
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Bill Balance</p>
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Bill Bal</p>
                                         {hasPaymentThisMonth(currentHouse.id, allPayments)
                                             ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Paid</p>
                                             : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseBillBalance(currentHouse).toLocaleString('en-IN')}</p>
                                         }
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Total Balance</p>
+                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Total Bal</p>
                                          <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(currentHouse).toLocaleString('en-IN')}</p>
                                     </div>
                                 </div>
@@ -2800,7 +2859,7 @@ export default function DeliveryPage() {
                                                             </div>
 
                                                             <div
-                                                                className="relative z-10 grid grid-cols-[minmax(0,1.3fr)_minmax(5rem,0.8fr)_minmax(4.5rem,0.6fr)] gap-2 p-2 transition-transform duration-200 sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(4.75rem,0.7fr)_minmax(5.75rem,0.9fr)] sm:gap-3 sm:p-3"
+                                                                className="relative z-10 transition-transform duration-200"
                                                                 style={{
                                                                     transform: `translate3d(${rowOffset}px, 0, 0)`,
                                                                     backgroundColor: rowOffset < 0 ? 'rgba(239, 68, 68, 0.08)' : 'transparent',
@@ -2809,61 +2868,142 @@ export default function DeliveryPage() {
                                                                         : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms cubic-bezier(0.22, 1, 0.36, 1)',
                                                                 }}
                                                             >
-                                                                <div>
-                                                                    <Select
-                                                                        value={productRateOptions.find(o => o.value.toLowerCase() === item.milkType.toLowerCase())?.value ?? item.milkType}
-                                                                        onValueChange={(val) =>
-                                                                            updateDeliveryItem(idx, 'milkType', val)
-                                                                        }
-                                                                        disabled={isCompleted && !canModify}
-                                                                    >
-                                                                        <SelectTrigger className="h-9 w-full">
-                                                                            <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
-                                                                        </SelectTrigger>
-                                                                        <SelectContent
-                                                                            position="popper"
-                                                                            side="bottom"
-                                                                            align="start"
-                                                                            collisionPadding={12}
-                                                                            sideOffset={6}
-                                                                            style={{
-                                                                                maxHeight: 'min(60dvh, var(--radix-select-content-available-height))',
-                                                                            }}
+                                                                {/* Mobile: 2-row layout */}
+                                                                <div className="grid grid-cols-[minmax(0,1fr)_minmax(5rem,0.8fr)] gap-2 p-2 sm:hidden">
+                                                                    <div>
+                                                                        <Select
+                                                                            value={productRateOptions.find(o => o.value.toLowerCase() === item.milkType.toLowerCase())?.value ?? item.milkType}
+                                                                            onValueChange={(val) =>
+                                                                                updateDeliveryItem(idx, 'milkType', val)
+                                                                            }
+                                                                            disabled={isCompleted && !canModify}
                                                                         >
-                                                                            {productRateOptions.length > 0 ? (
-                                                                                productRateOptions.map((option) => (
-                                                                                    <SelectItem key={option.value} value={option.value}>
-                                                                                        {option.label} (₹{getEffectiveRate(currentHouse, option.value).rate})
+                                                                            <SelectTrigger className="h-9 w-full">
+                                                                                <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent
+                                                                                position="popper"
+                                                                                side="bottom"
+                                                                                align="start"
+                                                                                collisionPadding={12}
+                                                                                sideOffset={6}
+                                                                                style={{
+                                                                                    maxHeight: 'min(60dvh, var(--radix-select-content-available-height))',
+                                                                                }}
+                                                                            >
+                                                                                {productRateOptions.length > 0 ? (
+                                                                                    productRateOptions.map((option) => (
+                                                                                        <SelectItem key={option.value} value={option.value}>
+                                                                                            {option.label} (₹{getEffectiveRate(currentHouse, option.value).rate})
+                                                                                        </SelectItem>
+                                                                                    ))
+                                                                                ) : (
+                                                                                    <SelectItem value="__no_products__" disabled>
+                                                                                        No active products
                                                                                     </SelectItem>
-                                                                                ))
-                                                                            ) : (
-                                                                                <SelectItem value="__no_products__" disabled>
-                                                                                    No active products
-                                                                                </SelectItem>
-                                                                            )}
-                                                                        </SelectContent>
-                                                                    </Select>
+                                                                                )}
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <Input
+                                                                            type="number"
+                                                                            placeholder="Qty"
+                                                                            value={item.qty}
+                                                                            onChange={(e) =>
+                                                                                updateDeliveryItem(idx, 'qty', e.target.value)
+                                                                            }
+                                                                            className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                            disabled={isCompleted && !canModify}
+                                                                        />
+                                                                    </div>
+
+                                                                    <div className="flex items-center text-sm font-medium">
+                                                                        ₹{rate}/L
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <Input
+                                                                            type="number"
+                                                                            placeholder="Amount"
+                                                                            value={item.amount || (qty > 0 ? String(amount) : '')}
+                                                                            onChange={(e) =>
+                                                                                updateDeliveryItem(idx, 'amount', e.target.value)
+                                                                            }
+                                                                            className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                            disabled={isCompleted && !canModify}
+                                                                        />
+                                                                    </div>
                                                                 </div>
 
-                                                                <div className="sm:min-w-30">
-                                                                    <Input
-                                                                        type="number"
-                                                                        placeholder="0"
-                                                                        value={item.qty}
-                                                                        onChange={(e) =>
-                                                                            updateDeliveryItem(idx, 'qty', e.target.value)
-                                                                        }
-                                                                        className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                        disabled={isCompleted && !canModify}
-                                                                    />
-                                                                </div>
+                                                                {/* Desktop: single-row layout */}
+                                                                <div className="hidden sm:grid sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(4.75rem,0.7fr)_minmax(6rem,0.9fr)] sm:gap-3 sm:p-3">
+                                                                    <div>
+                                                                        <Select
+                                                                            value={productRateOptions.find(o => o.value.toLowerCase() === item.milkType.toLowerCase())?.value ?? item.milkType}
+                                                                            onValueChange={(val) =>
+                                                                                updateDeliveryItem(idx, 'milkType', val)
+                                                                            }
+                                                                            disabled={isCompleted && !canModify}
+                                                                        >
+                                                                            <SelectTrigger className="h-9 w-full">
+                                                                                <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent
+                                                                                position="popper"
+                                                                                side="bottom"
+                                                                                align="start"
+                                                                                collisionPadding={12}
+                                                                                sideOffset={6}
+                                                                                style={{
+                                                                                    maxHeight: 'min(60dvh, var(--radix-select-content-available-height))',
+                                                                                }}
+                                                                            >
+                                                                                {productRateOptions.length > 0 ? (
+                                                                                    productRateOptions.map((option) => (
+                                                                                        <SelectItem key={option.value} value={option.value}>
+                                                                                            {option.label} (₹{getEffectiveRate(currentHouse, option.value).rate})
+                                                                                        </SelectItem>
+                                                                                    ))
+                                                                                ) : (
+                                                                                    <SelectItem value="__no_products__" disabled>
+                                                                                        No active products
+                                                                                    </SelectItem>
+                                                                                )}
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
 
-                                                                <div className="flex items-center text-sm font-medium">
-                                                                    ₹{rate}/L
-                                                                </div>
+                                                                    <div className="sm:min-w-30">
+                                                                        <Input
+                                                                            type="number"
+                                                                            placeholder="0"
+                                                                            value={item.qty}
+                                                                            onChange={(e) =>
+                                                                                updateDeliveryItem(idx, 'qty', e.target.value)
+                                                                            }
+                                                                            className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                            disabled={isCompleted && !canModify}
+                                                                        />
+                                                                    </div>
 
-                                                                <div className="hidden items-center text-sm font-semibold sm:flex">
-                                                                    ₹{amount.toLocaleString('en-IN')}
+                                                                    <div className="flex items-center text-sm font-medium">
+                                                                        ₹{rate}/L
+                                                                    </div>
+
+                                                                    <div className="sm:min-w-24">
+                                                                        <Input
+                                                                            type="number"
+                                                                            placeholder="0"
+                                                                            value={item.amount || (qty > 0 ? String(amount) : '')}
+                                                                            onChange={(e) =>
+                                                                                updateDeliveryItem(idx, 'amount', e.target.value)
+                                                                            }
+                                                                            className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                            disabled={isCompleted && !canModify}
+                                                                        />
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -2920,7 +3060,7 @@ export default function DeliveryPage() {
 
                                                     if (recs.length === 0) return
 
-                                                    setDeliveryItems(recs.map((r) => ({ milkType: r.milkType, qty: String(r.qty) })))
+                                                    setDeliveryItems(recs.map((r) => ({ milkType: r.milkType, qty: String(r.qty), amount: '' })))
                                                     setHasUnsavedChanges(true)
                                                     setSaveStatus('idle')
                                                 } catch {
@@ -2980,6 +3120,14 @@ export default function DeliveryPage() {
                             <p className="text-xs font-semibold sm:text-sm">
                                 Route {currentRouteNumber} / {visibleHouses.length}
                             </p>
+                            <Button
+                                variant="link"
+                                size="sm"
+                                className="h-auto p-0 text-[10px] text-muted-foreground sm:text-xs"
+                                onClick={handleJumpToNextPending}
+                            >
+                                Next Pending →
+                            </Button>
                         </div>
 
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleNext} disabled={currentIndex === visibleHouses.length - 1}>
