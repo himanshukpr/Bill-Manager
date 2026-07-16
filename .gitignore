@@ -1,1 +1,2 @@
-houses.csv
+node_modules/
+*.sql.gz
