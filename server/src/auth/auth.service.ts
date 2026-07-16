@@ -41,7 +41,7 @@ export class AuthService {
     const hashed = await bcrypt.hash(dto.password, 10);
     const user = await this.usersService.create({
       username: dto.username,
-      email: dto.email,
+      email: dto.email || `${dto.username}@placeholder.local`,
       password: hashed,
       role: dto.role ?? Role.supplier,
       dairyId: dto.dairyId,
