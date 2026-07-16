@@ -17,7 +17,7 @@ Password: 3?TuK0j(u-LKw'OUy;vE
 ## Website
 
 ```
-URL: http://31.97.235.218:8080/
+URL: https://dairyvyapar.clustcoders.com/
 ```
 
 ## Host Key Fingerprint
@@ -26,39 +26,52 @@ URL: http://31.97.235.218:8080/
 ssh-ed25519 255 SHA256:4mN0Keh6jX6d3f8fIgEfM4hWju9wypoUr9kXgqxctA8
 ```
 
-## Database (MySQL)
+## Git Repo
+
+```
+Repo: /tmp/billmanager-repo
+Remote: https://github.com/himanshukpr/Bill-Manager.git
+```
+
+Deploy flow (run on VPS):
+```bash
+cd /tmp/billmanager-repo
+git pull origin main
+rsync -a --delete --exclude=node_modules --exclude=dist --exclude=.env server/ /home/admin/dairyvyapar-server/
+cd /home/admin/dairyvyapar-server
+npm install --silent
+npx prisma generate
+npm run build
+rsync -a --delete --exclude=node_modules --exclude=.next --exclude=.env client/ /root/bill-manager-client/
+cd /root/bill-manager-client
+npm install --silent
+npm run build
+pm2 restart dairyvyapar-api dairyvyapar-frontend
+```
+
+## Database (MySQL) — Production
 
 ```
 Host: 127.0.0.1 (localhost via SSH tunnel)
 Port: 3306
-User: admin_billmanager
-Password: RNhM44VeME24YSGzZqPj
-Database: admin_billmanager
+User: admin_dairy_vyapar
+Password: QN3ZFcsjCtEKxB7UdRh9
+Database: admin_dairy_vyapar
 ```
 
 Access via SSH:
 ```bash
-mysql -u admin_billmanager -p'RNhM44VeME24YSGzZqPj' admin_billmanager
+mysql -u admin_dairy_vyapar -p'QN3ZFcsjCtEKxB7UdRh9' admin_dairy_vyapar
 ```
 
-## All Sites
+## Deployed Site
 
-| Site | URL | Frontend | Backend | Database |
-|------|-----|----------|---------|----------|
-| **Original** | http://31.97.235.218:8080/ | port 3000 | port 5000 | `admin_billmanager` |
-| **GNDairy2** | http://31.97.235.218:8081/ | port 3001 | port 5001 | `gndairy2` |
-| **Doddhi** | http://31.97.235.218:8082/ | port 3002 | port 5002 | `doddhi` |
+| Site | URL | PM2 Process | Server | Frontend | Database |
+|------|-----|-------------|--------|----------|----------|
+| **dairyvyapar** | https://dairyvyapar.clustcoders.com/ | `dairyvyapar-api` (port 5003), `dairyvyapar-frontend` | `/home/admin/dairyvyapar-server/` | `/root/bill-manager-client/` | `admin_dairy_vyapar` |
 
-### GNDairy2
-- Frontend: `/home/admin/domains/gndairy2/public_html/`
-- Backend: `/home/admin/gndairy2-server/`
+## Deployment Locations
 
-### Doddhi
-- Frontend: `/home/admin/domains/doddhi/public_html/`
-- Backend: `/home/admin/doddhi-server/`
-
-## Bill Manager Locations
-
-- **Client**: `/root/bill-manager-client`
-- **Server**: `/home/admin/bill-manager-server`
-- **Domain**: `/home/admin/domains/billmanager.com/public_html/`
+- **Server**: `/home/admin/dairyvyapar-server/`
+- **Client**: `/root/bill-manager-client/`
+- **Repo (pull source)**: `/tmp/billmanager-repo/`
