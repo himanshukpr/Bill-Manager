@@ -1666,6 +1666,16 @@ export const dairiesApi = {
   resetPassword: async (id: number, password: string) => {
     return apiPatch(`/dairies/${id}/password`, { password });
   },
+  getSettings: () => apiGet<Record<string, unknown>>('/dairies/settings'),
+  updateSettings: async (settings: Record<string, unknown>) => {
+    const res = await fetchApi('/dairies/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) throw new Error('Failed to update settings');
+    return res.json();
+  },
 };
 
 // ─── Product Rates ───────────────────────────────────────────────────────────

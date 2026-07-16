@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Body,
@@ -11,8 +12,9 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { DairiesService } from './dairies.service';
-import { CreateDairyDto, UpdateDairyDto } from './dto/dairy.dto';
+import { CreateDairyDto, UpdateDairyDto, UpdateDairySettingsDto } from './dto/dairy.dto';
 import { JwtAuthGuard, AdminGuard } from '../auth/guards/auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('dairies')
 export class DairiesController {
@@ -21,6 +23,21 @@ export class DairiesController {
   @Get()
   findAll() {
     return this.dairiesService.findAll();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('settings')
+  getSettings(@CurrentUser('dairyId') dairyId: number) {
+    return this.dairiesService.getSettings(dairyId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('settings')
+  updateSettings(
+    @CurrentUser('dairyId') dairyId: number,
+    @Body() dto: UpdateDairySettingsDto,
+  ) {
+    return this.dairiesService.updateSettings(dairyId, dto);
   }
 
   @Get(':id')

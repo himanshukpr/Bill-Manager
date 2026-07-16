@@ -8,24 +8,35 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { getSessionAuth, type SessionAuth } from '@/lib/auth'
-import { getEvaluateByAmount, setEvaluateByAmount } from '@/lib/supplier-settings'
+import { dairiesApi } from '@/lib/api'
+import { toast } from 'sonner'
 
 export default function SupplierSettingsPage() {
     const router = useRouter()
     const [auth] = useState<SessionAuth | null>(() => getSessionAuth())
     const [evaluateByAmount, setEvaluateByAmountState] = useState(false)
+    const [loading, setLoading] = useState(true)
 
     useEffect(() => {
         if (!auth?.token || auth?.role !== 'supplier') {
             router.replace('/')
             return
         }
-        setEvaluateByAmountState(getEvaluateByAmount())
+        dairiesApi.getSettings().then((settings) => {
+            setEvaluateByAmountState((settings as { evaluateByAmount?: boolean }).evaluateByAmount === true)
+        }).catch(() => {
+            // fallback to false
+        }).finally(() => setLoading(false))
     }, [router, auth])
 
-    const handleToggle = (checked: boolean) => {
+    const handleToggle = async (checked: boolean) => {
         setEvaluateByAmountState(checked)
-        setEvaluateByAmount(checked)
+        try {
+            await dairiesApi.updateSettings({ evaluateByAmount: checked })
+        } catch {
+            toast.error('Failed to save setting')
+            setEvaluateByAmountState(!checked)
+        }
     }
 
     if (!auth) {

@@ -4,7 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateDairyDto, UpdateDairyDto } from './dto/dairy.dto';
+import { Prisma } from '@prisma/client';
+import { CreateDairyDto, UpdateDairyDto, UpdateDairySettingsDto } from './dto/dairy.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -151,5 +152,23 @@ export class DairiesService {
       data: { password: hashed },
     });
     return { success: true };
+  }
+
+  async getSettings(dairyId: number) {
+    const dairy = await this.prisma.dairy.findUnique({
+      where: { id: dairyId },
+      select: { settings: true },
+    });
+    if (!dairy) throw new NotFoundException(`Dairy #${dairyId} not found`);
+    return dairy.settings;
+  }
+
+  async updateSettings(dairyId: number, dto: UpdateDairySettingsDto) {
+    const dairy = await this.prisma.dairy.update({
+      where: { id: dairyId },
+      data: { settings: dto as unknown as Prisma.InputJsonValue },
+      select: { settings: true },
+    });
+    return dairy.settings;
   }
 }

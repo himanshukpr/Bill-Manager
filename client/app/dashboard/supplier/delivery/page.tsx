@@ -59,8 +59,7 @@ import {
     type HouseBalance,
 } from '@/lib/api'
 import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
-import { getEvaluateByAmount } from '@/lib/supplier-settings'
-import { geocodeApi } from '@/lib/api'
+import { dairiesApi, geocodeApi } from '@/lib/api'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
 import { db } from '@/lib/db'
 import {
@@ -467,13 +466,21 @@ export default function DeliveryPage() {
         }
     }, [selectedDate])
 
-    // Read the "evaluate by amount" preference and keep it in sync across tabs
-    useEffect(() => {
-        const sync = () => setShowAmountField(getEvaluateByAmount())
-        sync()
-        window.addEventListener('storage', sync)
-        return () => window.removeEventListener('storage', sync)
+    // Read the "evaluate by amount" preference from dairy settings
+    const fetchSettings = useCallback(() => {
+        dairiesApi.getSettings().then((settings) => {
+            setShowAmountField((settings as { evaluateByAmount?: boolean }).evaluateByAmount === true)
+        }).catch(() => {
+            // fallback to false
+        })
     }, [])
+
+    useEffect(() => {
+        fetchSettings()
+        const onVisibility = () => { if (document.visibilityState === 'visible') fetchSettings() }
+        document.addEventListener('visibilitychange', onVisibility)
+        return () => document.removeEventListener('visibilitychange', onVisibility)
+    }, [fetchSettings])
 
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())

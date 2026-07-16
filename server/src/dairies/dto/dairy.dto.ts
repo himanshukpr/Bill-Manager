@@ -45,6 +45,11 @@ export class CreateDairyDto {
   maxHouses?: number;
 }
 
+export class UpdateDairySettingsDto {
+  @IsOptional()
+  evaluateByAmount?: boolean;
+}
+
 export class UpdateDairyDto {
   @IsString()
   @IsOptional()
