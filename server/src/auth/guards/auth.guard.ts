@@ -1,5 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class LocalAuthGuard extends AuthGuard('local') {}
@@ -9,10 +10,16 @@ export class JwtAuthGuard extends AuthGuard('jwt') {}
 
 @Injectable()
 export class AdminGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  constructor(private prisma: PrismaService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const user = request.user as { role?: string; username?: string; uuid?: string } | undefined;
-    console.log('[AdminGuard] user:', JSON.stringify({ uuid: user?.uuid, username: user?.username, role: user?.role }));
-    return user?.role === 'admin';
+    const user = request.user as { uuid?: string } | undefined;
+    if (!user?.uuid) return false;
+    const dbUser = await this.prisma.user.findUnique({
+      where: { uuid: user.uuid },
+      select: { role: true },
+    });
+    return dbUser?.role === 'admin';
   }
 }
