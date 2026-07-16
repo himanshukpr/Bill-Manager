@@ -9,7 +9,7 @@ export class UsersService {
   constructor(private prisma: PrismaService) {}
 
   async findByEmail(email: string) {
-    return this.prisma.user.findUnique({ where: { email } });
+    return this.prisma.user.findFirst({ where: { email } });
   }
 
   async findByUsername(username: string) {
@@ -29,7 +29,7 @@ export class UsersService {
 
   async create(data: {
     username: string;
-    email: string;
+    email?: string;
     password: string;
     role?: Role;
     isVerified?: boolean;

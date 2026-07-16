@@ -69,7 +69,7 @@ export class AuthService {
     return this.login({
       uuid: dairyUser.uuid,
       username: dairyUser.username,
-      email: dairyUser.email,
+      email: dairyUser.email ?? undefined,
       role: dairyUser.role,
       isVerified: dairyUser.isVerified,
       permissions: (dairyUser.permissions ?? {}) as Record<string, boolean>,
@@ -113,7 +113,7 @@ export class AuthService {
   async login(user: {
     uuid: string;
     username: string;
-    email: string;
+    email?: string;
     role: string;
     isVerified: boolean;
     permissions?: Record<string, boolean>;

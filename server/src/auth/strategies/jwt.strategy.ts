@@ -7,7 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 export interface JwtPayload {
   sub: string;
   username: string;
-  email: string;
+  email?: string;
   role: string;
   isVerified: boolean;
   permissions?: Record<string, boolean>;

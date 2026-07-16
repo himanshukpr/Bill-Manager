@@ -38,7 +38,7 @@ model Dairy {
 model User {
   uuid          String         @id @default(uuid())
   username      String         @db.VarChar(100)
-  email         String         @unique @db.VarChar(255)
+  email         String?        @db.VarChar(255)
   password      String         @db.VarChar(255)
   role          Role           @default(supplier)
   createdAt     DateTime       @default(now()) @map("created_at")

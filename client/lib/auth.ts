@@ -8,7 +8,7 @@ export type SessionAuth = {
   token: string
   uuid: string
   username: string
-  email: string
+  email?: string
   role: AppRole
   isVerified: boolean
   permissions?: Record<string, boolean>
@@ -337,13 +337,10 @@ export async function apiRegister(
   password: string,
   dairyId?: number,
 ): Promise<SessionAuth> {
-  const safeUsername = username.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '.').replace(/\.+/g, '.').replace(/^\.|\.$/g, '') || 'user';
-  const email = `${safeUsername}@bill-manager.local`;
-
   const res = await fetchApi('/auth/register', {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, password, dairyId }),
+    body: JSON.stringify({ username, password, dairyId }),
   })
 
   await handleResponse<unknown>(res) // throws on conflict / validation error

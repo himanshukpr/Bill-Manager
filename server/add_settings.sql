@@ -1,1 +1,0 @@
-ALTER TABLE dairies ADD COLUMN settings JSON NOT NULL DEFAULT ('{}');

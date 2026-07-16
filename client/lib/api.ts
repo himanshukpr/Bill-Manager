@@ -1600,7 +1600,7 @@ export const usersApi = {
     if (isBrowser()) {
       await invalidateCache('/users');
     }
-    const user = await apiPost<User>('/auth/register', { ...data, email: data.email || `${data.username}@billmanager.local` });
+    const user = await apiPost<User>('/auth/register', data);
     if (data.isVerified && user?.uuid) {
       await usersApi.verify(user.uuid, true);
     }
