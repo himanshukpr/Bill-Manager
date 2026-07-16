@@ -1666,7 +1666,7 @@ export const dairiesApi = {
   resetPassword: async (id: number, password: string) => {
     return apiPatch(`/dairies/${id}/password`, { password });
   },
-  getSettings: () => apiGet<Record<string, unknown>>('/dairies/settings'),
+  getSettings: () => requestGet<Record<string, unknown>>('/dairies/settings'),
   updateSettings: async (settings: Record<string, unknown>) => {
     const res = await fetchApi('/dairies/settings', {
       method: 'PUT',
@@ -1674,6 +1674,9 @@ export const dairiesApi = {
       body: JSON.stringify(settings),
     });
     if (!res.ok) throw new Error('Failed to update settings');
+    if (isBrowser()) {
+      await invalidateCache('/dairies/settings');
+    }
     return res.json();
   },
 };
