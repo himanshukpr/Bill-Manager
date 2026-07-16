@@ -1668,12 +1668,15 @@ export default function HousesPage() {
       } else {
         await housesApi.delete(toggleId)
         toast.success('House deleted permanently')
+        setToggleId(null)
+        setToggleDialogMode(null)
+        if (viewHouse?.id === toggleId) {
+          setViewHouse(null)
+        }
+        return
       }
       setToggleId(null)
       setToggleDialogMode(null)
-      if (viewHouse?.id === toggleId && action === 'delete') {
-        setViewHouse(null)
-      }
       void refreshCachedData(true)
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))

@@ -123,6 +123,18 @@ class SyncEngine {
       for (const action of actions) {
         if (!navigator.onLine) break; // Lost connection midway
         
+        // If a DELETE targets a house that no longer exists locally, skip it
+        if (action.method === 'DELETE' && (action.url || '').startsWith('/houses/')) {
+          const houseId = parseInt(action.url!.split('/')[2], 10);
+          if (!Number.isNaN(houseId)) {
+            const localHouse = await db.houses.get(houseId);
+            if (!localHouse) {
+              await db.syncQueue.delete(action.id!);
+              continue;
+            }
+          }
+        }
+
         try {
           const res = await fetchApi(action.url, {
             method: action.method,
@@ -196,6 +208,8 @@ class SyncEngine {
                         db.queryCache.where('key').startsWith('GET:/bills').delete(),
                         db.queryCache.where('key').startsWith('GET:/house-balance').delete(),
                       ]);
+                    } else if (url.startsWith('/houses')) {
+                      await db.queryCache.where('key').startsWith('GET:/houses').delete();
                     } else if (url.startsWith('/delivery-logs')) {
                       await Promise.all([
                         db.queryCache.where('key').startsWith('GET:/delivery-logs').delete(),
