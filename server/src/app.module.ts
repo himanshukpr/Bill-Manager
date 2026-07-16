@@ -13,6 +13,7 @@ import { ProductRatesModule } from './product-rates/product-rates.module';
 import { DeliveryLogsModule } from './delivery-logs/delivery-logs.module';
 import { DeliveryPlansModule } from './delivery-plans/delivery-plans.module';
 import { DairiesModule } from './dairies/dairies.module';
+import { GeocodingModule } from './geocoding/geocoding.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { DairiesModule } from './dairies/dairies.module';
     DeliveryLogsModule,
     DeliveryPlansModule,
     DairiesModule,
+    GeocodingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

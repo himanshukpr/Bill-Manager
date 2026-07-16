@@ -1770,3 +1770,13 @@ export const deliveryPlansApi = {
     return res;
   },
 };
+
+export const geocodeApi = {
+  search: async (query: string): Promise<Array<{ lat: number; lon: number }>> => {
+    const res = await fetchApi(`/geocode?q=${encodeURIComponent(query)}`, {
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    });
+    if (!res.ok) throw new Error('Geocoding failed');
+    return res.json();
+  },
+};

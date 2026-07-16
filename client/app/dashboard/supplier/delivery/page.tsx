@@ -59,6 +59,8 @@ import {
     type HouseBalance,
 } from '@/lib/api'
 import { parseDailyAlerts, type AlertDays, type HouseAlert } from '@/lib/alerts'
+import { getEvaluateByAmount } from '@/lib/supplier-settings'
+import { geocodeApi } from '@/lib/api'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
 import { db } from '@/lib/db'
 import {
@@ -445,6 +447,7 @@ export default function DeliveryPage() {
     const [productRates, setProductRates] = useState<ProductRate[]>([])
     const [globalRateMap, setGlobalRateMap] = useState<Record<string, number>>({})
     const [allPayments, setAllPayments] = useState<PaymentHistory[]>([])
+    const [showAmountField, setShowAmountField] = useState<boolean>(false)
     const [loading, setLoading] = useState(true)
     const [panelView, setPanelView] = useState<'delivery' | 'allocated-houses'>('delivery')
     const [houseSearch, setHouseSearch] = useState('')
@@ -463,6 +466,14 @@ export default function DeliveryPage() {
             // ignore
         }
     }, [selectedDate])
+
+    // Read the "evaluate by amount" preference and keep it in sync across tabs
+    useEffect(() => {
+        const sync = () => setShowAmountField(getEvaluateByAmount())
+        sync()
+        window.addEventListener('storage', sync)
+        return () => window.removeEventListener('storage', sync)
+    }, [])
 
     const [currentIndex, setCurrentIndex] = useState(0)
     const [completedHouses, setCompletedHouses] = useState<Set<number>>(new Set())
@@ -526,6 +537,7 @@ export default function DeliveryPage() {
     const [summaryToDate, setSummaryToDate] = useState('')
     const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
     const summaryRequestIdRef = useRef(0)
+    const [swipeDeleteConfirmIndex, setSwipeDeleteConfirmIndex] = useState<number | null>(null)
 
     const containerStyle = useMemo(
         () => ({ height: availableHeight ? `${availableHeight}px` : 'calc(100dvh - 0.5rem)' }),
@@ -695,25 +707,13 @@ export default function DeliveryPage() {
         const loadMiniMap = async () => {
             setMiniMapLoading(true)
             try {
-                const response = await fetch(
-                    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`,
-                    {
-                        headers: {
-                            Accept: 'application/json',
-                        },
-                    },
-                )
-
-                if (!response.ok) throw new Error('Geocoding failed')
-
-                const result = (await response.json()) as Array<{ lat: string; lon: string }>
+                const result = await geocodeApi.search(query)
                 if (!active || result.length === 0) {
                     setMiniMapCenter(DEFAULT_MAP_CENTER)
                     return
                 }
 
-                const lat = Number(result[0].lat)
-                const lon = Number(result[0].lon)
+                const { lat, lon } = result[0]
                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
                     setMiniMapCenter(DEFAULT_MAP_CENTER)
                     return
@@ -2178,7 +2178,7 @@ export default function DeliveryPage() {
         const activeSwipe = swipedDeliveryItemRef.current
         const shouldDelete = activeSwipe.index === index && activeSwipe.offset <= -56
         if (shouldDelete) {
-            await removeDeliveryItem(index)
+            setSwipeDeleteConfirmIndex(index)
         } else {
             setSwipedDeliveryItem({ index: null, offset: 0 })
             swipedDeliveryItemRef.current = { index: null, offset: 0 }
@@ -2492,8 +2492,8 @@ export default function DeliveryPage() {
         : undefined
 
     return (
-        <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden px-2 pb-2 pt-0 sm:px-4 sm:py-4">
-            <div className="mb-2 flex items-center justify-between">
+        <div ref={pageContainerRef} style={containerStyle} className="mx-auto flex w-full max-w-md flex-col overflow-y-auto overflow-x-hidden">
+            <div className="mb-1 flex items-center justify-between">
                 <div className='flex items-center gap-2'>
                     <p className="text-xs font-medium text-muted-foreground">
                         {selectedDate.toLocaleDateString('en-IN', {
@@ -2517,26 +2517,6 @@ export default function DeliveryPage() {
                 </div>
 
                 <div className='flex items-center'>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        onClick={handleOpenHistory}
-                    >
-                        <History className="h-4 w-4" />
-                        History
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        onClick={() => setIsMapExpanded(true)}
-                    >
-                        <MapIcon className="h-4 w-4" />
-                        Map
-                    </Button>
 
                     <Button
                         variant="outline"
@@ -2604,15 +2584,9 @@ export default function DeliveryPage() {
                     <div className="pointer-events-none absolute inset-0 z-0" style={swipePreviewStyle}>
                         <div className="flex h-full min-h-0 flex-col">
                             <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                                {/* <div className="relative h-36 w-full overflow-hidden rounded-xl border border-border/70 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(15,23,42,0.02))] p-1 text-left sm:h-60 sm:p-2"> */}
-                                    {/* <div className="absolute inset-0 bg-emerald-900/10" /> */}
-                                    {/* <div className="absolute inset-x-0 bottom-2 flex items-center justify-between px-2"> */}
-                                        <span className="rounded-md bg-background/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                                            {swipePreviewDirection === 'next' ? 'Next House' : 'Previous House'}
-                                        </span>
-                                        {/* <Maximize2 className="h-3.5 w-3.5 text-foreground/80" /> */}
-                                    {/* </div> */}
-                                {/* </div> */}
+                                <span className="rounded-md bg-background/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                    {swipePreviewDirection === 'next' ? 'Next House' : 'Previous House'}
+                                </span>
 
                                 <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
                                     <div className="space-y-1.5 sm:col-span-2">
@@ -2632,6 +2606,7 @@ export default function DeliveryPage() {
                                                     : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(swipePreviewHouse).toLocaleString('en-IN')}</p>
                                                 }
                                             </div>
+
                                         </div>
 
                                         <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
@@ -2654,10 +2629,10 @@ export default function DeliveryPage() {
                                             </Badge>
                                         ) : null}
                                         {getEffectiveRate(swipePreviewHouse, 'cow').rate > 0 ? (
-                                        <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                            <span className="sm:hidden">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
-                                            <span className="hidden sm:inline">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
-                                        </Badge>
+                                            <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
+                                                <span className="sm:hidden">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
+                                                <span className="hidden sm:inline">Cow ₹{getEffectiveRate(swipePreviewHouse, 'cow').rate}/L</span>
+                                            </Badge>
                                         ) : null}
                                     </div>
                                 </div>
@@ -2671,20 +2646,19 @@ export default function DeliveryPage() {
                                                 <TableRow>
                                                     <TableHead className="w-22.5 sm:w-30">Product</TableHead>
                                                     <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
-                                                    <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
-                                                    <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
+                                                    {showAmountField && <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>}
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
                                                 {!isSwipePreviewLogsLoaded ? (
                                                     <TableRow>
-                                                        <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
+                                                        <TableCell colSpan={showAmountField ? 3 : 2} className="py-4 text-center text-xs text-muted-foreground">
                                                             Loading products...
                                                         </TableCell>
                                                     </TableRow>
                                                 ) : swipePreviewItems.filter((item) => Number(item.qty) > 0).length === 0 ? (
                                                     <TableRow>
-                                                        <TableCell colSpan={4} className="py-4 text-center text-xs text-muted-foreground">
+                                                        <TableCell colSpan={showAmountField ? 3 : 2} className="py-4 text-center text-xs text-muted-foreground">
                                                             No products delivered yet for selected date
                                                         </TableCell>
                                                     </TableRow>
@@ -2700,8 +2674,7 @@ export default function DeliveryPage() {
                                                                 <TableRow key={`${item.milkType}-${idx}`}>
                                                                     <TableCell className="font-medium capitalize">{item.milkType}</TableCell>
                                                                     <TableCell>{qty}</TableCell>
-                                                                    <TableCell>₹{rate}/L</TableCell>
-                                                                    <TableCell className="hidden sm:table-cell">₹{amount.toLocaleString('en-IN')}</TableCell>
+                                                                    {showAmountField && <TableCell className="hidden sm:table-cell">₹{amount.toLocaleString('en-IN')}</TableCell>}
                                                                 </TableRow>
                                                             )
                                                         })
@@ -2730,74 +2703,100 @@ export default function DeliveryPage() {
                 <div className="relative z-10 flex min-h-0 flex-1 flex-col" style={houseSwipeStyle}>
                     {/* HOUSE CARD */}
                     <div className="shrink-0 rounded-t-2xl rounded-b-none bg-card px-2 py-2 space-y-1.5 sm:space-y-3 sm:p-4">
-                        <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-3 sm:gap-3 sm:p-3">
+                        <div className="grid grid-cols-1 gap-2 rounded-xl border border-border/70 bg-muted/20 p-2 sm:grid-cols-2 sm:gap-3 sm:p-3">
                             <div className="space-y-1.5 sm:col-span-2">
-                                <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
-                                    <div>
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                <div className="grid grid-cols-2  sm:items-center">
+                                    <div className='flex gap-2 flex-col'>
+                                        <div>
+                                            <div className='flex sm:flex-row sm:items-end flex-col gap-1'>
+                                                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">House No.</p>
+                                                <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-lg flex  items-center gap-2">{currentHouse.houseNo}<span>{isCompleted ? <p className="bg-green-600 w-2 h-2 rounded"></p> : <p className="bg-yellow-600 w-2 h-2 rounded-full"></p>}</span></h1>
+                                            </div>
+                                            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                                Route #{currentRouteNumber}
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-col gap-1 text-[13px] leading-tight sm:text-sm">
+                                            <div className="flex min-w-0 gap-1">
+                                                <MapPin className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                                <span className="text-[11px] uppercase tracking-widest text-muted-foreground">{currentHouse.area || 'Area not set'}</span>
+                                            </div>
+                                            <div className="flex min-w-0 gap-1">
+                                                <Phone className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                                <span className="text-[11px] uppercase tracking-widest text-muted-foreground">{currentHouse.phoneNo || 'Phone not set'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                                        <h1 className="mt-0.5 text-lg font-bold leading-none sm:mt-1 sm:text-2xl flex items-center gap-2">{currentHouse.houseNo}<span>{isCompleted ? <p className="bg-green-600 w-2 h-2 rounded"></p> : <p className="bg-yellow-600 w-2 h-2 rounded-full"></p>}</span></h1>
-                                        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                            Route #{currentRouteNumber}
-                                        </p>
-                                    </div>
-                                    <div className="relative flex flex-col items-start pr-10">
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            className="absolute right-0 top-0 h-8 w-8 rounded-full border-border/70 bg-background/90 shadow-none"
-                                            onClick={handleClearToday}
-                                            title="Clear selected-date deliveries"
-                                        >
-                                            <Trash2 className="h-4 w-4 text-destructive" />
-                                        </Button>
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Bill Bal</p>
-                                        {hasPaymentThisMonth(currentHouse.id, allPayments)
-                                            ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Paid</p>
-                                            : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseBillBalance(currentHouse).toLocaleString('en-IN')}</p>
-                                        }
-                                        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Total Bal</p>
-                                         <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(currentHouse).toLocaleString('en-IN')}</p>
-                                    </div>
-                                </div>
+                                    <div className="relative flex flex-row justify-end gap-2 ">
+                                        <div className='flex justify-center flex-col'>
+                                            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Bill Bal</p>
+                                            {hasPaymentThisMonth(currentHouse.id, allPayments)
+                                                ? <p className="mt-0.5 font-semibold text-green-600 sm:mt-1">Paid</p>
+                                                : <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseBillBalance(currentHouse).toLocaleString('en-IN')}</p>
+                                            }
+                                            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Total Bal</p>
+                                            <p className="mt-0.5 font-semibold text-orange-600 sm:mt-1">₹{getHouseTotalBalance(currentHouse).toLocaleString('en-IN')}</p>
+                                        </div>
+                                        <div className='flex flex-col gap-0.5'>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={handleClearToday}
+                                                title="Clear selected-date deliveries"
+                                            >
+                                                <Trash2 className="h-4 w-4 text-destructive" />
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                className="gap-1.5"
+                                                onClick={handleOpenHistory}
+                                            >
+                                                <History className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                className="gap-1.5"
+                                                onClick={() => setIsMapExpanded(true)}
+                                            >
+                                                <MapIcon className="h-4 w-4" />
+                                            </Button>
+                                        </div>
 
-                                <div className="flex items-center justify-between gap-3 text-[13px] leading-tight sm:text-sm">
-                                    <div className="flex min-w-0 items-center gap-2">
-                                        <MapPin className="h-4 w-4 shrink-0" />
-                                        <span className="truncate">{currentHouse.area || 'Area not set'}</span>
-                                    </div>
-                                    <div className="flex min-w-0 items-center gap-2 text-right">
-                                        <Phone className="h-4 w-4 shrink-0" />
-                                        <span className="truncate">{currentHouse.phoneNo || 'Phone not set'}</span>
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-1 sm:col-span-1 sm:flex-col sm:justify-center sm:gap-2">
-                                {(() => {
-                                    const buffalo = getEffectiveRate(currentHouse, 'buffalo')
-                                    const cow = getEffectiveRate(currentHouse, 'cow')
 
-                                    return (
-                                        <>
-                                        {buffalo.rate !== 0 &&
-                                            <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                                <span className="sm:hidden">Buf ₹{buffalo.rate}/L</span>
-                                                <span className="hidden sm:inline">Buffalo ₹{buffalo.rate}/L</span>
-                                            </Badge>
-                                        }
-                                        {cow.rate !== 0 && 
-                                            <Badge className="flex-1 justify-center py-0.5 text-[10px] sm:w-full sm:py-1 sm:text-[11px]">
-                                                <span className="sm:hidden">Cow ₹{cow.rate}/L</span>
-                                                <span className="hidden sm:inline">Cow ₹{cow.rate}/L</span>
-                                            </Badge>
-                                        }
-                                        </>
-                                    )
-                                })()}
-                            </div>
                         </div>
+                    </div>
+                    <div className="flex gap-1">
+                        {(() => {
+                            const buffalo = getEffectiveRate(currentHouse, 'buffalo')
+                            const cow = getEffectiveRate(currentHouse, 'cow')
+
+                            return (
+                                <>
+                                    {buffalo.rate !== 0 &&
+                                        <Badge className="flex-1 justify-center w-full py-1 text-[11px]">
+                                            <span className="sm:hidden">Buf ₹{buffalo.rate}/L</span>
+                                            <span className="hidden sm:inline">Buffalo ₹{buffalo.rate}/L</span>
+                                        </Badge>
+                                    }
+                                    {cow.rate !== 0 &&
+                                        <Badge className="flex-1 justify-center w-full py-1 text-[11px]">
+                                            <span className="sm:hidden">Cow ₹{cow.rate}/L</span>
+                                            <span className="hidden sm:inline">Cow ₹{cow.rate}/L</span>
+                                        </Badge>
+                                    }
+                                </>
+                            )
+                        })()}
                     </div>
 
                     {/* FIRST DELIVERY FORM */}
@@ -2809,8 +2808,7 @@ export default function DeliveryPage() {
                                         <TableRow>
                                             <TableHead className="w-22.5 sm:w-30">Product</TableHead>
                                             <TableHead className="w-24 sm:w-27.5">Qty (L)</TableHead>
-                                            <TableHead className="w-18.5 sm:w-22.5">Rate</TableHead>
-                                            <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>
+                                            {showAmountField && <TableHead className="hidden sm:table-cell sm:w-25">Amount</TableHead>}
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -2824,7 +2822,7 @@ export default function DeliveryPage() {
 
                                             return (
                                                 <TableRow key={idx} className="border-0">
-                                                    <TableCell colSpan={4} className="p-0">
+                                                    <TableCell colSpan={showAmountField ? 3 : 2} className="p-0">
                                                         <div
                                                             className="relative overflow-hidden rounded-xl border border-border/70 bg-card"
                                                             style={{ touchAction: 'pan-y' }}
@@ -2919,26 +2917,24 @@ export default function DeliveryPage() {
                                                                         />
                                                                     </div>
 
-                                                                    <div className="flex items-center text-sm font-medium">
-                                                                        ₹{rate}/L
-                                                                    </div>
-
-                                                                    <div>
-                                                                        <Input
-                                                                            type="number"
-                                                                            placeholder="Amount"
-                                                                            value={item.amount || (qty > 0 ? String(amount) : '')}
-                                                                            onChange={(e) =>
-                                                                                updateDeliveryItem(idx, 'amount', e.target.value)
-                                                                            }
-                                                                            className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                            disabled={isCompleted && !canModify}
-                                                                        />
-                                                                    </div>
+                                                                    {showAmountField && (
+                                                                        <div>
+                                                                            <Input
+                                                                                type="number"
+                                                                                placeholder="Amount"
+                                                                                value={item.amount || (qty > 0 ? String(amount) : '')}
+                                                                                onChange={(e) =>
+                                                                                    updateDeliveryItem(idx, 'amount', e.target.value)
+                                                                                }
+                                                                                className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                                disabled={isCompleted && !canModify}
+                                                                            />
+                                                                        </div>
+                                                                    )}
                                                                 </div>
 
                                                                 {/* Desktop: single-row layout */}
-                                                                <div className="hidden sm:grid sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(4.75rem,0.7fr)_minmax(6rem,0.9fr)] sm:gap-3 sm:p-3">
+                                                                <div className={`hidden sm:grid sm:gap-3 sm:p-3 ${showAmountField ? 'sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)_minmax(6rem,0.9fr)]' : 'sm:grid-cols-[minmax(0,1.25fr)_minmax(5.5rem,0.9fr)]'}`}>
                                                                     <div>
                                                                         <Select
                                                                             value={productRateOptions.find(o => o.value.toLowerCase() === item.milkType.toLowerCase())?.value ?? item.milkType}
@@ -2988,22 +2984,20 @@ export default function DeliveryPage() {
                                                                         />
                                                                     </div>
 
-                                                                    <div className="flex items-center text-sm font-medium">
-                                                                        ₹{rate}/L
-                                                                    </div>
-
-                                                                    <div className="sm:min-w-24">
-                                                                        <Input
-                                                                            type="number"
-                                                                            placeholder="0"
-                                                                            value={item.amount || (qty > 0 ? String(amount) : '')}
-                                                                            onChange={(e) =>
-                                                                                updateDeliveryItem(idx, 'amount', e.target.value)
-                                                                            }
-                                                                            className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                            disabled={isCompleted && !canModify}
-                                                                        />
-                                                                    </div>
+                                                                    {showAmountField && (
+                                                                        <div className="sm:min-w-24">
+                                                                            <Input
+                                                                                type="number"
+                                                                                placeholder="0"
+                                                                                value={item.amount || (qty > 0 ? String(amount) : '')}
+                                                                                onChange={(e) =>
+                                                                                    updateDeliveryItem(idx, 'amount', e.target.value)
+                                                                                }
+                                                                                className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
+                                                                                disabled={isCompleted && !canModify}
+                                                                            />
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -3174,6 +3168,34 @@ export default function DeliveryPage() {
                     <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction onClick={confirmClearToday} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog
+                open={swipeDeleteConfirmIndex !== null}
+                onOpenChange={(open) => { if (!open) setSwipeDeleteConfirmIndex(null) }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Item?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete this delivery item? This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={async () => {
+                                if (swipeDeleteConfirmIndex !== null) {
+                                    await removeDeliveryItem(swipeDeleteConfirmIndex)
+                                }
+                                setSwipeDeleteConfirmIndex(null)
+                            }}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
                             Delete
                         </AlertDialogAction>
                     </AlertDialogFooter>
