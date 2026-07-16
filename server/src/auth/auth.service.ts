@@ -32,9 +32,7 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto & { dairyId: number }) {
-    const emailExists = await this.usersService.findByEmail(dto.email);
-    if (emailExists) throw new ConflictException('Email already in use');
-
+    
     const usernameExists = dto.dairyId
       ? await this.usersService.findByUsernameInDairy(dto.username, dto.dairyId)
       : await this.usersService.findByUsername(dto.username);
