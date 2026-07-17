@@ -1,4 +1,4 @@
-import { getAuthHeader, getSessionAuth } from './auth';
+import { getAuthHeader, getSessionAuth, getDairyIdFromCookie } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
 import { fetchApi } from './api-base';
@@ -1601,7 +1601,8 @@ export const usersApi = {
       await invalidateCache('/users');
     }
     const auth = getSessionAuth();
-    const user = await apiPost<User>('/auth/register', { ...data, dairyId: auth?.dairyId });
+    const dairyId = auth?.dairyId ?? getDairyIdFromCookie() ?? undefined;
+    const user = await apiPost<User>('/auth/register', { ...data, dairyId });
     if (data.isVerified && user?.uuid) {
       await usersApi.verify(user.uuid, true);
     }
