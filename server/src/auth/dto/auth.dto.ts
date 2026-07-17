@@ -27,8 +27,8 @@ export class RegisterDto {
   role?: Role;
 
   @IsNumber()
-  @IsNotEmpty()
-  dairyId: number;
+  @IsOptional()
+  dairyId?: number;
 }
 
 export class LoginDto {

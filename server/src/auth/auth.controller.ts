@@ -8,7 +8,9 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { RegisterDto, DairyLoginDto } from './dto/auth.dto';
 import { LocalAuthGuard, JwtAuthGuard, AdminGuard } from './guards/auth.guard';
@@ -26,16 +28,36 @@ interface AuthenticatedRequest {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private jwtService: JwtService,
+  ) {}
 
-/**
+  /**
     * POST /auth/register
     * Body: { username, email, password, role?, dairyId }
     * Creates a new user within a dairy (public endpoint for joining existing dairy).
+    * If dairyId is not in the body, tries to extract it from the JWT (admin call).
     */
   @Post('register')
-  async register(@Body() dto: RegisterDto) {
-    return this.authService.register({ ...dto, dairyId: dto.dairyId! });
+  async register(@Body() dto: RegisterDto, @Request() req: any) {
+    let dairyId = dto.dairyId;
+    if (!dairyId) {
+      const authHeader = req.headers?.authorization as string | undefined;
+      if (authHeader) {
+        try {
+          const token = authHeader.replace('Bearer ', '');
+          const payload = this.jwtService.verify(token);
+          dairyId = payload.dairyId;
+        } catch {
+          // invalid token — continue to error below
+        }
+      }
+    }
+    if (!dairyId) {
+      throw new BadRequestException('dairyId is required to create a user');
+    }
+    return this.authService.register({ ...dto, dairyId });
   }
 
   /**
