@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Download, Edit3, Plus, Search, Tag, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, Edit3, Eye, Plus, Search, Tag, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,6 +63,12 @@ export default function RatesPage() {
   const [editId, setEditId] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ProductRate | null>(null)
   const [form, setForm] = useState<RateFormState>(emptyForm)
+
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false)
+  const [pdfItems, setPdfItems] = useState<Array<{ id: number; name: string; unit: string; selected: boolean; displayRate: string }>>([])
+  const [pdfFontSize, setPdfFontSize] = useState('20')
+  const [pdfPreviewDataUrl, setPdfPreviewDataUrl] = useState<string | null>(null)
+  const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false)
 
   const loadRates = useCallback(async () => {
     try {
@@ -209,29 +216,45 @@ export default function RatesPage() {
 
   const canReorder = !search.trim()
 
-  function handleExportPdf() {
+  function openPdfDialog() {
+    setPdfItems(
+      rates.filter((r) => r.isActive).map((rate) => ({
+        id: rate.id,
+        name: rate.name,
+        unit: rate.unit,
+        selected: true,
+        displayRate: rate.rate,
+      })),
+    )
+    setPdfFontSize('20')
+    setPdfPreviewDataUrl(null)
+    setPdfDialogOpen(true)
+  }
+
+  function generatePdfDoc(selectedItems: Array<{ id: number; name: string; unit: string; selected: boolean; displayRate: string }>, fontSize: string) {
     const doc = new jsPDF()
     const pageWidth = doc.internal.pageSize.getWidth()
+    const fs = Math.max(8, Math.min(40, Number(fontSize) || 20))
 
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(20)
+    doc.setFontSize(fs)
     doc.text('Product Rate List', pageWidth / 2, 20, { align: 'center' })
 
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(12)
-    doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, 28, { align: 'center' })
+    doc.setFontSize(Math.max(6, fs * 0.6))
+    doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, 20 + fs * 0.5, { align: 'center' })
 
-    const rows = rates.filter((r) => r.isActive).map((rate) => [
+    const rows = selectedItems.filter((r) => r.selected).map((rate) => [
       rate.name,
       '-',
-      `${Number(rate.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`,
+      `${Number(rate.displayRate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`,
     ])
 
     autoTable(doc, {
-      startY: 35,
+      startY: 20 + fs * 0.5 + 6,
       head: [['Product', '', 'Rate']],
       body: rows,
-      styles: { fontSize: 20, cellPadding: 4, fontStyle: 'bold' },
+      styles: { fontSize: fs, cellPadding: 4, fontStyle: 'bold' },
       headStyles: { fillColor: false, textColor: [0, 0, 0], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: false },
       columnStyles: {
@@ -242,7 +265,32 @@ export default function RatesPage() {
       margin: { left: 30, right: 30 },
     })
 
+    return doc
+  }
+
+  function updatePdfPreview() {
+    setPdfPreviewLoading(true)
+    try {
+      const doc = generatePdfDoc(pdfItems, pdfFontSize)
+      setPdfPreviewDataUrl(doc.output('datauristring'))
+    } catch {
+      setPdfPreviewDataUrl(null)
+    } finally {
+      setPdfPreviewLoading(false)
+    }
+  }
+
+  function handleExportPdf() {
+    const doc = generatePdfDoc(pdfItems, pdfFontSize)
     doc.save('product-rates.pdf')
+  }
+
+  function togglePdfItem(id: number) {
+    setPdfItems((prev) => prev.map((item) => (item.id === id ? { ...item, selected: !item.selected } : item)))
+  }
+
+  function updatePdfItemRate(id: number, value: string) {
+    setPdfItems((prev) => prev.map((item) => (item.id === id ? { ...item, displayRate: value } : item)))
   }
 
   return (
@@ -258,7 +306,7 @@ export default function RatesPage() {
           </p>
         </div>
         <div className="flex gap-2 self-start sm:self-auto">
-          <Button variant="outline" onClick={handleExportPdf} className="gap-2">
+          <Button variant="outline" onClick={openPdfDialog} className="gap-2">
             <Download className="h-4 w-4" /> PDF
           </Button>
           <Button onClick={openCreate} className="gap-2">
@@ -385,6 +433,114 @@ export default function RatesPage() {
           )}
         </div>
       </div>
+
+      <Dialog open={pdfDialogOpen} onOpenChange={(open) => { if (!open) { setPdfDialogOpen(false); setPdfPreviewDataUrl(null) } }}>
+        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Export Rate List as PDF</DialogTitle>
+            <DialogDescription>
+              Select items, adjust rates, and preview before downloading.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Label className="shrink-0 text-sm">Font Size</Label>
+              <Select value={pdfFontSize} onValueChange={setPdfFontSize}>
+                <SelectTrigger className="w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="14">14</SelectItem>
+                  <SelectItem value="16">16</SelectItem>
+                  <SelectItem value="18">18</SelectItem>
+                  <SelectItem value="20">20</SelectItem>
+                  <SelectItem value="22">22</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                  <SelectItem value="28">28</SelectItem>
+                  <SelectItem value="32">32</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-xl border border-border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40">
+                    <th className="w-10 px-3 py-2 text-left"></th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Item</th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Rate (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pdfItems.map((item) => (
+                    <tr key={item.id} className="border-b border-border/60 last:border-b-0">
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-border"
+                          checked={item.selected}
+                          onChange={() => togglePdfItem(item.id)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 font-medium">{item.name}</td>
+                      <td className="px-3 py-2">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.displayRate}
+                          onChange={(e) => updatePdfItemRate(item.id, e.target.value)}
+                          className="h-8 w-28"
+                          disabled={!item.selected}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={updatePdfPreview} className="gap-1.5">
+                <Eye className="h-4 w-4" /> {pdfPreviewDataUrl ? 'Refresh Preview' : 'Generate Preview'}
+              </Button>
+              {pdfPreviewDataUrl && (
+                <Button variant="outline" size="sm" onClick={() => setPdfPreviewDataUrl(null)} className="gap-1.5">
+                  <X className="h-4 w-4" /> Close Preview
+                </Button>
+              )}
+            </div>
+
+            {pdfPreviewLoading && (
+              <div className="flex items-center justify-center py-8">
+                <p className="text-sm text-muted-foreground">Generating preview...</p>
+              </div>
+            )}
+
+            {pdfPreviewDataUrl && !pdfPreviewLoading && (
+              <div className="rounded-xl border border-border overflow-hidden bg-white">
+                <iframe
+                  src={pdfPreviewDataUrl}
+                  className="w-full"
+                  style={{ height: '420px' }}
+                  title="PDF Preview"
+                />
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setPdfDialogOpen(false); setPdfPreviewDataUrl(null) }}>
+              Cancel
+            </Button>
+            <Button onClick={handleExportPdf} className="gap-1.5">
+              <Download className="h-4 w-4" /> Download PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
