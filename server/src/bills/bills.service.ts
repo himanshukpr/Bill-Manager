@@ -32,9 +32,9 @@ export class BillsService {
     return (
       bills.find((bill) => {
         const billStart =
-          bill.fromDate ?? new Date(Date.UTC(bill.year, bill.month - 1, 1, 0, 0, 0, 0));
+          bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
         const billEnd =
-          bill.toDate ?? new Date(Date.UTC(bill.year, bill.month, 0, 23, 59, 59, 999));
+          bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
 
         return billStart <= periodEnd && billEnd >= periodStart;
       }) ?? null
@@ -62,9 +62,9 @@ export class BillsService {
 
     for (const bill of bills) {
       const billStart =
-        bill.fromDate ?? new Date(Date.UTC(bill.year, bill.month - 1, 1, 0, 0, 0, 0));
+        bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
       const billEnd =
-        bill.toDate ?? new Date(Date.UTC(bill.year, bill.month, 0, 23, 59, 59, 999));
+        bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
 
       if (billStart <= periodEnd && billEnd >= periodStart) {
         if (!latestEnd || billEnd > latestEnd) {
@@ -149,8 +149,8 @@ export class BillsService {
       throw new BadRequestException('Invalid billing period date');
     }
 
-    const periodStart = new Date(Date.UTC(fromParts.y, fromParts.mo, fromParts.d, 0, 0, 0, 0));
-    const periodEnd = new Date(Date.UTC(toParts.y, toParts.mo, toParts.d, 23, 59, 59, 999));
+    const periodStart = new Date(fromParts.y, fromParts.mo, fromParts.d, 0, 0, 0, 0);
+    const periodEnd = new Date(toParts.y, toParts.mo, toParts.d, 23, 59, 59, 999);
 
     if (periodStart > periodEnd) {
       throw new BadRequestException(
@@ -158,7 +158,7 @@ export class BillsService {
       );
     }
 
-    const toDateStorage = new Date(Date.UTC(toParts.y, toParts.mo, toParts.d, 0, 0, 0, 0));
+    const toDateStorage = new Date(toParts.y, toParts.mo, toParts.d, 0, 0, 0, 0);
 
     return {
       periodStart,
@@ -190,14 +190,14 @@ export class BillsService {
       }
 
       const lastEnd = new Date(lastBill.generatedDate);
-      periodStart = new Date(Date.UTC(lastEnd.getUTCFullYear(), lastEnd.getUTCMonth(), lastEnd.getUTCDate() + 1, 0, 0, 0, 0));
+      periodStart = new Date(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate() + 1, 0, 0, 0, 0);
 
       const toInput = dto.toDate ?? new Date().toISOString();
       const toDateMatch = toInput.match(/^(\d{4})-(\d{2})-(\d{2})/);
       const tp = toDateMatch
         ? { y: parseInt(toDateMatch[1]), mo: parseInt(toDateMatch[2]) - 1, d: parseInt(toDateMatch[3]) }
-        : { y: new Date().getUTCFullYear(), mo: new Date().getUTCMonth(), d: new Date().getUTCDate() };
-      periodEnd = new Date(Date.UTC(tp.y, tp.mo, tp.d, 23, 59, 59, 999));
+        : { y: new Date().getFullYear(), mo: new Date().getMonth(), d: new Date().getDate() };
+      periodEnd = new Date(tp.y, tp.mo, tp.d, 23, 59, 59, 999);
 
       if (periodStart > periodEnd) {
         throw new BadRequestException(
@@ -205,7 +205,7 @@ export class BillsService {
         );
       }
 
-      toDateStorage = new Date(Date.UTC(tp.y, tp.mo, tp.d, 0, 0, 0, 0));
+      toDateStorage = new Date(tp.y, tp.mo, tp.d, 0, 0, 0, 0);
       month = tp.mo + 1;
       year = tp.y;
     } else {
@@ -224,8 +224,8 @@ export class BillsService {
       dairyId,
     );
 
-    const adjustedMonth = toDateStorage.getUTCMonth() + 1;
-    const adjustedYear = toDateStorage.getUTCFullYear();
+    const adjustedMonth = toDateStorage.getMonth() + 1;
+    const adjustedYear = toDateStorage.getFullYear();
 
     const closureState = await this.getPeriodClosureState(
       dto.houseId,
@@ -631,10 +631,10 @@ export class BillsService {
       alreadyClosedMessage: closureState.alreadyClosedMessage,
       isDurationAlreadyCreated: false,
       durationAlreadyCreatedMessage: null,
-      adjustedFromDate: adjustedStart.toISOString().split('T')[0],
-      adjustedToDate: periodEnd.toISOString().split('T')[0],
+      adjustedFromDate: `${adjustedStart.getFullYear()}-${String(adjustedStart.getMonth() + 1).padStart(2, '0')}-${String(adjustedStart.getDate()).padStart(2, '0')}`,
+      adjustedToDate: `${periodEnd.getFullYear()}-${String(periodEnd.getMonth() + 1).padStart(2, '0')}-${String(periodEnd.getDate()).padStart(2, '0')}`,
       skippedToDate: existingBillToDate
-        ? existingBillToDate.toISOString().split('T')[0]
+        ? `${existingBillToDate.getFullYear()}-${String(existingBillToDate.getMonth() + 1).padStart(2, '0')}-${String(existingBillToDate.getDate()).padStart(2, '0')}`
         : null,
     };
   }
@@ -642,9 +642,9 @@ export class BillsService {
   async remove(id: number, dairyId: number) {
     const bill = await this.findOne(id, dairyId);
 
-    const periodStart = new Date(Date.UTC(bill.year, bill.month - 1, 1, 0, 0, 0, 0));
+    const periodStart = new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
     const genDate = new Date(bill.generatedDate);
-    const periodEnd = new Date(Date.UTC(genDate.getUTCFullYear(), genDate.getUTCMonth(), genDate.getUTCDate(), 23, 59, 59, 999));
+    const periodEnd = new Date(genDate.getFullYear(), genDate.getMonth(), genDate.getDate(), 23, 59, 59, 999);
     const billTotal = Number(bill.totalAmount ?? 0);
 
     return this.prisma.$transaction(async (tx) => {

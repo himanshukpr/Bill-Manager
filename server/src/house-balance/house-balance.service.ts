@@ -295,10 +295,10 @@ export class HouseBalanceService {
     const tp = parseDateParts(toDate);
     if (!fp || !tp) throw new BadRequestException('Invalid date format');
 
-    const periodStart = new Date(Date.UTC(fp.y, fp.mo, fp.d, 0, 0, 0, 0));
-    const periodEnd = new Date(Date.UTC(tp.y, tp.mo, tp.d, 23, 59, 59, 999));
+    const periodStart = new Date(fp.y, fp.mo, fp.d, 0, 0, 0, 0);
+    const periodEnd = new Date(tp.y, tp.mo, tp.d, 23, 59, 59, 999);
 
-    const toDateStorage = new Date(Date.UTC(tp.y, tp.mo, tp.d, 0, 0, 0, 0));
+    const toDateStorage = new Date(tp.y, tp.mo, tp.d, 0, 0, 0, 0);
     const month = tp.mo + 1;
     const year = tp.y;
 

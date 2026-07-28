@@ -85,9 +85,9 @@ function cleanItemName(name: string): string {
 
 function parseDateOnly(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date()
-  const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!match) return new Date(dateStr)
-  return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
+  const d = new Date(dateStr)
+  if (!Number.isFinite(d.getTime())) return new Date()
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
 function normalizeRateType(value: unknown): string {
@@ -630,12 +630,12 @@ export default function ReceiptsPage() {
 
         // Fetch delivery logs for the house and filter by date range
         const allLogs = await deliveryLogsApi.list({ houseId: parseInt(formHouseId) })
-        const fromDateObj = new Date(formFromDate)
-        const toDateObj = new Date(formToDate)
+        const fromDateObj = parseDateOnly(formFromDate)
+        const toDateObj = parseDateOnly(formToDate)
         toDateObj.setHours(23, 59, 59, 999) // Include entire end date
 
         const filteredLogs = allLogs.filter(log => {
-          const logDate = new Date(log.deliveredAt || log.createdAt)
+          const logDate = parseDateOnly(log.deliveredAt || log.createdAt)
           return logDate >= fromDateObj && logDate <= toDateObj
         })
 
