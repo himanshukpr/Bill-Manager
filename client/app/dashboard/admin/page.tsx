@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
-import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator } from 'lucide-react'
-import { deliveryLogsApi, housesApi, balanceApi, type DeliveryLog, type DeliveryLogItem, type House } from '@/lib/api'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator, MessageCircle } from 'lucide-react'
+import { deliveryLogsApi, housesApi, type DeliveryLog, type DeliveryLogItem, type House } from '@/lib/api'
 import Link from 'next/link'
 import {
   Dialog,
@@ -10,9 +10,17 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select, SelectContent, SelectItem,
+  SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { toast } from 'sonner'
 
 function getLocalDateKey(date: Date = new Date()): string {
   const year = date.getFullYear()
@@ -27,6 +35,30 @@ function isSameLocalDate(left: Date, right: Date): boolean {
     left.getMonth() === right.getMonth() &&
     left.getDate() === right.getDate()
   )
+}
+
+function normalizeMilkType(value: unknown): string {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  const stripped = lower.replace(/ milk$/, '').trim()
+  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+  return lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+function cleanItemName(name: string): string {
+  const text = name.trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (lower === 'milk') return ''
+  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
+  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
+  const stripped = lower.replace(/ milk$/, '').trim()
+  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+  return lower.charAt(0).toUpperCase() + lower.slice(1)
 }
 
 type ProductSummary = {
@@ -48,22 +80,92 @@ export default function AdminDashboardPage() {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryDate, setSummaryDate] = useState<Date>(() => new Date())
   const [shiftSupplierSummaries, setShiftSupplierSummaries] = useState<ShiftSupplierSummary[]>([])
+  const [houses, setHouses] = useState<House[]>([])
+  const [customBillOpen, setCustomBillOpen] = useState(false)
+  const [customBillHouseId, setCustomBillHouseId] = useState<string>('')
+  const [customBillFromDate, setCustomBillFromDate] = useState<string>('')
+  const [customBillToDate, setCustomBillToDate] = useState<string>('')
+  const [customBillLoading, setCustomBillLoading] = useState(false)
+  const [customBillSummary, setCustomBillSummary] = useState<{ name: string; qty: number; rate: number; amount: number }[] | null>(null)
+  const [whatsappOpen, setWhatsappOpen] = useState(false)
+  const [whatsappMsg, setWhatsappMsg] = useState('')
 
   useEffect(() => {
-    async function load() {
-      try {
-        const logs = await deliveryLogsApi.list()
-        const today = new Date()
-        const filteredLogs = (logs as DeliveryLog[]).filter((log) => {
-          const logDate = new Date(log.createdAt)
-          return isSameLocalDate(logDate, today)
-        })
-        setTodayLogs(filteredLogs.slice(0, 5))
-      } catch { /* silently fail on dashboard */ }
-      finally { setLoading(false) }
-    }
     load()
   }, [])
+
+  const load = useCallback(async () => {
+    try {
+      const [logsRes, housesRes] = await Promise.all([
+        deliveryLogsApi.list(),
+        housesApi.list(),
+      ])
+      const logs = logsRes as DeliveryLog[]
+      const today = new Date()
+      const filteredLogs = logs.filter((log) => {
+        const logDate = new Date(log.createdAt)
+        return isSameLocalDate(logDate, today)
+      })
+      setTodayLogs(filteredLogs.slice(0, 5))
+      setHouses(housesRes as House[])
+    } catch { /* silently fail on dashboard */ }
+    finally { setLoading(false) }
+  }, [])
+
+  const calculateSummary = useCallback(async () => {
+    if (!customBillHouseId || !customBillFromDate || !customBillToDate) return
+    setCustomBillLoading(true)
+    setCustomBillSummary(null)
+    try {
+      const allLogsRes = await deliveryLogsApi.list({ houseId: parseInt(customBillHouseId) }, true)
+      const allLogs = allLogsRes as DeliveryLog[]
+      const fromDateObj = new Date(parseInt(customBillFromDate.slice(0, 4)), parseInt(customBillFromDate.slice(5, 7)) - 1, parseInt(customBillFromDate.slice(8, 10)))
+      const toDateObj = new Date(parseInt(customBillToDate.slice(0, 4)), parseInt(customBillToDate.slice(5, 7)) - 1, parseInt(customBillToDate.slice(8, 10)), 23, 59, 59, 999)
+      const logsInRange = allLogs.filter(log => {
+        const d = new Date(log.deliveredAt)
+        return d >= fromDateObj && d <= toDateObj
+      })
+      if (logsInRange.length === 0) {
+        setCustomBillSummary([])
+        return
+      }
+      const itemMap = new Map<string, { name: string; qty: number; rate: number; amount: number }>()
+      for (const log of logsInRange) {
+        for (const item of log.items ?? []) {
+          const milkType = String(item.milkType ?? item.name ?? 'milk')
+          const qty = Number(item.qty ?? 0)
+          const rate = Number(item.rate ?? 0)
+          const amount = Number(item.amount ?? qty * rate)
+          if (qty <= 0) continue
+          const normalizedType = milkType.toLowerCase()
+          let displayName = normalizedType
+          if (normalizedType === 'cow milk' || normalizedType.startsWith('cow milk ')) displayName = 'Cow Milk'
+          else if (normalizedType === 'buffalo milk' || normalizedType.startsWith('buffalo milk ')) displayName = 'Buffalo Milk'
+          else displayName = normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1)
+          const key = `${displayName}:${rate}`
+          const existing = itemMap.get(key)
+          if (!existing) {
+            itemMap.set(key, { name: displayName, qty, rate, amount })
+          } else {
+            existing.qty += qty
+            existing.amount += amount
+          }
+        }
+      }
+      setCustomBillSummary(Array.from(itemMap.values()))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to calculate')
+    } finally {
+      setCustomBillLoading(false)
+    }
+  }, [customBillHouseId, customBillFromDate, customBillToDate])
+
+  useEffect(() => {
+    if (customBillOpen && customBillHouseId && customBillFromDate && customBillToDate) {
+      const timer = setTimeout(calculateSummary, 400)
+      return () => clearTimeout(timer)
+    }
+  }, [customBillOpen, customBillHouseId, customBillFromDate, customBillToDate, calculateSummary])
 
   const loadSummary = async (date: Date) => {
     setSummaryLoading(true)
@@ -242,46 +344,46 @@ export default function AdminDashboardPage() {
             </Button>
           </div>
         </div>
-{loading ? (
-            <div className="px-5 py-4 text-sm text-muted-foreground">Loading...</div>
-          ) : todayLogs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Truck className="h-10 w-10 mb-2 opacity-30" />
-              <p className="text-sm">No deliveries recorded today</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="px-5 py-3 text-left font-semibold text-muted-foreground">House</th>
-                    <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Shift</th>
-                    <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Delivery Date</th>
-                    <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Items</th>
-                    <th className="hidden sm:table-cell px-5 py-3 text-left font-semibold text-muted-foreground">Total</th>
+        {loading ? (
+          <div className="px-5 py-4 text-sm text-muted-foreground">Loading...</div>
+        ) : todayLogs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <Truck className="h-10 w-10 mb-2 opacity-30" />
+            <p className="text-sm">No deliveries recorded today</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/30">
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">House</th>
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Shift</th>
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Delivery Date</th>
+                  <th className="px-5 py-3 text-left font-semibold text-muted-foreground">Items</th>
+                  <th className="hidden sm:table-cell px-5 py-3 text-left font-semibold text-muted-foreground">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {todayLogs.map((log, i) => (
+                  <tr key={log.id}
+                    className={`border-b border-border/60 hover:bg-muted/20 transition-colors ${i === todayLogs.length - 1 ? 'border-b-0' : ''}`}>
+                    <td className="px-5 py-3 font-semibold">{log.house?.houseNo}</td>
+                    <td className="px-5 py-3 text-muted-foreground capitalize">{log.shift}</td>
+                    <td className="px-5 py-3 text-muted-foreground">
+                      {log.deliveredAt ? new Date(log.deliveredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}
+                    </td>
+                    <td className="px-5 py-3 text-muted-foreground">
+                      {log.items?.map((item: DeliveryLogItem) => item.milkType).join(', ')}
+                    </td>
+                    <td className="hidden sm:table-cell px-5 py-3 font-bold text-primary">
+                      ₹{Number(log.totalAmount).toLocaleString('en-IN')}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {todayLogs.map((log, i) => (
-                    <tr key={log.id}
-                      className={`border-b border-border/60 hover:bg-muted/20 transition-colors ${i === todayLogs.length - 1 ? 'border-b-0' : ''}`}>
-                      <td className="px-5 py-3 font-semibold">{log.house?.houseNo}</td>
-                      <td className="px-5 py-3 text-muted-foreground capitalize">{log.shift}</td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {log.deliveredAt ? new Date(log.deliveredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {log.items?.map((item: DeliveryLogItem) => item.milkType).join(', ')}
-                      </td>
-                      <td className="hidden sm:table-cell px-5 py-3 font-bold text-primary">
-                        ₹{Number(log.totalAmount).toLocaleString('en-IN')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
@@ -346,6 +448,135 @@ export default function AdminDashboardPage() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delivery Summary */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-bold">Delivery Summary</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Select a house and date range to see a summary of deliveries.</p>
+          </div>
+          <Calculator className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-1">
+              <Label htmlFor="cb-house">House</Label>
+              <Select value={customBillHouseId} onValueChange={setCustomBillHouseId}>
+                <SelectTrigger id="cb-house">
+                  <SelectValue placeholder="Select house" />
+                </SelectTrigger>
+                <SelectContent>
+                  {houses.map(h => (
+                    <SelectItem key={h.id} value={String(h.id)}>{h.houseNo} — {h.area ?? ''}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="cb-from">From Date</Label>
+              <Input id="cb-from" type="date" value={customBillFromDate} onChange={e => setCustomBillFromDate(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="cb-to">To Date</Label>
+              <Input id="cb-to" type="date" value={customBillToDate} onChange={e => setCustomBillToDate(e.target.value)} className="h-9 text-sm" />
+            </div>
+          </div>
+          {customBillSummary !== null && (
+            <div className="rounded-lg border border-border bg-muted/10 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="px-4 py-2 text-left font-semibold text-muted-foreground">Product</th>
+                    <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Qty (L)</th>
+                    <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Rate (₹)</th>
+                    <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Amount (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {customBillSummary.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground text-sm">No delivery logs found for this date range</td>
+                    </tr>
+                  ) : (
+                    <>
+                      {customBillSummary.map((item, idx) => (
+                        <tr key={idx} className="border-b border-border/50 last:border-0">
+                          <td className="px-4 py-2 font-medium">{item.name}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{item.qty.toLocaleString('en-IN')}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">₹{Number(item.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                          <td className="px-4 py-2 text-right font-semibold tabular-nums">₹{Number(item.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                      <tr className="bg-muted/20">
+                        <td className="px-4 py-2 font-semibold">Total</td>
+                        <td className="px-4 py-2 text-right font-bold tabular-nums">{customBillSummary.reduce((sum, i) => sum + i.qty, 0).toLocaleString('en-IN')}L</td>
+                        <td className="px-4 py-2 text-right text-muted-foreground">—</td>
+                        <td className="px-4 py-2 text-right font-bold tabular-nums">₹{customBillSummary.reduce((sum, i) => sum + i.amount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    </>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {customBillSummary !== null && customBillSummary.length > 0 && houses.find(h => h.id === parseInt(customBillHouseId))?.phoneNo && (
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => {
+                const house = houses.find(h => h.id === parseInt(customBillHouseId))
+const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-IN')}L @ ₹${Number(i.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })} = ₹${Number(i.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`).join('\n')
+                  const totalQty = customBillSummary.reduce((sum, i) => sum + i.qty, 0)
+                  const totalAmount = customBillSummary.reduce((sum, i) => sum + i.amount, 0)
+                  setWhatsappMsg(`Delivery Summary for House ${house?.houseNo}:\n${lines}\n\nTotal: ${totalQty.toLocaleString('en-IN')}L / ₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`)
+                setWhatsappOpen(true)
+              }}>
+                <MessageCircle className="h-4 w-4 mr-1" /> WhatsApp
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* WhatsApp Send Dialog */}
+      <Dialog open={whatsappOpen} onOpenChange={setWhatsappOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send WhatsApp Message</DialogTitle>
+            <DialogDescription>
+              Message will be sent to the selected house's phone number.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Phone Number</Label>
+              <Input value={houses.find(h => h.id === parseInt(customBillHouseId))?.phoneNo ?? ''} disabled />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="whatsapp-msg">Message</Label>
+              <Textarea
+                id="whatsapp-msg"
+                value={whatsappMsg}
+                onChange={e => setWhatsappMsg(e.target.value)}
+                rows={4}
+                placeholder="Type your message here..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWhatsappOpen(false)}>Cancel</Button>
+            <Button onClick={() => {
+              const house = houses.find(h => h.id === parseInt(customBillHouseId))
+              if (!house?.phoneNo) return
+              const phone = house.phoneNo.replace(/\D/g, '')
+              const text = encodeURIComponent(whatsappMsg)
+              window.open(`https://wa.me/${phone}?text=${text}`, '_blank')
+              setWhatsappOpen(false)
+            }} className="gap-2">
+              <MessageCircle className="h-4 w-4" /> Send via WhatsApp
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -94,6 +94,24 @@ None.
 - Test stale-while-revalidate caching for delivery logs
 - Verify PDF page numbers render correctly
 
+### 26. Delivery Summary feature (`dashboard/admin/page.tsx`, `dashboard/admin/houses/page.tsx`)
+- Replaced "Calculate Custom Bill" "Bill Items" interface with a pure "Delivery Summary" view
+- Shows qty, rate, and amount from delivery log items per product (bill-style table with Product | Qty | Rate | Amount columns)
+- Uses ALL delivery logs in date range (not just unbilled) — just a summary of what was delivered
+- Both admin dashboard and houses admin summary popup have the same summary view
+- Proper total row at bottom showing sum of all amounts
+- **Auto-recalculate**: Summary updates automatically when from/to dates or house selection change (debounced 400ms)
+- **Bill-style display**: Summary rendered as a bordered table (Product | Qty | Rate | Amount) with header, rows, and bold total row
+- **WhatsApp share**: Each summary dialog has a WhatsApp button that opens a compose dialog with pre-filled delivery summary text (including amounts), then opens `https://wa.me/<phone>?text=<message>` to send via the device's WhatsApp
+- **Date comparison fix**: Fixed timezone mismatch in date filtering — uses `new Date(year, monthIdx, day)` for local-date comparison instead of `new Date('YYYY-MM-DD')` which creates UTC midnight, matching how delivery logs are stored (local midnight timestamps)
+
+### 27. Close Period server-side date fix
+- Fixed timezone mismatch: server `resolvePeriod` and `closePeriod` used `Date.UTC()` for date boundaries, but delivery logs were stored with local-date timestamps (client creates `new Date(year, month, day)` which is local midnight, shifted back in UTC for positive-offset timezones like IST)
+- Changed `resolvePeriod` in `bills.service.ts` and `closePeriod` in `house-balance.service.ts` to use local dates (`new Date(y, mo, d)`) instead of UTC dates
+- Fixed all related `Date.UTC()` calls in `buildBillDraft`, `getExistingBillForPeriod`, `getAdjustedPeriodStart`, `remove` methods
+- Fixed `toISOString().split('T')[0]` calls in preview endpoint to use local date formatting instead
+- Now the Close Period period total correctly includes all deliveries within the selected local date range
+
 ## Key Changes Made (Recent)
 
 ### 18. Stale-while-revalidate caching for delivery logs (`delivery-storage.ts`)
