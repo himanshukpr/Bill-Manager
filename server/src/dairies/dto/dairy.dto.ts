@@ -6,7 +6,48 @@ import {
   MinLength,
   IsNumber,
   IsDateString,
+  ValidateNested,
+  IsArray,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class BillItemCategoryPatternDto {
+  @IsString()
+  @IsNotEmpty()
+  pattern: string;
+}
+
+export class BillItemCategoryDto {
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BillItemCategoryPatternDto)
+  @IsOptional()
+  patterns?: BillItemCategoryPatternDto[];
+}
+
+export class UpdateDairySettingsDto {
+  @IsOptional()
+  evaluateByAmount?: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BillItemCategoryDto)
+  @IsOptional()
+  billItemCategories?: BillItemCategoryDto[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  dedicatedItemNames?: string[];
+}
 
 export class CreateDairyDto {
   @IsString()
@@ -43,11 +84,6 @@ export class CreateDairyDto {
   @IsNumber()
   @IsOptional()
   maxHouses?: number;
-}
-
-export class UpdateDairySettingsDto {
-  @IsOptional()
-  evaluateByAmount?: boolean;
 }
 
 export class UpdateDairyDto {

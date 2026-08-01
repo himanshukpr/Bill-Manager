@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
-import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator, MessageCircle } from 'lucide-react'
+import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator, MessageCircle, Settings } from 'lucide-react'
 import { deliveryLogsApi, housesApi, type DeliveryLog, type DeliveryLogItem, type House } from '@/lib/api'
 import Link from 'next/link'
 import {
@@ -44,9 +44,7 @@ function normalizeMilkType(value: unknown): string {
   if (lower === 'milk') return ''
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
-  const stripped = lower.replace(/ milk$/, '').trim()
-  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-  return lower.charAt(0).toUpperCase() + lower.slice(1)
+  return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
 }
 
 function cleanItemName(name: string): string {
@@ -56,9 +54,7 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  const stripped = lower.replace(/ milk$/, '').trim()
-  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-  return lower.charAt(0).toUpperCase() + lower.slice(1)
+  return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
 }
 
 type ProductSummary = {
@@ -251,6 +247,15 @@ export default function AdminDashboardPage() {
       accent: 'from-amber-500/10 to-amber-600/10',
       iconBg: 'bg-amber-500/15',
       iconColor: 'text-amber-600 dark:text-amber-400',
+    },
+    {
+      label: 'Settings',
+      description: 'Configure bill item categories and dairy preferences.',
+      href: '/dashboard/admin/settings',
+      icon: Settings,
+      accent: 'from-violet-500/10 to-violet-600/10',
+      iconBg: 'bg-violet-500/15',
+      iconColor: 'text-violet-600 dark:text-violet-400',
     },
   ]
 
@@ -526,10 +531,10 @@ export default function AdminDashboardPage() {
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => {
                 const house = houses.find(h => h.id === parseInt(customBillHouseId))
-const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-IN')}L @ ₹${Number(i.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })} = ₹${Number(i.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`).join('\n')
-                  const totalQty = customBillSummary.reduce((sum, i) => sum + i.qty, 0)
-                  const totalAmount = customBillSummary.reduce((sum, i) => sum + i.amount, 0)
-                  setWhatsappMsg(`Delivery Summary for House ${house?.houseNo}:\n${lines}\n\nTotal: ${totalQty.toLocaleString('en-IN')}L / ₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`)
+                const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-IN')}L @ ₹${Number(i.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })} = ₹${Number(i.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`).join('\n')
+                const totalQty = customBillSummary.reduce((sum, i) => sum + i.qty, 0)
+                const totalAmount = customBillSummary.reduce((sum, i) => sum + i.amount, 0)
+                setWhatsappMsg(`Delivery Summary for House ${house?.houseNo}:\n${lines}\n\nTotal: ${totalQty.toLocaleString('en-IN')}L / ₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`)
                 setWhatsappOpen(true)
               }}>
                 <MessageCircle className="h-4 w-4 mr-1" /> WhatsApp

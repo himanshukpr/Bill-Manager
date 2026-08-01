@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download, AlertTriangle } from 'lucide-react'
-import { billsApi, deliveryLogsApi, housesApi, balanceApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory } from '@/lib/api'
+import { billsApi, deliveryLogsApi, housesApi, balanceApi, dairiesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory } from '@/lib/api'
 import { getDairySession } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
@@ -35,10 +35,8 @@ const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i)
 const PDF_PAGE_MARGIN = 10
 const PDF_COLUMNS = 2
-const PDF_ROWS = 4
 const PDF_CARD_GAP_X = 4
 const PDF_CARD_GAP_Y = 4
-const PDF_TABLE_ROWS = 4
 const BILLS_PER_PAGE = 25
 
 function formatLocalDate(date: Date): string {
@@ -114,78 +112,85 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  const stripped = lower.replace(/ milk$/, '').trim()
-  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-  return lower.charAt(0).toUpperCase() + lower.slice(1)
+  return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
 }
 
 function parseDateOnly(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date()
   const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!match) return new Date(dateStr)
+if (!match) return new Date(dateStr)
   return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
 }
 
-function billItemProduct(name: string): 'buffalo' | 'cow' | 'other' {
-  const lower = name.toLowerCase().trim()
-  if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ')) return 'buffalo'
-  if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ')) return 'cow'
-  return 'other'
-}
-
-function buildPrintableBillItems(items: BillItem[]): BillItem[] {
-  let buffaloQty = 0, buffaloAmount = 0;
-  let cowQty = 0, cowAmount = 0;
-  let otherAmount = 0;
+function buildPrintableBillItems(items: BillItem[], dedicatedItemNames?: string[]): BillItem[] {
+  const dedicatedSet = new Set((dedicatedItemNames ?? []).map(n => n.trim().toLowerCase()))
+  const dedicatedTotals = new Map<string, { name: string; qty: number; amount: number }>()
+  let otherQty = 0
+  let otherAmount = 0
 
   for (const item of items) {
-    const name = String(item.name ?? '').trim();
-    const qty = Number(item.qty ?? 0);
-    const amount = Number(item.amount ?? 0);
-    if (qty <= 0 && amount <= 0) continue;
+    const name = String(item.name ?? '').trim()
+    const qty = Number(item.qty ?? 0)
+    const amount = Number(item.amount ?? 0)
+    if (qty <= 0 && amount <= 0) continue
 
-    const product = billItemProduct(name);
-    if (product === 'buffalo') {
-      buffaloQty += qty;
-      buffaloAmount += amount;
-    } else if (product === 'cow') {
-      cowQty += qty;
-      cowAmount += amount;
+    const cleanedName = cleanItemName(name)
+    const lower = cleanedName.toLowerCase()
+
+    if (dedicatedSet.size > 0 && dedicatedSet.has(lower)) {
+      const existing = dedicatedTotals.get(lower)
+      if (!existing) {
+        dedicatedTotals.set(lower, { name: cleanedName, qty, amount })
+      } else {
+        existing.qty += qty
+        existing.amount += amount
+      }
     } else {
-      otherAmount += amount;
+      otherQty += qty
+      otherAmount += amount
     }
   }
 
-  const result: BillItem[] = [];
-  if (buffaloQty > 0) result.push({ name: 'Buffalo Milk', qty: buffaloQty, rate: Number((buffaloAmount / buffaloQty).toFixed(2)), amount: buffaloAmount });
-  if (cowQty > 0) result.push({ name: 'Cow Milk', qty: cowQty, rate: Number((cowAmount / cowQty).toFixed(2)), amount: cowAmount });
-  if (otherAmount > 0) result.push({ name: 'Other', qty: 0, rate: 0, amount: otherAmount });
-  return result;
+  const result: BillItem[] = []
+  for (const [, totals] of dedicatedTotals) {
+    if (totals.qty > 0) {
+      result.push({ name: totals.name, qty: totals.qty, rate: Number((totals.amount / totals.qty).toFixed(2)), amount: totals.amount })
+    } else if (totals.amount > 0) {
+      result.push({ name: totals.name, qty: 0, rate: 0, amount: totals.amount })
+    }
+  }
+  if (otherQty > 0) {
+    result.push({ name: 'Other', qty: otherQty, rate: Number((otherAmount / otherQty).toFixed(2)), amount: otherAmount })
+  } else if (otherAmount > 0) {
+    result.push({ name: 'Other', qty: 0, rate: 0, amount: otherAmount })
+  }
+  return result
 }
 
-function buildPrintableBillItemsFromLogs(logs: DeliveryLog[]): BillItem[] {
-  return buildPrintableBillItems(buildItemsFromDeliveryLogs(logs))
+function buildPrintableBillItemsFromLogs(logs: DeliveryLog[], dedicatedItemNames?: string[]): BillItem[] {
+  return buildPrintableBillItems(buildItemsFromDeliveryLogs(logs), dedicatedItemNames)
 }
 
 function getPrintableBillItems(
   bill: Bill & { house: NonNullable<Bill['house']> },
   logs: DeliveryLog[] = [],
+  dedicatedItemNames?: string[],
 ): BillItem[] {
   if (logs.length > 0) {
-    const printableFromLogs = buildPrintableBillItemsFromLogs(logs)
+    const printableFromLogs = buildPrintableBillItemsFromLogs(logs, dedicatedItemNames)
     if (printableFromLogs.some((item) => Number(item.amount ?? 0) > 0)) {
       return printableFromLogs
     }
   }
-
-  return buildPrintableBillItems(bill.items ?? [])
+  return buildPrintableBillItems(bill.items ?? [], dedicatedItemNames)
 }
 
 function hasPrintableBillContent(
   bill: Bill & { house: NonNullable<Bill['house']> },
   logs: DeliveryLog[] = [],
+  dedicatedItemNames?: string[],
 ): boolean {
-  const printableItems = getPrintableBillItems(bill, logs)
+  const printableItems = getPrintableBillItems(bill, logs, dedicatedItemNames)
   return printableItems.some((item) => Number(item.amount ?? 0) > 0)
 }
 
@@ -208,7 +213,7 @@ function buildItemsFromDeliveryLogs(logs: DeliveryLog[]): BillItem[] {
         ? 'Cow Milk'
         : normalizedType === 'buffalo milk' || normalizedType.startsWith('buffalo milk ')
           ? 'Buffalo Milk'
-          : normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1);
+          : cleanItemName(milkType)
       if (!existingItem) {
         itemSummary.set(key, {
           name: displayName,
@@ -288,6 +293,7 @@ export default function BillsPage() {
   const [filterYear, setFilterYear] = useState<string>(String(CURRENT_YEAR))
   const [printMonth, setPrintMonth] = useState<string>(String(new Date().getMonth() + 1))
   const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
+  const [dairySettings, setDairySettings] = useState<{ dedicatedItemNames?: string[] }>({ dedicatedItemNames: [] })
   const [pendingOpen, setPendingOpen] = useState(false)
   const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string; receiptedThisMonth: boolean; position: number }>>([])
   const [pendingLoading, setPendingLoading] = useState(false)
@@ -327,15 +333,19 @@ export default function BillsPage() {
       if (!hasLoadedOnceRef.current) {
         setLoading(true)
       }
-      const [billsData, housesData] = await Promise.all([
+      const [billsData, housesData, settingsData] = await Promise.all([
         billsApi.list({
           month: filterMonth ? parseInt(filterMonth) : undefined,
           year: filterYear ? parseInt(filterYear) : undefined,
         }),
         housesApi.list(),
+        dairiesApi.getSettings(),
       ])
       setBills(billsData)
       setHouses(housesData)
+      setDairySettings({
+        dedicatedItemNames: (settingsData.dedicatedItemNames as string[]) ?? [],
+      })
       hasLoadedOnceRef.current = true
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : 'Failed to load bills')
@@ -658,7 +668,6 @@ export default function BillsPage() {
       const usableWidth = pageWidth - (PDF_PAGE_MARGIN * 2)
       const usableHeight = pageHeight - (PDF_PAGE_MARGIN * 2)
       const cardWidth = (usableWidth - PDF_CARD_GAP_X) / 2
-      const cardHeight = (usableHeight - (PDF_CARD_GAP_Y * (PDF_ROWS - 1))) / PDF_ROWS
       const innerWidth = cardWidth - 2
       const leftColWidth = 10
       const particularsWidth = 34
@@ -674,9 +683,20 @@ export default function BillsPage() {
       const tableTop = 18
       const tableHeaderHeight = 6.6
       const rowHeight = 4.65
+      const headerContentHeight = tableTop + tableHeaderHeight + 0.6
+      const footerContentHeight = 5.9 + 5.5
       const textColor: [number, number, number] = [20, 20, 20]
       const borderColor: [number, number, number] = [0, 0, 0]
       const mutedColor: [number, number, number] = [35, 35, 35]
+
+      const getBillItemCount = (bill: Bill & { house: NonNullable<Bill['house']> }) => {
+        const items = buildPrintableBillItems(bill.items ?? [], dairySettings.dedicatedItemNames ?? [])
+        return items.length
+      }
+
+      const calcCardHeight = (itemCount: number) => {
+        return headerContentHeight + (itemCount * rowHeight) + rowHeight + footerContentHeight
+      }
 
       const drawCell = (
         x: number,
@@ -717,15 +737,10 @@ export default function BillsPage() {
         doc.text(textValue[0] ?? '', textX, y + (height / 2), { align, baseline: 'middle' })
       }
 
-      const drawBillCard = (bill: Bill & { house: NonNullable<Bill['house']> }, indexInPage: number) => {
-        const column = indexInPage % PDF_COLUMNS
-        const row = Math.floor(indexInPage / PDF_COLUMNS)
-        const x = PDF_PAGE_MARGIN + (column * (cardWidth + PDF_CARD_GAP_X))
-        const y = PDF_PAGE_MARGIN + (row * (cardHeight + PDF_CARD_GAP_Y))
-
+      const drawBillCard = (bill: Bill & { house: NonNullable<Bill['house']> }, x: number, y: number, cardH: number) => {
         doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2])
         doc.setLineWidth(0.3)
-        doc.rect(x, y, cardWidth, cardHeight)
+        doc.rect(x, y, cardWidth, cardH)
 
         const innerX = x + 1
         const innerY = y + 1
@@ -755,7 +770,7 @@ export default function BillsPage() {
         doc.text(`To: ${bill.house?.houseNo ?? ''}`, rowX, innerY + toY)
 
         const firstDataRowY = innerY + tableTop + tableHeaderHeight
-        const footerStartY = firstDataRowY + (PDF_TABLE_ROWS * rowHeight) + 0.6
+        const footerStartY = firstDataRowY + (getBillItemCount(bill) * rowHeight) + rowHeight + 0.6
 
         const tableX = rowX
         const headerY = innerY + tableTop
@@ -770,7 +785,7 @@ export default function BillsPage() {
           drawCell(colXs[index], headerY, colWidths[index], tableHeaderHeight, label, 'center', { bold: true, size: 5.8, fill: true })
         })
 
-        const items = buildPrintableBillItems(bill.items ?? [])
+        const items = buildPrintableBillItems(bill.items ?? [], dairySettings.dedicatedItemNames ?? [])
         items.forEach((item, index) => {
           const rowY = firstDataRowY + (index * rowHeight)
           const isOther = String(item.name ?? '').toLowerCase() === 'other'
@@ -790,7 +805,6 @@ export default function BillsPage() {
           })
         })
 
-        // Previous Balance row
         const previousBalance = Number(bill.previousBalance ?? 0)
         const balanceLabel = previousBalance < 0 ? 'ADVANCE' : 'BAL'
         const prevRowY = firstDataRowY + (items.length * rowHeight)
@@ -820,42 +834,80 @@ export default function BillsPage() {
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(4.8)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardHeight - 1.8)
+        doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardH - 1.8)
       }
 
-      const billsPerPage = PDF_COLUMNS * PDF_ROWS
-
       let lastGroupKey = ''
-      let cardIndexOnPage = 0
       let pageCount = 0
+      let pageY = PDF_PAGE_MARGIN
+      let pendingBill: (Bill & { house: NonNullable<Bill['house']> }) | null = null
 
-      printBills.forEach((bill, index) => {
+      const startNewPage = () => {
+        if (pageCount > 0) doc.addPage()
+        pageCount++
+        pageY = PDF_PAGE_MARGIN
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6)
+        doc.text(`Page No. ${pageCount}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
+      }
+
+      const drawGroupLabel = (label: string) => {
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(7)
+        doc.setTextColor(textColor[0], textColor[1], textColor[2])
+        doc.text(`--- ${label} ---`, pageWidth / 2, PDF_PAGE_MARGIN - 2, { align: 'center' })
+      }
+
+      for (const bill of printBills) {
         const shiftOrder = (bill as any)._shiftOrder ?? 3
         const groupKey = shiftOrder === 1 ? `${shiftOrder}` : `${shiftOrder}:${(bill as any)._supplierName ?? ''}`
         const groupChanged = groupKey !== lastGroupKey
 
-        const needsNewPage = index === 0 || cardIndexOnPage >= billsPerPage || (groupChanged && cardIndexOnPage > 0)
-        if (needsNewPage) {
-          if (index > 0) doc.addPage()
-          pageCount++
-          cardIndexOnPage = 0
-          doc.setFont('helvetica', 'normal')
-          doc.setFontSize(6)
-          doc.text(`Page No. ${pageCount}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
+        if (groupChanged && pageCount === 0) startNewPage()
+        if (groupChanged && pageY > PDF_PAGE_MARGIN) {
+          pendingBill = null
+          startNewPage()
         }
 
-        if (groupChanged) {
-          const label = (bill as any)._shiftLabel || 'OTHER'
-          doc.setFont('helvetica', 'bold')
-          doc.setFontSize(7)
-          doc.setTextColor(textColor[0], textColor[1], textColor[2])
-          doc.text(`--- ${label} ---`, pageWidth / 2, PDF_PAGE_MARGIN - 2, { align: 'center' })
-        }
-
+        if (groupChanged) drawGroupLabel((bill as any)._shiftLabel || 'OTHER')
         lastGroupKey = groupKey
-        drawBillCard(bill, cardIndexOnPage)
-        cardIndexOnPage++
-      })
+
+        if (pendingBill) {
+          const leftItemCount = getBillItemCount(pendingBill)
+          const rightItemCount = getBillItemCount(bill)
+          const leftCardH = calcCardHeight(leftItemCount)
+          const rightCardH = calcCardHeight(rightItemCount)
+          const rowHeightNeeded = Math.max(leftCardH, rightCardH)
+
+          if (pageY + rowHeightNeeded > pageHeight - PDF_PAGE_MARGIN) {
+            pendingBill = null
+            startNewPage()
+            if (groupChanged) drawGroupLabel((bill as any)._shiftLabel || 'OTHER')
+            pendingBill = bill
+            continue
+          }
+
+          const maxH = Math.max(leftCardH, rightCardH)
+          const leftX = PDF_PAGE_MARGIN
+          const rightX = PDF_PAGE_MARGIN + cardWidth + PDF_CARD_GAP_X
+
+          drawBillCard(pendingBill, leftX, pageY, maxH)
+          drawBillCard(bill, rightX, pageY, maxH)
+          pageY += maxH + PDF_CARD_GAP_Y
+          pendingBill = null
+        } else {
+          pendingBill = bill
+        }
+      }
+
+      if (pendingBill) {
+        if (pageY + calcCardHeight(getBillItemCount(pendingBill)) > pageHeight - PDF_PAGE_MARGIN) {
+          startNewPage()
+          if (lastGroupKey) drawGroupLabel((pendingBill as any)._shiftLabel || 'OTHER')
+        }
+        const cardH = calcCardHeight(getBillItemCount(pendingBill))
+        drawBillCard(pendingBill, PDF_PAGE_MARGIN, pageY, cardH)
+      }
 
       doc.save(`house-bills-${printYear}-${String(printMonth).padStart(2, '0')}.pdf`)
       toast.success(`Printed ${printBills.length} house bill${printBills.length > 1 ? 's' : ''} for ${getMonthLabel(parseInt(printMonth), parseInt(printYear))}`)
@@ -864,7 +916,7 @@ export default function BillsPage() {
     } finally {
       setExportingBalancePdf(false)
     }
-  }, [exportingBalancePdf, printBills, printMonth, printYear])
+  }, [exportingBalancePdf, printBills, printMonth, printYear, dairySettings])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()

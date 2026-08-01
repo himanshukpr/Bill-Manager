@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Download, Edit3, Eye, Plus, Search, Tag, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, Edit3, Eye, Plus, Search, Tag, Trash2, X, Settings, ChevronUp, ChevronDown, Save, GripVertical, ArrowLeft, ArrowRight, Package } from 'lucide-react'
 import { toast } from 'sonner'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
 import {
   productRatesApi,
+  dairiesApi,
   type ProductRate,
 } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -24,6 +25,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -69,6 +71,29 @@ export default function RatesPage() {
   const [pdfFontSize, setPdfFontSize] = useState('20')
   const [pdfPreviewDataUrl, setPdfPreviewDataUrl] = useState<string | null>(null)
   const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false)
+
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
+  const [settings, setSettings] = useState<{
+    evaluateByAmount?: boolean
+    dedicatedItemNames?: string[]
+  }>({ evaluateByAmount: false, dedicatedItemNames: [] })
+  const [settingsSaving, setSettingsSaving] = useState(false)
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const res = await dairiesApi.getSettings()
+      setSettings({
+        evaluateByAmount: (res.evaluateByAmount as boolean) ?? false,
+        dedicatedItemNames: (res.dedicatedItemNames as string[]) ?? [],
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load settings')
+    }
+  }, [])
+
+  useEffect(() => {
+    loadSettings()
+  }, [loadSettings])
 
   const loadRates = useCallback(async () => {
     try {
@@ -184,6 +209,48 @@ export default function RatesPage() {
     } finally {
       setDeleting(false)
     }
+  }
+
+  async function handleSaveSettings() {
+    setSettingsSaving(true)
+    try {
+      await dairiesApi.updateSettings(settings)
+      toast.success('Settings saved successfully')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save settings')
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
+  function getAllItemNames(): string[] {
+    const rateNames = rates.map(r => r.name).filter(Boolean)
+    return Array.from(new Set(rateNames)).sort()
+  }
+
+  function getDedicatedItems(): string[] {
+    const dedicated = settings.dedicatedItemNames ?? []
+    return dedicated.filter(name => getAllItemNames().includes(name))
+  }
+
+  function getOtherItems(): string[] {
+    const allNames = getAllItemNames()
+    const dedicated = new Set(settings.dedicatedItemNames ?? [])
+    return allNames.filter(name => !dedicated.has(name))
+  }
+
+  function moveToDedicated(itemName: string) {
+    setSettings(prev => ({
+      ...prev,
+      dedicatedItemNames: [...(prev.dedicatedItemNames ?? []), itemName],
+    }))
+  }
+
+  function moveToOther(itemName: string) {
+    setSettings(prev => ({
+      ...prev,
+      dedicatedItemNames: (prev.dedicatedItemNames ?? []).filter(n => n !== itemName),
+    }))
   }
 
   async function moveRate(rateId: number, direction: -1 | 1) {
@@ -308,6 +375,9 @@ export default function RatesPage() {
         <div className="flex gap-2 self-start sm:self-auto">
           <Button variant="outline" onClick={openPdfDialog} className="gap-2">
             <Download className="h-4 w-4" /> PDF
+          </Button>
+          <Button variant="outline" onClick={() => setSettingsDialogOpen(true)} className="gap-2">
+            <Settings className="h-4 w-4" /> Settings
           </Button>
           <Button onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" /> Add Rate
@@ -629,6 +699,108 @@ export default function RatesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Settings Dialog */}
+      <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bill Item Display Settings</DialogTitle>
+            <DialogDescription>
+              Choose which items appear as dedicated line items on bills. Items in "Other" will be grouped together.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Dedicated Items Column */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-green-50/50 dark:bg-green-900/20 rounded-lg border border-green-200/50 dark:border-green-800/50">
+                  <h3 className="font-semibold text-green-700 dark:text-green-400 flex items-center gap-2">
+                    <Tag className="h-4 w-4" /> Dedicated Items
+                  </h3>
+                  <span className="text-sm text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-0.5 rounded-full">
+                    {getDedicatedItems().length} items
+                  </span>
+                </div>
+                <div className="max-h-[60vh] overflow-y-auto space-y-2 border rounded-lg p-3 bg-muted/20">
+                  {getDedicatedItems().length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">No dedicated items. Move items from "Other" to show them separately on bills.</p>
+                  ) : (
+                    getDedicatedItems().map((itemName, index) => (
+                      <div key={itemName} className="flex items-center justify-between p-2 bg-background border rounded hover:bg-muted/50 transition-colors">
+                        <span className="font-medium truncate">{itemName}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => moveToOther(itemName)}
+                          title="Move to Other"
+                          className="text-muted-foreground hover:text-red-500"
+                        >
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Other Items Column */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-amber-50/50 dark:bg-amber-900/20 rounded-lg border border-amber-200/50 dark:border-amber-800/50">
+                  <h3 className="font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2">
+                    <Package className="h-4 w-4" /> Other (Grouped)
+                  </h3>
+                  <span className="text-sm text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">
+                    {getOtherItems().length} items
+                  </span>
+                </div>
+                <div className="max-h-[60vh] overflow-y-auto space-y-2 border rounded-lg p-3 bg-muted/20">
+                  {getOtherItems().length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">All items are dedicated. Move items here to group them under "Other" on bills.</p>
+                  ) : (
+                    getOtherItems().map((itemName, index) => (
+                      <div key={itemName} className="flex items-center justify-between p-2 bg-background border rounded hover:bg-muted/50 transition-colors">
+                        <span className="font-medium truncate">{itemName}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => moveToDedicated(itemName)}
+                          title="Move to Dedicated"
+                          className="text-muted-foreground hover:text-green-500"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <Separator className="my-4" />
+
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Evaluate Bills by Amount</Label>
+                <p className="text-sm text-muted-foreground">When enabled, bill calculations prioritize amount over quantity.</p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => setSettings(prev => ({ ...prev, evaluateByAmount: !prev.evaluateByAmount }))}
+                className={settings.evaluateByAmount ? 'bg-primary text-primary-foreground' : ''}
+              >
+                {settings.evaluateByAmount ? 'Enabled' : 'Disabled'}
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettingsDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveSettings} disabled={settingsSaving} className="gap-2">
+              <Save className="h-4 w-4" />
+              {settingsSaving ? 'Saving...' : 'Save Settings'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

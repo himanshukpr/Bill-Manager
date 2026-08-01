@@ -85,9 +85,7 @@ function normalizeMilkType(value: unknown): string {
   if (lower === 'milk') return ''
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
-  const stripped = lower.replace(/ milk$/, '').trim()
-  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-  return lower.charAt(0).toUpperCase() + lower.slice(1)
+  return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
 }
 
 function cleanItemName(name: string): string {
@@ -97,9 +95,7 @@ function cleanItemName(name: string): string {
   if (lower === 'milk') return ''
   if (lower === 'buffalo milk' || lower === 'buffalo milk milk' || lower.startsWith('buffalo milk ') || lower.startsWith('buffalo milk milk ')) return 'Buffalo Milk'
   if (lower === 'cow milk' || lower === 'cow milk milk' || lower.startsWith('cow milk ') || lower.startsWith('cow milk milk ')) return 'Cow Milk'
-  const stripped = lower.replace(/ milk$/, '').trim()
-  if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-  return lower.charAt(0).toUpperCase() + lower.slice(1)
+  return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
 }
 
 function parseDateOnly(dateStr: string | null | undefined): Date {
