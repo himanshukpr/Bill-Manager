@@ -295,7 +295,7 @@ export default function BillsPage() {
   const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
   const [dairySettings, setDairySettings] = useState<{ dedicatedItemNames?: string[] }>({ dedicatedItemNames: [] })
   const [pendingOpen, setPendingOpen] = useState(false)
-  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; previousBalance: number; latestPayment: { amount: number; date: string } | null; shift: string; supplier: string; receiptedThisMonth: boolean; position: number }>>([])
+  const [pendingData, setPendingData] = useState<Array<{ houseNo: string; phoneNo: string; lastBillAmount: number; receivedThisMonth: number; balance: number; shift: string; supplier: string; receiptedThisMonth: boolean; position: number }>>([])
   const [pendingLoading, setPendingLoading] = useState(false)
   const [skipReceiptedThisMonth, setSkipReceiptedThisMonth] = useState(false)
   const [generateOpen, setGenerateOpen] = useState(false)
@@ -510,12 +510,23 @@ export default function BillsPage() {
     setPendingOpen(true)
     setSkipReceiptedThisMonth(false)
     try {
-      const [allHouses, allPayments] = await Promise.all([
+      const [allHouses, allPayments, allBills] = await Promise.all([
         housesApi.list(),
         balanceApi.allPayments(),
+        billsApi.list(),
       ])
 
-      const latestPaymentByHouse = new Map<number, { amount: number; date: string }>()
+      const lastBillByHouse = new Map<number, { amount: number; date: string }>()
+      for (const bill of allBills) {
+        const billDate = bill.generatedDate ?? bill.toDate ?? ''
+        const billAmount = Number(bill.totalAmount ?? 0) + Number(bill.previousBalance ?? 0)
+        const existing = lastBillByHouse.get(bill.houseId)
+        if (!existing || billDate > existing.date) {
+          lastBillByHouse.set(bill.houseId, { amount: billAmount, date: billDate })
+        }
+      }
+
+      const receivedAfterBillByHouse = new Map<number, number>()
       const receiptedThisMonthHouseIds = new Set<number>()
       const now = new Date()
       const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -528,12 +539,12 @@ export default function BillsPage() {
         if (pDate >= currentMonthStart && pDate < nextMonthStart) {
           receiptedThisMonthHouseIds.add(houseId)
         }
-        const existing = latestPaymentByHouse.get(houseId)
-        if (!existing || pDate > new Date(existing.date)) {
-          latestPaymentByHouse.set(houseId, {
-            amount: Number(p.amount ?? 0),
-            date: p.paidAt || p.createdAt,
-          })
+        const lastBill = lastBillByHouse.get(houseId)
+        if (lastBill) {
+          const billGenDate = new Date(lastBill.date)
+          if (pDate > billGenDate) {
+            receivedAfterBillByHouse.set(houseId, (receivedAfterBillByHouse.get(houseId) ?? 0) + Number(p.amount ?? 0))
+          }
         }
       }
 
@@ -544,26 +555,27 @@ export default function BillsPage() {
           const shift = config?.shift ?? ''
           const supplier = config?.supplier?.username ?? ''
           const position = config?.position ?? 999
-          const previousBalance = Number(h.balance?.previousBalance ?? 0)
-          const receiptedThisMonth = receiptedThisMonthHouseIds.has(h.id)
+          const lastBillAmount = lastBillByHouse.get(h.id)?.amount ?? 0
+          const receivedThisMonth = receivedAfterBillByHouse.get(h.id) ?? 0
+          const balance = lastBillAmount - receivedThisMonth
           return {
             houseNo: h.houseNo,
-            previousBalance,
-            latestPayment: latestPaymentByHouse.get(h.id) ?? null,
+            phoneNo: h.phoneNo ?? '',
+            lastBillAmount,
+            receivedThisMonth,
+            balance,
             shift,
             supplier,
-            receiptedThisMonth,
+            receiptedThisMonth: receiptedThisMonthHouseIds.has(h.id),
             position,
           }
         })
+        .filter(d => d.lastBillAmount > 0)
         .sort((a, b) => {
-          // Shop first
           if (a.shift === 'shop' && b.shift !== 'shop') return -1
           if (a.shift !== 'shop' && b.shift === 'shop') return 1
-          // Then evening, then morning — same order as supplier drag planner
           if (a.shift === 'evening' && b.shift === 'morning') return -1
           if (a.shift === 'morning' && b.shift === 'evening') return 1
-          // Within same shift: order by position (matching drag planner route order)
           if (a.position !== b.position) return a.position - b.position
           return a.houseNo.localeCompare(b.houseNo, undefined, { numeric: true, sensitivity: 'base' })
         })
@@ -606,38 +618,44 @@ export default function BillsPage() {
       groups.set(key, group)
     }
 
-    for (const [groupName, rows] of groups.entries()) {
-      body.push([{ content: groupName, colSpan: 6, styles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'left' as const } } as any])
+      for (const [groupName, rows] of groups.entries()) {
+        body.push([{ content: groupName, colSpan: 6, styles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'left' as const } } as any])
 
-      for (const d of rows) {
-        body.push([
-          rowIdx,
-          `HN - ${d.houseNo}`,
-          d.shift === 'shop' ? 'Shop' : d.shift === 'morning' ? `Morning - ${d.supplier || '-'}` : `Evening - ${d.supplier || '-'}`,
-          d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
-          d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
-          d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-',
-        ])
-        rowIdx++
+        for (const d of rows) {
+          body.push([
+            rowIdx,
+            d.phoneNo ? `HN - ${d.houseNo}\nPh: ${d.phoneNo}` : `HN - ${d.houseNo}`,
+            d.lastBillAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            d.receivedThisMonth.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            d.balance > 0 ? d.balance.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
+            d.balance < 0 ? Math.abs(d.balance).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-',
+          ])
+          rowIdx++
+        }
       }
-    }
 
-    autoTable(doc, {
-      startY: 30,
-      head: [['#', 'House', 'Shift / Supplier', 'Pre Bal (₹)', 'Latest Payment (₹)', 'Payment Date']],
-      body,
-      styles: { fontSize: 10, cellPadding: 4, fontStyle: 'bold', textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
-      headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
-      margin: { left: 27, right: 14 },
-      columnStyles: {
-        0: { cellWidth: 12 },
-        1: { cellWidth: 28 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 28 },
-        4: { cellWidth: 32 },
-        5: { cellWidth: 28 },
-      },
-    })
+      const totalLastBill = pendingDisplayData.reduce((s, d) => s + d.lastBillAmount, 0)
+      const totalReceived = pendingDisplayData.reduce((s, d) => s + d.receivedThisMonth, 0)
+      const totalBalance = pendingDisplayData.reduce((s, d) => s + Math.max(0, d.balance), 0)
+      const totalAdvance = pendingDisplayData.reduce((s, d) => s + Math.abs(Math.min(0, d.balance)), 0)
+      body.push([{ content: 'Total', colSpan: 2, styles: { fontStyle: 'bold', halign: 'left' as const } } as any, totalLastBill.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalAdvance.toLocaleString('en-IN', { maximumFractionDigits: 2 })])
+
+      autoTable(doc, {
+        startY: 30,
+        head: [['#', 'House', 'Last Bill (₹)', 'Received (₹)', 'Balance (₹)', 'Advance (₹)']],
+        body,
+        styles: { fontSize: 10, cellPadding: 4, fontStyle: 'bold', textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
+        headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
+        margin: { left: 27, right: 14 },
+        columnStyles: {
+          0: { cellWidth: 12 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 30 },
+          3: { cellWidth: 30 },
+          4: { cellWidth: 30 },
+          5: { cellWidth: 30 },
+        },
+      })
 
     // Page numbers
     const pageCount = doc.getNumberOfPages()
@@ -1612,30 +1630,36 @@ export default function BillsPage() {
             </div>
           ) : (
             <div className="overflow-x-auto max-h-96">
-              {(() => {
-                const groups = new Map<string, typeof pendingDisplayData>()
-                for (const d of pendingDisplayData) {
-                  const key = d.shift === 'shop' ? 'Shop' : d.shift === 'evening' ? 'Evening' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : d.shift
-                  const group = groups.get(key) ?? []
-                  group.push(d)
-                  groups.set(key, group)
-                }
-                return Array.from(groups.entries()).map(([groupName, rows]) => (
-                  <div key={groupName}>
-                    <div className="sticky top-0 bg-muted/80 px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
-                      {groupName}
-                    </div>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border bg-muted/30">
-                          <th className="px-4 py-2 text-left font-semibold text-foreground">House</th>
-                          <th className="px-4 py-2 text-right font-semibold text-foreground">Pre Bal (₹)</th>
-                          <th className="px-4 py-2 text-right font-semibold text-foreground">Latest Payment (₹)</th>
-                          <th className="px-4 py-2 text-right font-semibold text-foreground">Payment Date</th>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="px-4 py-2 text-left font-semibold text-foreground">House</th>
+                    <th className="px-4 py-2 text-right font-semibold text-foreground">Last Bill (₹)</th>
+                    <th className="px-4 py-2 text-right font-semibold text-foreground">Received (₹)</th>
+                    <th className="px-4 py-2 text-right font-semibold text-foreground">Balance (₹)</th>
+                    <th className="px-4 py-2 text-right font-semibold text-foreground">Advance (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const groups = new Map<string, typeof pendingDisplayData>()
+                    for (const d of pendingDisplayData) {
+                      const key = d.shift === 'shop' ? 'Shop' : d.shift === 'evening' ? 'Evening' : d.shift === 'morning' ? `Morning — ${d.supplier || 'No Supplier'}` : d.shift
+                      const group = groups.get(key) ?? []
+                      group.push(d)
+                      groups.set(key, group)
+                    }
+                    const elements: React.ReactNode[] = []
+                    for (const [groupName, rows] of groups.entries()) {
+                      elements.push(
+                        <tr key={`group-${groupName}`}>
+                          <td colSpan={5} className="sticky top-0 bg-muted/80 px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
+                            {groupName}
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((d) => (
+                      )
+                      for (const d of rows) {
+                        elements.push(
                           <tr key={d.houseNo} className="border-b border-border">
                             <td className="px-4 py-2 font-medium text-foreground">
                               <div className="flex flex-wrap items-center gap-2">
@@ -1646,23 +1670,37 @@ export default function BillsPage() {
                                   </Badge>
                                 )}
                               </div>
+                              {d.phoneNo && <p className="text-xs text-muted-foreground">{d.phoneNo}</p>}
                             </td>
                             <td className="px-4 py-2 text-right text-foreground">
-                              {d.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              {d.lastBillAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                             </td>
                             <td className="px-4 py-2 text-right text-foreground">
-                              {d.latestPayment ? d.latestPayment.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-'}
+                              {d.receivedThisMonth.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                             </td>
-                            <td className="px-4 py-2 text-right text-foreground">
-                              {d.latestPayment ? new Date(d.latestPayment.date).toLocaleDateString('en-IN') : '-'}
+                            <td className={`px-4 py-2 text-right font-semibold ${d.balance > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'}`}>
+                              {d.balance > 0 ? d.balance.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-'}
+                            </td>
+                            <td className={`px-4 py-2 text-right font-semibold ${d.balance < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
+                              {d.balance < 0 ? Math.abs(d.balance).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-'}
                             </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))
-              })()}
+                        )
+                      }
+                    }
+                    elements.push(
+                      <tr key="total" className="border-t-2 border-border bg-muted/40 font-bold">
+                        <td className="px-4 py-2">Total</td>
+                        <td className="px-4 py-2 text-right">{pendingDisplayData.reduce((s, d) => s + d.lastBillAmount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-2 text-right">{pendingDisplayData.reduce((s, d) => s + d.receivedThisMonth, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-2 text-right text-amber-600 dark:text-amber-400">{pendingDisplayData.reduce((s, d) => s + Math.max(0, d.balance), 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-2 text-right text-emerald-600 dark:text-emerald-400">{pendingDisplayData.reduce((s, d) => s + Math.abs(Math.min(0, d.balance)), 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    )
+                    return elements
+                  })()}
+                </tbody>
+              </table>
             </div>
           )}
           <DialogFooter className="gap-2">
