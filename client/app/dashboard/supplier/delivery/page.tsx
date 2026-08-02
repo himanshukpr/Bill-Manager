@@ -554,9 +554,6 @@ export default function DeliveryPage() {
     const selectedDateKey = useMemo(() => getLocalDateKey(selectedDate), [selectedDate])
     const todayDateKey = getLocalDateKey()
 
-    const [billForMonth, setBillForMonth] = useState<Bill | null>(null)
-    const isBlockedByBill = Boolean(billForMonth)
-
     const activeProductRates = useMemo(
         () => productRates.filter((rate) => rate.isActive && Number(rate.rate) > 0),
         [productRates],
@@ -1006,27 +1003,6 @@ export default function DeliveryPage() {
         }
     }, [currentHouse?.id, selectedShift, selectedDateKey, houseLogsCache])
 
-    useEffect(() => {
-        if (!currentHouse) {
-            setBillForMonth(null)
-            return
-        }
-
-        let active = true
-        void billsApi.list({ houseId: currentHouse.id }).then((bills) => {
-            if (!active) return
-            const year = selectedDate.getFullYear()
-            const month = selectedDate.getMonth() + 1
-            const found = bills.find((b) => b.year === year && b.month === month) ?? null
-            setBillForMonth(found)
-        }).catch(() => {
-            if (!active) return
-            setBillForMonth(null)
-        })
-
-        return () => { active = false }
-    }, [currentHouse?.id, selectedDate])
-
     // Clear today's delivered logs for current house only
     const handleClearToday = useCallback(() => {
         if (!currentHouse) {
@@ -1039,13 +1015,8 @@ export default function DeliveryPage() {
             return
         }
 
-        if (isBlockedByBill) {
-            toast.error('Bill already generated for this month. Cannot modify deliveries.')
-            return
-        }
-
         setClearTodayDialogOpen(true)
-    }, [currentHouse, selectedShift, isBlockedByBill])
+    }, [currentHouse, selectedShift])
 
     const confirmClearToday = useCallback(async () => {
         if (!currentHouse || !selectedShift) return
@@ -2475,7 +2446,7 @@ export default function DeliveryPage() {
     if (!currentHouse) return <div>No houses</div>
 
     const isCompleted = completedHouses.has(currentHouse.id)
-    const canSubmitDelivery = !isCompleted && !isBlockedByBill ? true : hasUnsavedChanges
+    const canSubmitDelivery = !isCompleted ? true : hasUnsavedChanges
     const canModify = auth?.permissions?.canModifyDeliveryLogs === true
     const currentRouteNumber = currentIndex + 1
     const houseMotionClass =
@@ -2838,14 +2809,6 @@ export default function DeliveryPage() {
                     {/* FIRST DELIVERY FORM */}
                     <div className="bg-card rounded-t-none overflow-y-auto">
                         <div className="border-t border-border/40 p-3 space-y-3">
-                            {isBlockedByBill && (
-                                <div className="rounded-xl border-2 border-red-400 bg-red-500/10 p-4 text-center">
-                                    <p className="text-base font-bold text-red-500">Bill Already Generated</p>
-                                    <p className="mt-1 text-sm text-red-400">
-                                        A bill for {billForMonth!.month}/{billForMonth!.year} has already been created for this house. Delivery entries cannot be edited or added.
-                                    </p>
-                                </div>
-                            )}
                             <div className="overflow-x-auto rounded-xl border border-border/70">
                                 <Table>
                                     <TableHeader>
@@ -2918,7 +2881,7 @@ export default function DeliveryPage() {
                                                                             onValueChange={(val) =>
                                                                                 updateDeliveryItem(idx, 'milkType', val)
                                                                             }
-                                                                            disabled={isBlockedByBill || (isCompleted && !canModify)}
+                                                                            disabled={(isCompleted && !canModify)}
                                                                         >
                                                                             <SelectTrigger className="h-9 w-full">
                                                                                 <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
@@ -2957,7 +2920,7 @@ export default function DeliveryPage() {
                                                                                 updateDeliveryItem(idx, 'qty', e.target.value)
                                                                             }
                                                                             className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                            disabled={isBlockedByBill || (isCompleted && !canModify)}
+                                                                            disabled={(isCompleted && !canModify)}
                                                                         />
                                                                     </div>
 
@@ -2971,7 +2934,7 @@ export default function DeliveryPage() {
                                                                                     updateDeliveryItem(idx, 'amount', e.target.value)
                                                                                 }
                                                                                 className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                                disabled={isBlockedByBill || (isCompleted && !canModify)}
+                                                                                disabled={(isCompleted && !canModify)}
                                                                             />
                                                                         </div>
                                                                     )}
@@ -2985,7 +2948,7 @@ export default function DeliveryPage() {
                                                                             onValueChange={(val) =>
                                                                                 updateDeliveryItem(idx, 'milkType', val)
                                                                             }
-                                                                            disabled={isBlockedByBill || (isCompleted && !canModify)}
+                                                                            disabled={(isCompleted && !canModify)}
                                                                         >
                                                                             <SelectTrigger className="h-9 w-full">
                                                                                 <SelectValue placeholder={productRateOptions.length > 0 ? 'Select product' : 'No active products'} />
@@ -3024,7 +2987,7 @@ export default function DeliveryPage() {
                                                                                 updateDeliveryItem(idx, 'qty', e.target.value)
                                                                             }
                                                                             className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                            disabled={isBlockedByBill || (isCompleted && !canModify)}
+                                                                            disabled={(isCompleted && !canModify)}
                                                                         />
                                                                     </div>
 
@@ -3038,7 +3001,7 @@ export default function DeliveryPage() {
                                                                                     updateDeliveryItem(idx, 'amount', e.target.value)
                                                                                 }
                                                                                 className="h-9 border-border/90 bg-background text-foreground placeholder:text-muted-foreground"
-                                                                                disabled={isBlockedByBill || (isCompleted && !canModify)}
+                                                                                disabled={(isCompleted && !canModify)}
                                                                             />
                                                                         </div>
                                                                     )}
@@ -3055,12 +3018,12 @@ export default function DeliveryPage() {
 
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-2">
-                                    {(!isBlockedByBill && !isCompleted || canModify) && (
+                                    {(!isCompleted || canModify) && (
                                         <Button onClick={addItem} size="sm" className="text-xs">
                                             <Plus className="mr-1 h-3 w-3" /> Add Item
                                         </Button>
                                     )}
-                                    {!isCompleted && !isBlockedByBill && (
+                                    {!isCompleted && (
                                         <Button
                                             onClick={async () => {
                                                 if (!currentHouse || !selectedShift) return
@@ -3133,8 +3096,8 @@ export default function DeliveryPage() {
 
                         {/* ACTION */}
                         <div className="sticky bottom-0 z-10 -mx-2 mb-4 rounded-2xl border border-border/70 bg-card px-2 py-2 shadow-lg shadow-black/10 sm:mx-0 sm:mb-0 sm:rounded-none sm:border-0 sm:bg-card sm:px-0 sm:py-0 sm:shadow-none">
-                            <Button onClick={handleMarkDelivered} disabled={isBlockedByBill || (isCompleted && !canModify) ? true : !canSubmitDelivery} className="w-full rounded-xl py-2 text-xs shadow-sm sm:rounded-none sm:rounded-b-2xl sm:text-sm">
-                                {isBlockedByBill ? 'View Only' : isCompleted ? (canModify ? 'Update Delivery' : 'View Only') : 'Mark Delivered'}
+                            <Button onClick={handleMarkDelivered} disabled={(isCompleted && !canModify) ? true : !canSubmitDelivery} className="w-full rounded-xl py-2 text-xs shadow-sm sm:rounded-none sm:rounded-b-2xl sm:text-sm">
+                                {isCompleted ? (canModify ? 'Update Delivery' : 'View Only') : 'Mark Delivered'}
                             </Button>
                         </div>
                     </div>
