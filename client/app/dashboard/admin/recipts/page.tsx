@@ -1512,7 +1512,7 @@ export default function ReceiptsPage() {
       <div className="space-y-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search by house no or area..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder="Search by house no..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
 
         <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -1532,11 +1532,8 @@ export default function ReceiptsPage() {
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Area</th>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Phone</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
-                    {/* <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Bill Period</th> */}
-                    <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Note</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Recorded By</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Created At</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Action</th>
@@ -1567,8 +1564,6 @@ export default function ReceiptsPage() {
                         <td className="px-4 py-3">
                           <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
                         </td>
-                        <td className="px-4 py-3 text-muted-foreground text-sm">{p.balance?.house?.area ?? '—'}</td>
-                        <td className="px-4 py-3 text-muted-foreground text-sm">{getHousePhone(p.balance?.house?.id)}</td>
                         <td className="px-4 py-3">
                           <span className="font-bold text-emerald-600 dark:text-emerald-400">
                             ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -1579,8 +1574,9 @@ export default function ReceiptsPage() {
                             </span>
                           )}
                         </td>
-                        <td className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">{p.note ?? '—'}</td>
-
+                        <td className="px-4 py-3 text-sm text-muted-foreground">
+                          {p.recordedBy ?? '—'}
+                        </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
                           {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN', {
                             day: 'numeric', month: 'short', year: 'numeric'
@@ -1594,7 +1590,7 @@ export default function ReceiptsPage() {
                             {new Date(p.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-4">
                           <Button
                             variant="ghost"
                             size="sm"
