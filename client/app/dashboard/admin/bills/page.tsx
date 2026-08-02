@@ -888,6 +888,14 @@ export default function BillsPage() {
 
         if (groupChanged && pageCount === 0) startNewPage()
         if (groupChanged && pageY > PDF_PAGE_MARGIN) {
+          if (pendingBill) {
+            const cardH = calcCardHeight(getBillItemCount(pendingBill))
+            if (pageY + cardH > pageHeight - PDF_PAGE_MARGIN) {
+              startNewPage()
+            }
+            drawBillCard(pendingBill, PDF_PAGE_MARGIN, pageY, cardH)
+            pageY += cardH + PDF_CARD_GAP_Y
+          }
           pendingBill = null
           startNewPage()
         }
@@ -903,7 +911,12 @@ export default function BillsPage() {
           const rowHeightNeeded = Math.max(leftCardH, rightCardH)
 
           if (pageY + rowHeightNeeded > pageHeight - PDF_PAGE_MARGIN) {
-            pendingBill = null
+            const leftCardH = calcCardHeight(getBillItemCount(pendingBill))
+            if (pageY + leftCardH > pageHeight - PDF_PAGE_MARGIN) {
+              startNewPage()
+            }
+            drawBillCard(pendingBill, PDF_PAGE_MARGIN, pageY, leftCardH)
+            pageY += leftCardH + PDF_CARD_GAP_Y
             startNewPage()
             if (groupChanged) drawGroupLabel((bill as any)._shiftLabel || 'OTHER')
             pendingBill = bill
