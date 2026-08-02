@@ -413,3 +413,19 @@ export function removeAdminSession(key: string): void {
   if (typeof window === "undefined") return
   try { window.sessionStorage.removeItem(key) } catch { /* noop */ }
 }
+
+export async function apiValidatePassword(username: string, password: string): Promise<boolean> {
+  try {
+    const session = getSessionAuth()
+    const res = await fetchApi('/auth/validate-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, dairyId: session?.dairyId }),
+    })
+    if (!res.ok) return false
+    const data = await res.json() as { valid: boolean }
+    return data.valid
+  } catch {
+    return false
+  }
+}

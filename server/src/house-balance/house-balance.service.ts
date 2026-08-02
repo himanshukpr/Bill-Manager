@@ -35,7 +35,7 @@ export class HouseBalanceService {
     return balance;
   }
 
-  async recordPayment(dto: RecordPaymentDto, dairyId: number) {
+  async recordPayment(dto: RecordPaymentDto, dairyId: number, username?: string) {
     let balance = await this.prisma.houseBalance.findFirst({
       where: { houseId: dto.houseId, dairyId },
     });
@@ -63,6 +63,7 @@ export class HouseBalanceService {
           dairyId,
           ...(dto.paidAt ? { paidAt: parseDateAsUTC(dto.paidAt) } : {}),
           ...(dto.billIds ? { billIds: dto.billIds } : {}),
+          ...(username ? { recordedBy: username } : dto.recordedBy ? { recordedBy: dto.recordedBy } : {}),
         },
       }),
       this.prisma.houseBalance.update({
@@ -283,7 +284,7 @@ export class HouseBalanceService {
     return { deleted: true };
   }
 
-  async closePeriod(dto: ClosePeriodDto, dairyId: number) {
+  async closePeriod(dto: ClosePeriodDto, dairyId: number, username?: string) {
     const { houseId, fromDate, toDate, note } = dto;
 
     const parseDateParts = (s: string) => {
@@ -417,6 +418,7 @@ export class HouseBalanceService {
           dairyId,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           billIds: logIds as unknown as any,
+          ...(username ? { recordedBy: username } : {}),
         },
       }),
       this.prisma.houseBalance.update({

@@ -12,8 +12,9 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
-import { RegisterDto, DairyLoginDto } from './dto/auth.dto';
+import { RegisterDto, DairyLoginDto, ValidatePasswordDto } from './dto/auth.dto';
 import { LocalAuthGuard, JwtAuthGuard, AdminGuard } from './guards/auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 interface AuthenticatedRequest {
   user: {
@@ -101,5 +102,19 @@ export class AuthController {
     @Param('uuid') uuid: string,
   ) {
     return this.authService.impersonate(req.user.uuid, uuid, req.user.dairyId);
+  }
+
+  @Post('validate-password')
+  @HttpCode(HttpStatus.OK)
+  async validatePassword(
+    @Body() dto: ValidatePasswordDto & { dairyId?: number },
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    const effectiveDairyId = dto.dairyId ?? dairyId;
+    if (!effectiveDairyId) {
+      return { valid: false };
+    }
+    const valid = await this.authService.validatePassword(dto.username, dto.password, effectiveDairyId);
+    return { valid };
   }
 }

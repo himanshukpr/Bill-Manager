@@ -248,15 +248,15 @@ export default function AdminDashboardPage() {
       iconBg: 'bg-amber-500/15',
       iconColor: 'text-amber-600 dark:text-amber-400',
     },
-    {
-      label: 'Settings',
-      description: 'Configure bill item categories and dairy preferences.',
-      href: '/dashboard/admin/settings',
-      icon: Settings,
-      accent: 'from-violet-500/10 to-violet-600/10',
-      iconBg: 'bg-violet-500/15',
-      iconColor: 'text-violet-600 dark:text-violet-400',
-    },
+    // {
+    //   label: 'Settings',
+    //   description: 'Configure bill item categories and dairy preferences.',
+    //   href: '/dashboard/admin/settings',
+    //   icon: Settings,
+    //   accent: 'from-violet-500/10 to-violet-600/10',
+    //   iconBg: 'bg-violet-500/15',
+    //   iconColor: 'text-violet-600 dark:text-violet-400',
+    // },
   ]
 
   return (
@@ -296,30 +296,7 @@ export default function AdminDashboardPage() {
         })}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-border bg-card p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Operations Analysis</p>
-              <h2 className="mt-2 text-xl font-bold">Delivery Plan vs Delivery Logs</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Compare supplier plans with actual delivery records to spot overdraws or short deliveries.
-              </p>
-            </div>
-            <div className="rounded-xl bg-emerald-500/15 p-3">
-              <BarChart3 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-            </div>
-          </div>
-          <div className="mt-5">
-            <Link
-              href="/dashboard/admin/delivery-analysis"
-              className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:opacity-90"
-            >
-              Open analysis
-            </Link>
-          </div>
-        </div>
-      </div>
+      
 
       {/* Today's Delivery Logs */}
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -456,93 +433,7 @@ export default function AdminDashboardPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delivery Summary */}
-      <div className="rounded-2xl border border-border bg-card overflow-hidden">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div>
-            <h2 className="text-base font-bold">Delivery Summary</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Select a house and date range to see a summary of deliveries.</p>
-          </div>
-          <Calculator className="h-5 w-5 text-muted-foreground" />
-        </div>
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <Label htmlFor="cb-house">House</Label>
-              <Select value={customBillHouseId} onValueChange={setCustomBillHouseId}>
-                <SelectTrigger id="cb-house">
-                  <SelectValue placeholder="Select house" />
-                </SelectTrigger>
-                <SelectContent>
-                  {houses.map(h => (
-                    <SelectItem key={h.id} value={String(h.id)}>{h.houseNo} — {h.area ?? ''}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cb-from">From Date</Label>
-              <Input id="cb-from" type="date" value={customBillFromDate} onChange={e => setCustomBillFromDate(e.target.value)} className="h-9 text-sm" />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cb-to">To Date</Label>
-              <Input id="cb-to" type="date" value={customBillToDate} onChange={e => setCustomBillToDate(e.target.value)} className="h-9 text-sm" />
-            </div>
-          </div>
-          {customBillSummary !== null && (
-            <div className="rounded-lg border border-border bg-muted/10 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="px-4 py-2 text-left font-semibold text-muted-foreground">Product</th>
-                    <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Qty (L)</th>
-                    <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Rate (₹)</th>
-                    <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Amount (₹)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customBillSummary.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground text-sm">No delivery logs found for this date range</td>
-                    </tr>
-                  ) : (
-                    <>
-                      {customBillSummary.map((item, idx) => (
-                        <tr key={idx} className="border-b border-border/50 last:border-0">
-                          <td className="px-4 py-2 font-medium">{item.name}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">{item.qty.toLocaleString('en-IN')}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">₹{Number(item.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                          <td className="px-4 py-2 text-right font-semibold tabular-nums">₹{Number(item.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                        </tr>
-                      ))}
-                      <tr className="bg-muted/20">
-                        <td className="px-4 py-2 font-semibold">Total</td>
-                        <td className="px-4 py-2 text-right font-bold tabular-nums">{customBillSummary.reduce((sum, i) => sum + i.qty, 0).toLocaleString('en-IN')}L</td>
-                        <td className="px-4 py-2 text-right text-muted-foreground">—</td>
-                        <td className="px-4 py-2 text-right font-bold tabular-nums">₹{customBillSummary.reduce((sum, i) => sum + i.amount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                      </tr>
-                    </>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {customBillSummary !== null && customBillSummary.length > 0 && houses.find(h => h.id === parseInt(customBillHouseId))?.phoneNo && (
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => {
-                const house = houses.find(h => h.id === parseInt(customBillHouseId))
-                const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-IN')}L @ ₹${Number(i.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })} = ₹${Number(i.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`).join('\n')
-                const totalQty = customBillSummary.reduce((sum, i) => sum + i.qty, 0)
-                const totalAmount = customBillSummary.reduce((sum, i) => sum + i.amount, 0)
-                setWhatsappMsg(`Delivery Summary for House ${house?.houseNo}:\n${lines}\n\nTotal: ${totalQty.toLocaleString('en-IN')}L / ₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`)
-                setWhatsappOpen(true)
-              }}>
-                <MessageCircle className="h-4 w-4 mr-1" /> WhatsApp
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
+     
 
       {/* WhatsApp Send Dialog */}
       <Dialog open={whatsappOpen} onOpenChange={setWhatsappOpen}>

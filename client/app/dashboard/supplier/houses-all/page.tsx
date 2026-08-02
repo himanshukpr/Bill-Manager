@@ -72,6 +72,7 @@ type PaymentSummaryRow = {
   paidAmount: number
   discount: number
   note: string
+  recordedBy?: string
 }
 
 const HOUSES_PER_PAGE = 25
@@ -544,6 +545,7 @@ export default function HousesPage() {
         discount,
         remainingAmount,
         note: payment.note ?? '',
+        recordedBy: payment.recordedBy,
       }
     })
   }, [summaryBalance, summaryHouse, summaryPeriod])
@@ -2162,6 +2164,7 @@ export default function HousesPage() {
                               <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
                               <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
                               <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Recorded By</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2180,6 +2183,9 @@ export default function HousesPage() {
                                 <td className="px-4 py-3 text-right text-red-500">
                                   {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
                                 </td>
+                                <td className="px-4 py-3 text-muted-foreground">
+                                  {row.recordedBy || '—'}
+                                </td>
                               </tr>
                             ))}
                             <tr className="border-t-2 border-border bg-muted/50 font-semibold">
@@ -2190,6 +2196,7 @@ export default function HousesPage() {
                               <td className="px-4 py-3 text-right text-red-500">
                                 ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </td>
+                              <td />
                             </tr>
                           </tbody>
                         </table>

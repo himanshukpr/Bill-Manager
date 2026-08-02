@@ -50,8 +50,9 @@ export class HouseBalanceController {
   recordPayment(
     @Body() dto: RecordPaymentDto,
     @CurrentUser('dairyId') dairyId: number,
+    @CurrentUser('username') username: string,
   ) {
-    return this.service.recordPayment(dto, dairyId);
+    return this.service.recordPayment(dto, dairyId, username);
   }
 
   @Patch('payment/:id')
@@ -75,8 +76,9 @@ export class HouseBalanceController {
   closePeriod(
     @Body() dto: ClosePeriodDto,
     @CurrentUser('dairyId') dairyId: number,
+    @CurrentUser('username') username: string,
   ) {
-    return this.service.closePeriod(dto, dairyId);
+    return this.service.closePeriod(dto, dairyId, username);
   }
 
   @Patch(':houseId')

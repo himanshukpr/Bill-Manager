@@ -71,6 +71,7 @@ type PaymentSummaryRow = {
   discount: number
   remainingAmount: number
   note?: string
+  recordedBy?: string
 }
 
 type DeliveryEditForm = {
@@ -674,6 +675,7 @@ export default function HousesPage() {
         discount,
         remainingAmount,
         note: payment.note,
+        recordedBy: payment.recordedBy,
       }
     })
   }, [summaryBalance, summaryHouse, summaryPeriod])
@@ -839,14 +841,15 @@ export default function HousesPage() {
       const totalDiscount = paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0)
       autoTable(doc, {
         startY: paymentsEndY,
-        head: [['Date', 'Paid (₹)', 'Discount (₹)']],
+        head: [['Date', 'Paid (₹)', 'Discount (₹)', 'Recorded By']],
         body: [
           ...paymentSummaryRows.map((row) => [
             new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
             row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
             row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            row.recordedBy || '—',
           ]),
-          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 }), ''],
         ],
         margin: { left: leftMargin, right: pageWidth - splitX + 4 },
         styles: { fontSize: 7 },
@@ -1145,7 +1148,7 @@ export default function HousesPage() {
           const paidAmount = Number(p.amount ?? 0)
           const discount = Number(p.discount ?? 0)
           remainingAmount = Math.max(0, remainingAmount - paidAmount - discount)
-          return { id: p.id, paidAt: p.paidAt || p.createdAt, paidAmount, discount, remainingAmount, note: p.note }
+          return { id: p.id, paidAt: p.paidAt || p.createdAt, paidAmount, discount, remainingAmount, note: p.note, recordedBy: p.recordedBy }
         })
 
         let productTotals: Array<{ product: string; quantity: number; amount: number }> = []
@@ -1226,14 +1229,15 @@ export default function HousesPage() {
           const totalDiscount = payRows.reduce((s, r) => s + r.discount, 0)
           autoTable(doc, {
             startY: paymentsEndY,
-            head: [['Date', 'Paid (₹)', 'Disc (₹)']],
+            head: [['Date', 'Paid (₹)', 'Disc (₹)', 'By']],
             body: [
               ...payRows.map(r => [
                 new Date(r.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
                 r.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
                 r.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+                r.recordedBy || '—',
               ]),
-              ['Total', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+              ['Total', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 }), ''],
             ],
             margin: { left: leftMargin, right: pageWidth - splitX + 2 },
             styles: { fontSize: 7, cellPadding: 1.5 },
@@ -2775,6 +2779,7 @@ export default function HousesPage() {
                                 <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
                                 <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
                                 <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                                <th className="px-4 py-3 text-left font-semibold text-foreground">Recorded By</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2793,6 +2798,9 @@ export default function HousesPage() {
                                   <td className="px-4 py-3 text-right text-red-500">
                                     {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
                                   </td>
+                                  <td className="px-4 py-3 text-muted-foreground">
+                                    {row.recordedBy || '—'}
+                                  </td>
                                 </tr>
                               ))}
                               <tr className="border-t-2 border-border bg-muted/50 font-semibold">
@@ -2803,6 +2811,7 @@ export default function HousesPage() {
                                 <td className="px-4 py-3 text-right text-red-500">
                                   ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                 </td>
+                                <td />
                               </tr>
                             </tbody>
                           </table>

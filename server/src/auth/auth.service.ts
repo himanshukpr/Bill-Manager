@@ -191,4 +191,10 @@ export class AuthService {
       },
     };
   }
+
+  async validatePassword(username: string, password: string, dairyId: number): Promise<boolean> {
+    const user = await this.usersService.findByUsernameInDairy(username, dairyId);
+    if (!user) return false;
+    return bcrypt.compare(password, user.password);
+  }
 }

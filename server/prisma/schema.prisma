@@ -123,6 +123,7 @@ model PaymentHistory {
   amount     Decimal      @db.Decimal(10, 2)
   discount   Decimal      @default(0) @db.Decimal(10, 2)
   note       String?
+  recordedBy String?      @map("recorded_by")
   createdAt  DateTime     @default(now()) @map("created_at")
   paidAt     DateTime     @default(now()) @map("paid_at")
   billIds    Json?        @map("bill_ids")

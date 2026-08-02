@@ -480,6 +480,7 @@ export type PaymentHistory = {
   amount: string;
   discount?: number;
   note?: string;
+  recordedBy?: string;
   createdAt: string;
   paidAt: string;
   billIds?: number[];
@@ -1335,7 +1336,7 @@ export const balanceApi = {
 
     return { queued: true };
   },
-  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number; paidAt?: string }) => {
+  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number; paidAt?: string; recordedBy?: string }) => {
     const applyLocalPaymentUpdate = async (payment?: PaymentHistory, balance?: HouseBalance) => {
       if (!isBrowser()) return;
 
@@ -1347,6 +1348,7 @@ export const balanceApi = {
         balanceRef: payment?.balanceRef ?? balance?.id ?? 0,
         amount: String(data.amount),
         note: data.note,
+        recordedBy: data.recordedBy,
         createdAt: payment?.createdAt ?? now,
         paidAt: data.paidAt ?? now,
         balance: payment?.balance ?? (existingHouse ? { house: { id: existingHouse.id, houseNo: existingHouse.houseNo, area: existingHouse.area } } : undefined),

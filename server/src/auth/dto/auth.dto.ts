@@ -82,3 +82,13 @@ export class DairyLoginDto {
   @MinLength(6)
   password: string;
 }
+
+export class ValidatePasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  username: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+}

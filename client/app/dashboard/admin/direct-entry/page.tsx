@@ -20,7 +20,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { balanceApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 
@@ -246,6 +246,42 @@ export default function DeliveryEntryPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [deletingLog, setDeletingLog] = useState<DeliveryLog | null>(null)
   const [deleteSaving, setDeleteSaving] = useState(false)
+
+  const [billClosedForMonth, setBillClosedForMonth] = useState(false)
+  const [billClosedMessage, setBillClosedMessage] = useState('')
+
+  useEffect(() => {
+    if (!houseId || !deliveryDate) {
+      setBillClosedForMonth(false)
+      setBillClosedMessage('')
+      return
+    }
+
+    const [year, month] = deliveryDate.split('-').map(Number)
+    const lastDay = new Date(year, month, 0).getDate()
+    const fromDate = `${year}-${String(month).padStart(2, '0')}-01T00:00:00.000Z`
+    const toDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59.999Z`
+
+    let active = true
+    void billsApi.preview(Number(houseId), { fromDate, toDate })
+      .then((preview) => {
+        if (!active) return
+        if (preview.isAlreadyClosed) {
+          setBillClosedForMonth(true)
+          setBillClosedMessage(preview.alreadyClosedMessage ?? 'Bill already generated for this month. No new entries allowed.')
+        } else {
+          setBillClosedForMonth(false)
+          setBillClosedMessage('')
+        }
+      })
+      .catch(() => {
+        if (!active) return
+        setBillClosedForMonth(false)
+        setBillClosedMessage('')
+      })
+
+    return () => { active = false }
+  }, [houseId, deliveryDate])
 
   useEffect(() => {
     if (newRowIdRef.current) {
@@ -654,6 +690,11 @@ export default function DeliveryEntryPage() {
       return
     }
 
+    if (billClosedForMonth) {
+      toast.error(billClosedMessage || 'Bill already generated for this month. No new entries allowed.')
+      return
+    }
+
     if (items.length === 0) {
       toast.error('Add at least one product with quantity and rate')
       return
@@ -713,7 +754,7 @@ export default function DeliveryEntryPage() {
                       />
                     </div>
                     <div className="relative">
-                      <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5">
+                      <Button type="button" variant="outline" size="sm" onClick={addBlankRow} className="gap-1.5" disabled={billClosedForMonth}>
                         <Plus className="h-3.5 w-3.5" />
                         Add new item
                       </Button>
@@ -822,6 +863,13 @@ export default function DeliveryEntryPage() {
                     </Button>
                   </div>
                 </div>
+
+                {billClosedForMonth && (
+                  <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+                    <p className="font-semibold">Bill already generated for this month</p>
+                    <p className="mt-1">{billClosedMessage}</p>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   {rows.length === 0 ? (
@@ -1100,7 +1148,7 @@ export default function DeliveryEntryPage() {
                         <Button
                           type="button"
                           onClick={handleSave}
-                          disabled={saving}
+                          disabled={saving || billClosedForMonth}
                           className="gap-2"
                         >
                           {saving ? (

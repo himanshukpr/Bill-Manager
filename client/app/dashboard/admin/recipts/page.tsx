@@ -5,6 +5,7 @@ import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3,
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, invalidateCache, type PaymentHistory, type House, type HouseBalance, type Bill, type BillItem, type DeliveryLog, type ProductRate } from '@/lib/api'
+import { getSessionAuth, apiValidatePassword } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -52,6 +53,7 @@ type PaymentSummaryRow = {
   discount: number
   remainingAmount: number
   note?: string
+  recordedBy?: string
 }
 
 type DeliveryEditForm = {
@@ -344,6 +346,9 @@ export default function ReceiptsPage() {
   const [editingPaymentDiscount, setEditingPaymentDiscount] = useState('')
   const [editingPaymentPaidAt, setEditingPaymentPaidAt] = useState('')
   const [deletingPayment, setDeletingPayment] = useState<PaymentHistory | null>(null)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deletePasswordError, setDeletePasswordError] = useState('')
+  const [deleteValidating, setDeleteValidating] = useState(false)
   const [summaryPeriod, setSummaryPeriod] = useState<{ year: number; month: number }>(() => {
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() }
@@ -374,6 +379,19 @@ export default function ReceiptsPage() {
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const matchingBills = useMemo(() => {
+    let prevMonth = summaryPeriod.month - 1
+    let prevYear = summaryPeriod.year
+    if (prevMonth < 0) { prevMonth = 11; prevYear-- }
+    const prevStart = new Date(prevYear, prevMonth, 1)
+    const prevEnd = new Date(prevYear, prevMonth + 1, 1)
+    return summaryBills.filter(b => {
+      const bFrom = new Date(b.fromDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-01`)
+      const bTo = new Date(b.toDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-28`)
+      return bFrom < prevEnd && bTo > prevStart
+    })
+  }, [summaryBills, summaryPeriod])
+
+  const currentMonthBills = useMemo(() => {
     const monthStart = new Date(summaryPeriod.year, summaryPeriod.month, 1)
     const monthEnd = new Date(summaryPeriod.year, summaryPeriod.month + 1, 1)
     return summaryBills.filter(b => {
@@ -404,7 +422,7 @@ export default function ReceiptsPage() {
     }
 
     // If bills exist, subtract bill items to get pending-only quantities
-    for (const bill of matchingBills) {
+    for (const bill of currentMonthBills) {
       if (bill.items?.length) {
         const items = bill.items as BillItem[]
         for (const item of items) {
@@ -502,6 +520,7 @@ export default function ReceiptsPage() {
         discount,
         remainingAmount,
         note: payment.note,
+        recordedBy: payment.recordedBy,
       }
     })
   }, [summaryBalance, summaryHouse, summaryPeriod])
@@ -544,7 +563,7 @@ export default function ReceiptsPage() {
     }
 
     // If bills exist, subtract bill items to get pending-only quantities
-    for (const bill of matchingBills) {
+    for (const bill of currentMonthBills) {
       const billItems = (bill.items as BillItem[]) ?? []
       for (const item of billItems) {
         if (item.name && item.qty > 0) {
@@ -558,7 +577,7 @@ export default function ReceiptsPage() {
       }
     }
 
-    const billsTotalAmount = matchingBills.reduce((sum, b) => sum + Number(b.totalAmount), 0)
+    const billsTotalAmount = currentMonthBills.reduce((sum, b) => sum + Number(b.totalAmount), 0)
     const pendingGrandTotal = allLogsGrandTotal - billsTotalAmount
     const pendingTotal = Array.from(totalMap.values()).reduce((sum, d) => sum + d.amount, 0)
 
@@ -776,25 +795,35 @@ export default function ReceiptsPage() {
   const totalBilled = useMemo(() => {
     const allBills = Array.from(billsCache.values())
     if (receivedMonth === 'all') {
-      return allBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0), 0)
+      return { value: allBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0), 0), label: '' }
     }
     const month = parseInt(receivedMonth) + 1
     const year = parseInt(receivedYear)
-    return allBills
-      .filter(b => b.month === month && b.year === year)
+    let prevMonth = month - 1
+    let prevYear = year
+    if (prevMonth < 1) { prevMonth = 12; prevYear-- }
+    const prevTotal = allBills
+      .filter(b => b.month === prevMonth && b.year === prevYear)
       .reduce((sum, b) => sum + Number(b.totalAmount ?? 0), 0)
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return { value: prevTotal, label: prevTotal > 0 ? monthNames[prevMonth - 1] : '' }
   }, [billsCache, receivedMonth, receivedYear])
 
   const totalBilledWithPrevBal = useMemo(() => {
     const allBills = Array.from(billsCache.values())
     if (receivedMonth === 'all') {
-      return allBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
+      return { value: allBills.reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0), label: '' }
     }
     const month = parseInt(receivedMonth) + 1
     const year = parseInt(receivedYear)
-    return allBills
-      .filter(b => b.month === month && b.year === year)
+    let prevMonth = month - 1
+    let prevYear = year
+    if (prevMonth < 1) { prevMonth = 12; prevYear-- }
+    const prevTotal = allBills
+      .filter(b => b.month === prevMonth && b.year === prevYear)
       .reduce((sum, b) => sum + Number(b.totalAmount ?? 0) + Number(b.previousBalance ?? 0), 0)
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return { value: prevTotal, label: prevTotal > 0 ? monthNames[prevMonth - 1] : '' }
   }, [billsCache, receivedMonth, receivedYear])
 
   const selectedHouse = useMemo(
@@ -1136,14 +1165,15 @@ export default function ReceiptsPage() {
       const totalDiscount = paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0)
       autoTable(doc, {
         startY: paymentsEndY,
-        head: [['Date', 'Paid (₹)', 'Discount (₹)']],
+        head: [['Date', 'Paid (₹)', 'Discount (₹)', 'Recorded By']],
         body: [
           ...paymentSummaryRows.map((row) => [
             new Date(row.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
             row.paidAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
             row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+            row.recordedBy || '—',
           ]),
-          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 })],
+          ['Total Received', totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 }), totalDiscount.toLocaleString('en-IN', { maximumFractionDigits: 2 }), ''],
         ],
         margin: { left: leftMargin, right: pageWidth - splitX + 4 },
         styles: { fontSize: 7 },
@@ -1332,16 +1362,40 @@ export default function ReceiptsPage() {
   async function handleDeletePayment() {
     if (!deletingPayment) return
 
+    if (!deletePassword.trim()) {
+      setDeletePasswordError('Password is required')
+      return
+    }
+
+    const session = getSessionAuth()
+    if (!session?.username) {
+      setDeletePasswordError('Not authenticated')
+      return
+    }
+
+    setDeleteValidating(true)
+    setDeletePasswordError('')
     try {
+      const valid = await apiValidatePassword(session.username, deletePassword)
+      if (!valid) {
+        setDeletePasswordError('Invalid password')
+        setDeleteValidating(false)
+        return
+      }
+
       await balanceApi.deletePayment(deletingPayment.id)
       toast.success('Payment record deleted')
       setDeletingPayment(null)
+      setDeletePassword('')
+      setDeletePasswordError('')
       const [paymentsData] = await Promise.all([
         balanceApi.allPayments(),
       ])
       setPayments(paymentsData)
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete payment')
+    } finally {
+      setDeleteValidating(false)
     }
   }
 
@@ -1373,6 +1427,7 @@ export default function ReceiptsPage() {
           note: formNote || undefined,
           billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
           discount: discount > 0 ? discount : undefined,
+          recordedBy: getSessionAuth()?.username,
           ...(formPaidAt ? { paidAt: new Date(formPaidAt).toISOString() } : {}),
         })
       }
@@ -1424,8 +1479,8 @@ export default function ReceiptsPage() {
               ₹{totalReceived.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">{filteredPaymentsByMonth.length} payment{filteredPaymentsByMonth.length !== 1 ? 's' : ''} recorded</p>
-            <p className="mt-1 text-xs text-muted-foreground">Bills Generated: ₹{totalBilled.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Bills + Previous Balance: ₹{totalBilledWithPrevBal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Bills Generated: ₹{totalBilled.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}{totalBilled.label ? ` (${totalBilled.label})` : ''}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Bills + Previous Balance: ₹{totalBilledWithPrevBal.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}{totalBilledWithPrevBal.label ? ` (${totalBilledWithPrevBal.label})` : ''}</p>
           </div>
           <div className="flex items-center gap-2">
             <Select value={receivedMonth} onValueChange={setReceivedMonth}>
@@ -2067,6 +2122,7 @@ export default function ReceiptsPage() {
                               <th className="px-4 py-3 text-left font-semibold text-foreground">Date</th>
                               <th className="px-4 py-3 text-right font-semibold text-foreground">Paid (₹)</th>
                               <th className="px-4 py-3 text-right font-semibold text-foreground">Discount (₹)</th>
+                              <th className="px-4 py-3 text-left font-semibold text-foreground">Recorded By</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2085,6 +2141,9 @@ export default function ReceiptsPage() {
                                 <td className="px-4 py-3 text-right text-red-500">
                                   {row.discount > 0 ? `₹${row.discount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
                                 </td>
+                                <td className="px-4 py-3 text-muted-foreground">
+                                  {row.recordedBy || '—'}
+                                </td>
                               </tr>
                             ))}
                             <tr className="border-t-2 border-border bg-muted/50 font-semibold">
@@ -2095,6 +2154,7 @@ export default function ReceiptsPage() {
                               <td className="px-4 py-3 text-right text-red-500">
                                 ₹{paymentSummaryRows.reduce((sum, row) => sum + row.discount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </td>
+                              <td />
                             </tr>
                           </tbody>
                         </table>
@@ -2578,7 +2638,13 @@ export default function ReceiptsPage() {
       </Dialog>
 
       {/* Delete Payment Confirmation */}
-      <AlertDialog open={!!deletingPayment} onOpenChange={(open) => !open && setDeletingPayment(null)}>
+      <AlertDialog open={!!deletingPayment} onOpenChange={(open) => {
+        if (!open) {
+          setDeletingPayment(null)
+          setDeletePassword('')
+          setDeletePasswordError('')
+        }
+      }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Payment Record</AlertDialogTitle>
@@ -2588,10 +2654,28 @@ export default function ReceiptsPage() {
               The amount will be added back to the house's previous balance. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="delete-password">Enter your password to confirm</Label>
+            <Input
+              id="delete-password"
+              type="password"
+              placeholder="Password"
+              value={deletePassword}
+              onChange={(e) => { setDeletePassword(e.target.value); setDeletePasswordError('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleDeletePayment() }}
+            />
+            {deletePasswordError && (
+              <p className="text-sm text-red-500">{deletePasswordError}</p>
+            )}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button variant="destructive" onClick={() => void handleDeletePayment()}>
-              Delete
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeletePayment()}
+              disabled={deleteValidating || !deletePassword.trim()}
+            >
+              {deleteValidating ? 'Validating...' : 'Delete'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

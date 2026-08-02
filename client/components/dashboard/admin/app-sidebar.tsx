@@ -58,11 +58,11 @@ const navItems = [
         url: "/dashboard/admin/recipts",
         icon: Receipt,
     },
-    {
-        title: "Delivery Analysis",
-        url: "/dashboard/admin/delivery-analysis",
-        icon: BarChart3,
-    },
+    // {
+    //     title: "Delivery Analysis",
+    //     url: "/dashboard/admin/delivery-analysis",
+    //     icon: BarChart3,
+    // },
     {
         title: "Rates",
         url: "/dashboard/admin/rates",

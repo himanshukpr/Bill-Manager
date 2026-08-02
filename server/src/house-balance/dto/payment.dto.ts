@@ -36,6 +36,10 @@ export class RecordPaymentDto {
   @IsOptional()
   @IsString()
   paidAt?: string;
+
+  @IsOptional()
+  @IsString()
+  recordedBy?: string;
 }
 
 export class UpdatePreviousBalanceDto {
