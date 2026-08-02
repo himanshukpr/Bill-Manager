@@ -699,15 +699,15 @@ export default function BillsPage() {
       const amtWidth = 16
       const contentWidth = leftColWidth + particularsWidth + qtyWidth + rateWidth + amtWidth
       const contentLeftPad = (innerWidth - contentWidth) / 2
-      const headerTextY = 3.5
-      const titleY = 8.5
-      const noteY = 12
-      const toY = 14.5
-      const tableTop = 18
-      const tableHeaderHeight = 6.6
-      const rowHeight = 4.65
+      const headerTextY = 5
+      const titleY = 12
+      const noteY = 16.5
+      const toY = 20
+      const tableTop = 24.5
+      const tableHeaderHeight = 9
+      const rowHeight = 6.5
       const headerContentHeight = tableTop + tableHeaderHeight + 0.6
-      const footerContentHeight = 5.9 + 5.5
+      const footerContentHeight = 8 + 7.5
       const textColor: [number, number, number] = [20, 20, 20]
       const borderColor: [number, number, number] = [0, 0, 0]
       const mutedColor: [number, number, number] = [35, 35, 35]
@@ -732,7 +732,7 @@ export default function BillsPage() {
       ) => {
         const bold = options?.bold ?? false
         const italic = options?.italic ?? false
-        const size = options?.size ?? 6.5
+        const size = options?.size ?? 7.5
         const fill = options?.fill ?? false
         const paddingX = 1.35
         if (fill) {
@@ -771,24 +771,24 @@ export default function BillsPage() {
         const rowX = innerX + contentLeftPad
 
         doc.setFont('helvetica', 'bolditalic')
-        doc.setFontSize(5.7)
+        doc.setFontSize(8)
         doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2])
         doc.text(`Bill of Month: ${MONTH_NAMES[bill.month]}`, rowX, innerY + headerTextY)
         doc.text(`Date: ${formatBillDate(bill.generatedDate || bill.toDate)}`, innerRight - 1.6, innerY + headerTextY, { align: 'right' })
 
         doc.setFont('helvetica', 'bolditalic')
-        doc.setFontSize(9.3)
+        doc.setFontSize(13)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
         const dairyName = getDairySession()?.dairyName || 'DAIRY'
         doc.text(dairyName, x + cardWidth / 2, innerY + titleY, { align: 'center' })
 
         doc.setFont('helvetica', 'normal')
-        doc.setFontSize(5.5)
+        doc.setFontSize(7.5)
         doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2])
         doc.text('Note: Bill has to be submitted by 15th of month', x + cardWidth / 2, innerY + noteY, { align: 'center' })
 
         doc.setFont('helvetica', 'bolditalic')
-        doc.setFontSize(6.5)
+        doc.setFontSize(9)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
         doc.text(`To: ${bill.house?.houseNo ?? ''}`, rowX, innerY + toY)
 
@@ -805,7 +805,7 @@ export default function BillsPage() {
 
         const headerLabels = ['SR.\nNO.', 'PARTICULAR', 'QTY', 'RATE', 'AMT']
         headerLabels.forEach((label, index) => {
-          drawCell(colXs[index], headerY, colWidths[index], tableHeaderHeight, label, 'center', { bold: true, size: 5.8, fill: true })
+          drawCell(colXs[index], headerY, colWidths[index], tableHeaderHeight, label, 'center', { bold: true, size: 8, fill: true })
         })
 
         const items = buildPrintableBillItems(bill.items ?? [], dairySettings.dedicatedItemNames ?? [])
@@ -822,7 +822,7 @@ export default function BillsPage() {
           values.forEach((value, columnIndex) => {
             drawCell(colXs[columnIndex], rowY, colWidths[columnIndex], rowHeight, value, columnIndex === 1 ? 'left' : 'center', {
               bold: true,
-              size: 5.6,
+              size: 7.5,
               fill: true,
             })
           })
@@ -831,11 +831,11 @@ export default function BillsPage() {
         const previousBalance = Number(bill.previousBalance ?? 0)
         const balanceLabel = previousBalance < 0 ? 'ADVANCE' : 'BAL'
         const prevRowY = firstDataRowY + (items.length * rowHeight)
-        const prevValues = ['', 'PREVIOUS BALANCE / ADVANCE', '', '', `${formatPlainAmount(Math.abs(previousBalance))} ${balanceLabel}`]
+        const prevValues = ['', previousBalance < 0 ? 'ADVANCE' : 'PREV. BAL', '', '', formatPlainAmount(Math.abs(previousBalance))]
         prevValues.forEach((value, columnIndex) => {
           drawCell(colXs[columnIndex], prevRowY, colWidths[columnIndex], rowHeight, value, columnIndex === 1 || columnIndex === 4 ? 'right' : 'center', {
             bold: true,
-            size: 5.6,
+            size: 7.5,
             fill: true,
           })
         })
@@ -846,18 +846,18 @@ export default function BillsPage() {
         const receiptsY = footerStartY
         const receiptsWidth = innerWidth * 0.68
         const totalWidth = innerWidth - receiptsWidth
-        drawCell(tableX, receiptsY, receiptsWidth, 5.9, `THIS MONTH RECEIPTS: Rs. ${formatPlainAmount(receipts)}`, 'left', { bold: true, size: 5.7, fill: true })
-        drawCell(tableX + receiptsWidth, receiptsY, totalWidth, 5.9, '', 'center', { bold: true, size: 6.2, fill: true })
+        drawCell(tableX, receiptsY, receiptsWidth, 8, `THIS MONTH RECEIPTS: Rs. ${formatPlainAmount(receipts)}`, 'left', { bold: true, size: 8, fill: true })
+        drawCell(tableX + receiptsWidth, receiptsY, totalWidth, 8, '', 'center', { bold: true, size: 8.5, fill: true })
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(6.2)
+        doc.setFontSize(8.5)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text('Total', tableX + receiptsWidth + 1.4, receiptsY + 3.1, { baseline: 'middle' })
-        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0) + previousBalance), tableX + innerWidth - 1.4, receiptsY + 3.1, { align: 'right', baseline: 'middle' })
+        doc.text('Total', tableX + receiptsWidth + 1.4, receiptsY + 4.5, { baseline: 'middle' })
+        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0) + previousBalance), tableX + innerWidth - 1.4, receiptsY + 4.5, { align: 'right', baseline: 'middle' })
 
         doc.setFont('helvetica', 'italic')
-        doc.setFontSize(4.8)
+        doc.setFontSize(6.5)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardH - 1.8)
+        doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardH - 2.5)
       }
 
       let lastGroupKey = ''
@@ -870,13 +870,13 @@ export default function BillsPage() {
         pageCount++
         pageY = PDF_PAGE_MARGIN
         doc.setFont('helvetica', 'normal')
-        doc.setFontSize(6)
+        doc.setFontSize(8)
         doc.text(`Page No. ${pageCount}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
       }
 
       const drawGroupLabel = (label: string) => {
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(7)
+        doc.setFontSize(9)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
         doc.text(`--- ${label} ---`, pageWidth / 2, PDF_PAGE_MARGIN - 2, { align: 'center' })
       }
