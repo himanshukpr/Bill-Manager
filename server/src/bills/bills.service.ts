@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GenerateAllBillsDto, GenerateBillDto } from './dto/bill.dto';
+import { parseDateAsUTC, utcDayStart, utcDayEnd } from '../common/utils/date.util';
 
 @Injectable()
 export class BillsService {
@@ -32,9 +33,11 @@ export class BillsService {
     return (
       bills.find((bill) => {
         const billStart =
-          bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
-        const billEnd =
-          bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
+          bill.fromDate ?? utcDayStart(bill.year, bill.month - 1, 1);
+        // toDate is stored as end-of-last-day (23:59:59.999).
+        const billEnd = bill.toDate
+          ? bill.toDate
+          : utcDayEnd(bill.year, bill.month - 1, 0);
 
         return billStart <= periodEnd && billEnd >= periodStart;
       }) ?? null
@@ -62,9 +65,10 @@ export class BillsService {
 
     for (const bill of bills) {
       const billStart =
-        bill.fromDate ?? new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
-      const billEnd =
-        bill.toDate ?? new Date(bill.year, bill.month, 0, 23, 59, 59, 999);
+        bill.fromDate ?? utcDayStart(bill.year, bill.month - 1, 1);
+      const billEnd = bill.toDate
+        ? bill.toDate
+        : utcDayEnd(bill.year, bill.month - 1, 0);
 
       if (billStart <= periodEnd && billEnd >= periodStart) {
         if (!latestEnd || billEnd > latestEnd) {
@@ -149,16 +153,17 @@ export class BillsService {
       throw new BadRequestException('Invalid billing period date');
     }
 
-    const periodStart = new Date(fromParts.y, fromParts.mo, fromParts.d, 0, 0, 0, 0);
-    const periodEnd = new Date(toParts.y, toParts.mo, toParts.d, 23, 59, 59, 999);
+    const periodStart = utcDayStart(fromParts.y, fromParts.mo, fromParts.d);
+    // toDateStorage = start of the day AFTER the last day (used internally).
+    // periodEnd = 23:59:59.999 of the last day (stored in DB as bill.toDate).
+    const toDateStorage = utcDayStart(toParts.y, toParts.mo, toParts.d + 1);
+    const periodEnd = new Date(toDateStorage.getTime() - 1); // 23:59:59.999 of the last day
 
     if (periodStart > periodEnd) {
       throw new BadRequestException(
         'From date must be before or equal to upto date',
       );
     }
-
-    const toDateStorage = new Date(toParts.y, toParts.mo, toParts.d, 0, 0, 0, 0);
 
     return {
       periodStart,
@@ -175,10 +180,12 @@ export class BillsService {
     let toDateStorage: Date;
     let month: number;
     let year: number;
+    let needsPeriodAdjustment = false;
     const noteText = dto.note?.trim();
 
     // If no fromDate/date provided, attempt to use the last bill's generatedDate + 1 day
     if (!dto.fromDate && !dto.date) {
+      needsPeriodAdjustment = true;
       const lastBill = await this.prisma.bill.findFirst({
         where: { houseId: dto.houseId, dairyId },
         orderBy: { generatedDate: 'desc' },
@@ -190,14 +197,15 @@ export class BillsService {
       }
 
       const lastEnd = new Date(lastBill.generatedDate);
-      periodStart = new Date(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate() + 1, 0, 0, 0, 0);
+      periodStart = utcDayStart(lastEnd.getUTCFullYear(), lastEnd.getUTCMonth(), lastEnd.getUTCDate() + 1);
 
       const toInput = dto.toDate ?? new Date().toISOString();
       const toDateMatch = toInput.match(/^(\d{4})-(\d{2})-(\d{2})/);
       const tp = toDateMatch
         ? { y: parseInt(toDateMatch[1]), mo: parseInt(toDateMatch[2]) - 1, d: parseInt(toDateMatch[3]) }
-        : { y: new Date().getFullYear(), mo: new Date().getMonth(), d: new Date().getDate() };
-      periodEnd = new Date(tp.y, tp.mo, tp.d, 23, 59, 59, 999);
+        : { y: new Date().getUTCFullYear(), mo: new Date().getUTCMonth(), d: new Date().getUTCDate() };
+      toDateStorage = utcDayStart(tp.y, tp.mo, tp.d + 1);
+      periodEnd = new Date(toDateStorage.getTime() - 1);
 
       if (periodStart > periodEnd) {
         throw new BadRequestException(
@@ -205,7 +213,6 @@ export class BillsService {
         );
       }
 
-      toDateStorage = new Date(tp.y, tp.mo, tp.d, 0, 0, 0, 0);
       month = tp.mo + 1;
       year = tp.y;
     } else {
@@ -217,15 +224,12 @@ export class BillsService {
       year = resolved.year;
     }
 
-    const { adjustedStart } = await this.getAdjustedPeriodStart(
-      dto.houseId,
-      periodStart,
-      periodEnd,
-      dairyId,
-    );
+    const adjustedStart = needsPeriodAdjustment
+      ? (await this.getAdjustedPeriodStart(dto.houseId, periodStart, periodEnd, dairyId)).adjustedStart
+      : periodStart;
 
-    const adjustedMonth = toDateStorage.getMonth() + 1;
-    const adjustedYear = toDateStorage.getFullYear();
+    const adjustedMonth = periodEnd.getUTCMonth() + 1;
+    const adjustedYear = periodEnd.getUTCFullYear();
 
     const closureState = await this.getPeriodClosureState(
       dto.houseId,
@@ -334,7 +338,6 @@ export class BillsService {
       year: adjustedYear,
       periodStart: adjustedStart,
       periodEnd,
-      toDateStorage,
       totalAmount,
       billItems,
       previousBalance: Number(balance.previousBalance),
@@ -375,7 +378,6 @@ export class BillsService {
       year,
       periodStart,
       periodEnd,
-      toDateStorage,
       totalAmount,
       billItems,
       previousBalance,
@@ -390,7 +392,7 @@ export class BillsService {
           month,
           year,
           fromDate: periodStart,
-          toDate: toDateStorage,
+          toDate: periodEnd,
           totalAmount,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           items: billItems as any,
@@ -642,9 +644,9 @@ export class BillsService {
   async remove(id: number, dairyId: number) {
     const bill = await this.findOne(id, dairyId);
 
-    const periodStart = new Date(bill.year, bill.month - 1, 1, 0, 0, 0, 0);
-    const genDate = new Date(bill.generatedDate);
-    const periodEnd = new Date(genDate.getFullYear(), genDate.getMonth(), genDate.getDate(), 23, 59, 59, 999);
+    const periodStart = bill.fromDate ?? utcDayStart(bill.year, bill.month - 1, 1);
+    // bill.toDate is end-of-last-day (23:59:59.999), use it directly
+    const periodEnd = bill.toDate ?? new Date(bill.generatedDate);
     const billTotal = Number(bill.totalAmount ?? 0);
 
     return this.prisma.$transaction(async (tx) => {

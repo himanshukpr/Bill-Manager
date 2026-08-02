@@ -122,6 +122,13 @@ if (!match) return new Date(dateStr)
   return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
 }
 
+// toDate is stored as start-of-next-day (half-open interval). Subtract 1 day for display.
+function parseToDateOnly(dateStr: string | null | undefined): Date {
+  const d = parseDateOnly(dateStr)
+  d.setDate(d.getDate() - 1)
+  return d
+}
+
 function buildPrintableBillItems(items: BillItem[], dedicatedItemNames?: string[]): BillItem[] {
   const dedicatedSet = new Set((dedicatedItemNames ?? []).map(n => n.trim().toLowerCase()))
   const dedicatedTotals = new Map<string, { name: string; qty: number; amount: number }>()
@@ -1250,7 +1257,7 @@ export default function BillsPage() {
                         <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="font-medium">
                           {b.fromDate && b.toDate
-                            ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseDateOnly(b.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                            ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseToDateOnly(b.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                             : `${MONTH_NAMES[b.month]} ${b.year}`
                           }
                         </span>
@@ -1490,7 +1497,7 @@ export default function BillsPage() {
                 <DialogTitle>Bill — House {viewBill.house?.houseNo}</DialogTitle>
                 <DialogDescription>
                   {viewBill.fromDate && viewBill.toDate
-                    ? `${parseDateOnly(viewBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseDateOnly(viewBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                    ? `${parseDateOnly(viewBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseToDateOnly(viewBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                     : `${MONTH_NAMES[viewBill.month]} ${viewBill.year}`
                   }
                   {viewBill.house?.area && ` · ${viewBill.house.area}`}

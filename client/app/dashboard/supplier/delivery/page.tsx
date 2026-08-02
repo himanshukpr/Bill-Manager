@@ -185,10 +185,10 @@ function parseDateKeyToLocalDate(dateKey: string): Date | null {
 }
 
 function buildDeliveredAtForDate(selectedDate: Date): string {
-    const now = new Date()
-    const deliveredAt = new Date(selectedDate)
-    deliveredAt.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0)
-    return deliveredAt.toISOString()
+    const y = selectedDate.getFullYear()
+    const m = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const d = String(selectedDate.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}T00:00:00.000Z`
 }
 
 function parseHouseLocation(location?: string): { lat: number; lon: number } | null {
@@ -1425,7 +1425,7 @@ export default function DeliveryPage() {
             const newLog: DeliveryLog = {
                 id: 0,
                 houseId: summaryHouse?.id ?? 0,
-                deliveredAt: deliveryDate.toISOString(),
+                deliveredAt: `${deliveryDate.getFullYear()}-${String(deliveryDate.getMonth() + 1).padStart(2, '0')}-${String(deliveryDate.getDate()).padStart(2, '0')}T00:00:00.000Z`,
                 createdAt: new Date().toISOString(),
                 shift: (summaryHouse?.configs?.[0]?.shift ?? 'morning') as 'morning' | 'evening' | 'shop',
                 items: [],

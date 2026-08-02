@@ -86,6 +86,13 @@ function parseDateOnly(dateStr: string | null | undefined): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
+// toDate is stored as start-of-next-day (half-open interval). Subtract 1 day for display.
+function parseToDateOnly(dateStr: string | null | undefined): Date {
+  const d = parseDateOnly(dateStr)
+  d.setDate(d.getDate() - 1)
+  return d
+}
+
 function normalizeRateType(value: unknown): string {
   const text = String(value ?? '').trim().toLowerCase()
   if (text.includes('buffalo')) return 'buffalo'
@@ -753,7 +760,7 @@ export default function ReceiptsPage() {
           const bill = billsCache.get(billId)!
           if (bill.fromDate && bill.toDate) {
             periodsText.push(
-              `${parseDateOnly(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${parseDateOnly(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+              `${parseDateOnly(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${parseToDateOnly(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
             )
           } else {
             periodsText.push(`${MONTH_NAMES[bill.month - 1]} ${bill.year}`)
@@ -933,7 +940,7 @@ export default function ReceiptsPage() {
       const newLog: DeliveryLog = {
         id: 0,
         houseId: summaryHouse?.id ?? 0,
-        deliveredAt: deliveryDate.toISOString(),
+        deliveredAt: `${deliveryDate.getFullYear()}-${String(deliveryDate.getMonth() + 1).padStart(2, '0')}-${String(deliveryDate.getDate()).padStart(2, '0')}T00:00:00.000Z`,
         createdAt: new Date().toISOString(),
         shift: defaultShift,
         items: [],
@@ -1493,7 +1500,7 @@ export default function ReceiptsPage() {
                         const bill = billsCache.get(billId)!
                         if (bill.fromDate && bill.toDate) {
                           periodsList.push(
-                            `${parseDateOnly(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${parseDateOnly(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                            `${parseDateOnly(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${parseToDateOnly(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                           )
                         } else {
                           periodsList.push(`${MONTH_NAMES[bill.month - 1]} ${bill.year}`)
@@ -1809,7 +1816,7 @@ export default function ReceiptsPage() {
                           const daysInMonth = new Date(bill.year, bill.month, 0).getDate()
                           const calculatedDateRange = `1-${daysInMonth} ${MONTH_NAMES[bill.month - 1]} ${bill.year}`
                           const actualDateRange = bill.fromDate && bill.toDate
-                            ? `${parseDateOnly(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${parseDateOnly(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
+                            ? `${parseDateOnly(bill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${parseToDateOnly(bill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
                             : calculatedDateRange
                           return (
                             <div key={bill.id} className={`flex items-center gap-1.5 p-1.5 rounded border text-xs ${formSelectedBillIds.includes(bill.id) ? 'bg-primary/10 border-primary' : 'border-border/30'}`}>
@@ -2119,7 +2126,7 @@ export default function ReceiptsPage() {
                   const latestPreviousBalance = Number(matchingBills[0].previousBalance ?? 0)
                   const dateRanges = matchingBills.map(b =>
                     b.fromDate && b.toDate
-                      ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${parseDateOnly(b.toDate).toLocaleDateString('en-IN')}`
+                      ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${parseToDateOnly(b.toDate).toLocaleDateString('en-IN')}`
                       : null
                   ).filter(Boolean)
 
@@ -2601,7 +2608,7 @@ export default function ReceiptsPage() {
                 <DialogTitle>Bill — House {lastSelectedBill.house?.houseNo ?? formHouseQuery}</DialogTitle>
                 <DialogDescription>
                   {lastSelectedBill.fromDate && lastSelectedBill.toDate
-                    ? `${parseDateOnly(lastSelectedBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseDateOnly(lastSelectedBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                    ? `${parseDateOnly(lastSelectedBill.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} - ${parseToDateOnly(lastSelectedBill.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
                     : `${MONTH_NAMES[(lastSelectedBill.month ?? 1) - 1]} ${lastSelectedBill.year}`
                   }
                   {formArea && ` · ${formArea}`}

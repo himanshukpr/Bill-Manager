@@ -105,6 +105,14 @@ function parseDateOnly(dateStr: string | null | undefined): Date {
   return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
 }
 
+// toDate is stored as start-of-next-day (half-open interval), e.g. Aug 1 for a July bill.
+// This helper subtracts 1 day so the display shows the actual last day (July 31).
+function parseToDateOnly(dateStr: string | null | undefined): Date {
+  const d = parseDateOnly(dateStr)
+  d.setDate(d.getDate() - 1)
+  return d
+}
+
 function normalizeRateType(value: unknown): string {
   const text = String(value ?? '').trim().toLowerCase()
   if (text.includes('buffalo')) return 'buffalo'
@@ -547,12 +555,9 @@ export default function HousesPage() {
   }, [summaryHouse, filteredSummaryLogs, summaryPeriod])
 
   const matchingBills = useMemo(() => {
-    const monthStart = new Date(summaryPeriod.year, summaryPeriod.month, 1)
-    const monthEnd = new Date(summaryPeriod.year, summaryPeriod.month + 1, 1)
+    // Use bill.month/year (1-indexed) to match summaryPeriod (0-indexed month)
     return summaryBills.filter(b => {
-      const bFrom = new Date(b.fromDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-01`)
-      const bTo = new Date(b.toDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-28`)
-      return bFrom < monthEnd && bTo > monthStart
+      return b.month === summaryPeriod.month + 1 && b.year === summaryPeriod.year
     })
   }, [summaryBills, summaryPeriod])
 
@@ -1106,12 +1111,8 @@ export default function HousesPage() {
           return d.getFullYear() === year && d.getMonth() === month - 1
         })
 
-        const monthStartPdf = new Date(year, month - 1, 1)
-        const monthEndPdf = new Date(year, month, 1)
         const matchingBills = bills.filter(b => {
-          const bFrom = new Date(b.fromDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-01`)
-          const bTo = new Date(b.toDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-28`)
-          return bFrom < monthEndPdf && bTo > monthStartPdf
+          return b.month === month && b.year === year
         })
 
         const summaryRowsData = buildHouseDeliverySummary(filteredLogs, year, month - 1)
@@ -1862,7 +1863,7 @@ export default function HousesPage() {
       const newLog: DeliveryLog = {
         id: 0, // Temporary ID for new deliveries
         houseId: summaryHouse?.id ?? 0,
-        deliveredAt: deliveryDate.toISOString(),
+        deliveredAt: `${deliveryDate.getFullYear()}-${String(deliveryDate.getMonth() + 1).padStart(2, '0')}-${String(deliveryDate.getDate()).padStart(2, '0')}T00:00:00.000Z`,
         createdAt: new Date().toISOString(),
         shift: shift as 'morning' | 'evening' | 'shop',
         items: [],
@@ -2834,7 +2835,7 @@ export default function HousesPage() {
                     const latestPreviousBalance = Number(matchingBills[0].previousBalance ?? 0)
                     const dateRanges = matchingBills.map(b =>
                       b.fromDate && b.toDate
-                        ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${parseDateOnly(b.toDate).toLocaleDateString('en-IN')}`
+                        ? `${parseDateOnly(b.fromDate).toLocaleDateString('en-IN')} — ${parseToDateOnly(b.toDate).toLocaleDateString('en-IN')}`
                         : null
                     ).filter(Boolean)
 

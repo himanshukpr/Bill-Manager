@@ -151,10 +151,7 @@ function getYesterdayDatekey(): string {
 
 function buildDeliveredAtForDate(dateKey: string): string {
   const [year, month, day] = dateKey.split('-').map(Number)
-  const deliveredAt = new Date(year, month - 1, day)
-  const now = new Date()
-  deliveredAt.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0)
-  return deliveredAt.toISOString()
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00.000Z`
 }
 
 function formatDateTime(value: string) {

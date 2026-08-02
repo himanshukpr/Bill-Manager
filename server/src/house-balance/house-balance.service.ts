@@ -4,6 +4,7 @@ import { RecordPaymentDto } from './dto/payment.dto';
 import { ClosePeriodDto } from './dto/close-period.dto';
 import { BillsService } from '../bills/bills.service';
 import { BadRequestException } from '@nestjs/common';
+import { parseDateAsUTC, utcDayStart, utcDayEnd } from '../common/utils/date.util';
 
 @Injectable()
 export class HouseBalanceService {
@@ -60,7 +61,7 @@ export class HouseBalanceService {
           note: dto.note,
           discount: dto.discount || 0,
           dairyId,
-          ...(dto.paidAt ? { paidAt: new Date(dto.paidAt) } : {}),
+          ...(dto.paidAt ? { paidAt: parseDateAsUTC(dto.paidAt) } : {}),
           ...(dto.billIds ? { billIds: dto.billIds } : {}),
         },
       }),
@@ -167,7 +168,7 @@ export class HouseBalanceService {
     if (dto.note !== undefined) data.note = dto.note;
     if (dto.amount !== undefined) data.amount = dto.amount;
     if (dto.discount !== undefined) data.discount = dto.discount;
-    if (dto.paidAt !== undefined) data.paidAt = new Date(dto.paidAt);
+    if (dto.paidAt !== undefined) data.paidAt = parseDateAsUTC(dto.paidAt);
 
     const oldTotal = Number(payment.amount) + Number(payment.discount ?? 0);
     const newTotal =
@@ -295,10 +296,9 @@ export class HouseBalanceService {
     const tp = parseDateParts(toDate);
     if (!fp || !tp) throw new BadRequestException('Invalid date format');
 
-    const periodStart = new Date(fp.y, fp.mo, fp.d, 0, 0, 0, 0);
-    const periodEnd = new Date(tp.y, tp.mo, tp.d, 23, 59, 59, 999);
-
-    const toDateStorage = new Date(tp.y, tp.mo, tp.d, 0, 0, 0, 0);
+    const periodStart = utcDayStart(fp.y, fp.mo, fp.d);
+    const toDateStorage = utcDayStart(tp.y, tp.mo, tp.d + 1);
+    const periodEnd = new Date(toDateStorage.getTime() - 1);
     const month = tp.mo + 1;
     const year = tp.y;
 
@@ -398,7 +398,7 @@ export class HouseBalanceService {
           month,
           year,
           fromDate: periodStart,
-          toDate: toDateStorage,
+          toDate: periodEnd,
           totalAmount: billTotal,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           items: billItems as any,

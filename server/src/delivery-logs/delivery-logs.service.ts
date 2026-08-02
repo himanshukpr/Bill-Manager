@@ -10,6 +10,7 @@ import {
   CreateDeliveryLogDto,
   UpdateDeliveryLogDto,
 } from './dto/delivery-log.dto';
+import { parseDateAsUTC } from '../common/utils/date.util';
 
 type UserInfo = {
   uuid: string;
@@ -79,7 +80,7 @@ export class DeliveryLogsService {
       closingBalance,
       ...(typeof supplierId === 'string' ? { supplierId } : {}),
       ...(dto.note ? { note: dto.note } : {}),
-      ...(dto.deliveredAt ? { deliveredAt: new Date(dto.deliveredAt) } : {}),
+      ...(dto.deliveredAt ? { deliveredAt: parseDateAsUTC(dto.deliveredAt) } : {}),
     };
 
     const [updatedBalance, log] = await this.prisma.$transaction([
