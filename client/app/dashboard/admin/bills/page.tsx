@@ -712,6 +712,10 @@ export default function BillsPage() {
       const borderColor: [number, number, number] = [0, 0, 0]
       const mutedColor: [number, number, number] = [35, 35, 35]
 
+      const BILLS_PER_PAGE = 6
+      const ROWS_PER_PAGE = 3
+      const COLS_PER_ROW = 2
+
       const getBillItemCount = (bill: Bill & { house: NonNullable<Bill['house']> }) => {
         const items = buildPrintableBillItems(bill.items ?? [], dairySettings.dedicatedItemNames ?? [])
         return items.length
@@ -860,11 +864,6 @@ export default function BillsPage() {
         doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardH - 2.5)
       }
 
-      let lastGroupKey = ''
-      let pageCount = 0
-      let pageY = PDF_PAGE_MARGIN
-      let pendingBill: (Bill & { house: NonNullable<Bill['house']> }) | null = null
-
       const startNewPage = () => {
         if (pageCount > 0) doc.addPage()
         pageCount++
@@ -874,75 +873,37 @@ export default function BillsPage() {
         doc.text(`Page No. ${pageCount}`, pageWidth - PDF_PAGE_MARGIN, pageHeight - 4, { align: 'right' })
       }
 
-      const drawGroupLabel = (label: string) => {
-        doc.setFont('helvetica', 'bold')
-        doc.setFontSize(9)
-        doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text(`--- ${label} ---`, pageWidth / 2, PDF_PAGE_MARGIN - 2, { align: 'center' })
-      }
+      // Process bills in chunks of 6 per page (3 rows × 2 columns)
+      let pageCount = 0
+      let pageY = PDF_PAGE_MARGIN
 
-      for (const bill of printBills) {
-        const shiftOrder = (bill as any)._shiftOrder ?? 3
-        const groupKey = shiftOrder === 1 ? `${shiftOrder}` : `${shiftOrder}:${(bill as any)._supplierName ?? ''}`
-        const groupChanged = groupKey !== lastGroupKey
+      for (let pageStart = 0; pageStart < printBills.length; pageStart += BILLS_PER_PAGE) {
+        startNewPage()
 
-        if (groupChanged && pageCount === 0) startNewPage()
-        if (groupChanged && pageY > PDF_PAGE_MARGIN) {
-          if (pendingBill) {
-            const cardH = calcCardHeight(getBillItemCount(pendingBill))
-            if (pageY + cardH > pageHeight - PDF_PAGE_MARGIN) {
-              startNewPage()
-            }
-            drawBillCard(pendingBill, PDF_PAGE_MARGIN, pageY, cardH)
-            pageY += cardH + PDF_CARD_GAP_Y
+        const pageBills = printBills.slice(pageStart, pageStart + BILLS_PER_PAGE)
+
+        // Draw bills in 3 rows of 2 columns
+        for (let row = 0; row < ROWS_PER_PAGE; row++) {
+          const leftBill = pageBills[row * COLS_PER_ROW]
+          const rightBill = pageBills[row * COLS_PER_ROW + 1]
+
+          if (!leftBill && !rightBill) break
+
+          const leftItemCount = leftBill ? getBillItemCount(leftBill) : 0
+          const rightItemCount = rightBill ? getBillItemCount(rightBill) : 0
+          const leftCardH = leftBill ? calcCardHeight(leftItemCount) : 0
+          const rightCardH = rightBill ? calcCardHeight(rightItemCount) : 0
+          const rowHeight = Math.max(leftCardH, rightCardH)
+
+          if (leftBill) {
+            drawBillCard(leftBill, PDF_PAGE_MARGIN, pageY, rowHeight)
           }
-          pendingBill = null
-          startNewPage()
-        }
-
-        if (groupChanged) drawGroupLabel((bill as any)._shiftLabel || 'OTHER')
-        lastGroupKey = groupKey
-
-        if (pendingBill) {
-          const leftItemCount = getBillItemCount(pendingBill)
-          const rightItemCount = getBillItemCount(bill)
-          const leftCardH = calcCardHeight(leftItemCount)
-          const rightCardH = calcCardHeight(rightItemCount)
-          const rowHeightNeeded = Math.max(leftCardH, rightCardH)
-
-          if (pageY + rowHeightNeeded > pageHeight - PDF_PAGE_MARGIN) {
-            const leftCardH = calcCardHeight(getBillItemCount(pendingBill))
-            if (pageY + leftCardH > pageHeight - PDF_PAGE_MARGIN) {
-              startNewPage()
-            }
-            drawBillCard(pendingBill, PDF_PAGE_MARGIN, pageY, leftCardH)
-            pageY += leftCardH + PDF_CARD_GAP_Y
-            startNewPage()
-            if (groupChanged) drawGroupLabel((bill as any)._shiftLabel || 'OTHER')
-            pendingBill = bill
-            continue
+          if (rightBill) {
+            drawBillCard(rightBill, PDF_PAGE_MARGIN + cardWidth + PDF_CARD_GAP_X, pageY, rowHeight)
           }
 
-          const maxH = Math.max(leftCardH, rightCardH)
-          const leftX = PDF_PAGE_MARGIN
-          const rightX = PDF_PAGE_MARGIN + cardWidth + PDF_CARD_GAP_X
-
-          drawBillCard(pendingBill, leftX, pageY, maxH)
-          drawBillCard(bill, rightX, pageY, maxH)
-          pageY += maxH + PDF_CARD_GAP_Y
-          pendingBill = null
-        } else {
-          pendingBill = bill
+          pageY += rowHeight + PDF_CARD_GAP_Y
         }
-      }
-
-      if (pendingBill) {
-        if (pageY + calcCardHeight(getBillItemCount(pendingBill)) > pageHeight - PDF_PAGE_MARGIN) {
-          startNewPage()
-          if (lastGroupKey) drawGroupLabel((pendingBill as any)._shiftLabel || 'OTHER')
-        }
-        const cardH = calcCardHeight(getBillItemCount(pendingBill))
-        drawBillCard(pendingBill, PDF_PAGE_MARGIN, pageY, cardH)
       }
 
       doc.save(`house-bills-${printYear}-${String(printMonth).padStart(2, '0')}.pdf`)

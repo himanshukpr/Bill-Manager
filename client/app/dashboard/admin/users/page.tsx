@@ -453,7 +453,7 @@ function UserSection({
                     {u.isVerified ? 'Verified' : 'Pending'}
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground truncate mt-1.5">{u.email}</p>
+                {/* <p className="text-xs text-muted-foreground truncate mt-1.5">{u.email}</p> */}
               </div>
             </div>
             {/* Actions */}
