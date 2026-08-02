@@ -122,11 +122,9 @@ if (!match) return new Date(dateStr)
   return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]))
 }
 
-// toDate is stored as start-of-next-day (half-open interval). Subtract 1 day for display.
+// toDate is stored as 23:59:59.999 of the last day. Parse date part directly.
 function parseToDateOnly(dateStr: string | null | undefined): Date {
-  const d = parseDateOnly(dateStr)
-  d.setDate(d.getDate() - 1)
-  return d
+  return parseDateOnly(dateStr)
 }
 
 function buildPrintableBillItems(items: BillItem[], dedicatedItemNames?: string[]): BillItem[] {

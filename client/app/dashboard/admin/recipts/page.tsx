@@ -86,11 +86,9 @@ function parseDateOnly(dateStr: string | null | undefined): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
-// toDate is stored as start-of-next-day (half-open interval). Subtract 1 day for display.
+// toDate is stored as 23:59:59.999 of the last day. Parse date part directly.
 function parseToDateOnly(dateStr: string | null | undefined): Date {
-  const d = parseDateOnly(dateStr)
-  d.setDate(d.getDate() - 1)
-  return d
+  return parseDateOnly(dateStr)
 }
 
 function normalizeRateType(value: unknown): string {
