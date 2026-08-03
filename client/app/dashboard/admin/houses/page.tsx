@@ -9,7 +9,7 @@ import {
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate, type User } from '@/lib/api'
-import { getSessionAuth, getAuthHeader } from '@/lib/auth'
+import { getDairyIdFromCookie, getSessionAuth, getAuthHeader } from '@/lib/auth'
 import { fetchApi } from '@/lib/api-base'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
@@ -380,6 +380,7 @@ const emptyConfigForm: HouseConfigForm = {
 type ShiftFilter = 'all' | 'morning' | 'evening' | 'shop'
 type PaymentFilter = 'all' | 'clear' | 'pending' | 'advance'
 type HouseStatusFilter = 'activated' | 'deactivated' | 'all'
+type SupplierFilter = 'all' | string
 type HouseToggleAction = 'deactivate' | 'reactivate' | 'delete'
 type ToggleDialogMode = 'deactivate-confirm' | 'inactive-choice' | null
 
@@ -431,7 +432,8 @@ function getFilteredHouses(houses: House[], query: string): House[] {
 
 export default function HousesPage() {
   const cachedHouses = useLiveQuery(() => db.houses.toArray())
-  const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
+  const dairyId = getDairyIdFromCookie()
+  const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').filter(u => !dairyId || u.dairyId === dairyId).toArray())
   const houses = useMemo(() => (cachedHouses ?? []).filter((h) => h.id > 0), [cachedHouses])
   const suppliers = useMemo(() => cachedSuppliers ?? [], [cachedSuppliers])
   const [hydrated, setHydrated] = useState(false)
@@ -439,6 +441,7 @@ export default function HousesPage() {
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>('all')
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all')
   const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('activated')
+  const [supplierFilter, setSupplierFilter] = useState<SupplierFilter>('all')
   const [form, setForm] = useState<HouseForm>(emptyForm)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -793,11 +796,12 @@ export default function HousesPage() {
     const rowHeight = 8
     const paddingX = 2
     const lineHeight = 3.6
+    const emptyColWidth = 14
 
     const paymentsExist = paymentSummaryRows.length > 0
     const splitX = 94
     const rightSideX = paymentsExist ? splitX : leftMargin
-    const rightTableWidth = paymentsExist ? (pageWidth - leftMargin - splitX) : (pageWidth - leftMargin - leftMargin)
+    const rightTableWidth = paymentsExist ? (pageWidth - leftMargin - splitX - emptyColWidth) : (pageWidth - leftMargin - leftMargin - emptyColWidth)
     const productColWidth = monthLabels.length > 0 ? Math.max(50, Math.min(68, rightTableWidth * 0.4)) : rightTableWidth
     const monthColWidth = monthLabels.length > 0 ? (rightTableWidth - productColWidth) / monthLabels.length : 0
 
@@ -816,11 +820,13 @@ export default function HousesPage() {
       bold = false,
       fillColor: [number, number, number] = [255, 255, 255],
       textColor: [number, number, number] = [17, 24, 39],
+      fontSize = 10,
     ) => {
       doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
       doc.setDrawColor(210, 214, 220)
       doc.rect(x, y, width, height, 'FD')
       doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setFontSize(fontSize)
       doc.setTextColor(textColor[0], textColor[1], textColor[2])
       const lines = Array.isArray(text) ? text : toLines(text, width)
       const contentHeight = lines.length * lineHeight
@@ -876,82 +882,70 @@ export default function HousesPage() {
       const x = rightSideX + productColWidth + (index * monthColWidth)
       drawCell(x, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
     })
+    drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, headerHeight, '', 'left', true, [17, 24, 39], [255, 255, 255])
 
     summaryY += headerHeight
 
     if (pdfMonthlyProductSummary.length === 0) {
-      drawCell(rightSideX, summaryY, rightTableWidth, rowHeight, 'No product data available', 'left', false)
+      drawCell(rightSideX, summaryY, rightTableWidth + emptyColWidth, rowHeight, 'No product data available', 'left', false)
       summaryY += rowHeight
     } else {
       pdfMonthlyProductSummary.forEach((row) => {
         if (summaryY > pageHeight - bottom - rowHeight) {
           doc.addPage()
           summaryY = 10
-          drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
-          monthLabels.forEach((label, index) => {
-            const x = rightSideX + productColWidth + (index * monthColWidth)
-            drawCell(x, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
-          })
-          summaryY += headerHeight
-        }
-
-        const productTotal = pdfMonthlyProductSummary.find((item) => item.product === row.product)
-        const rowValues = monthKeys.map((monthKey) => {
-          const [year, month] = monthKey.split('-').map(Number)
-          const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
-          return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
-        })
-
-        const productLines = toLines(row.product, productColWidth)
-        const valueLines = rowValues.map((value) => toLines(value, monthColWidth))
-        const maxLines = Math.max(productLines.length, ...valueLines.map((lines) => lines.length))
-        const cellHeight = Math.max(rowHeight, (maxLines * lineHeight) + 4)
-
-        drawCell(rightSideX, summaryY, productColWidth, cellHeight, productLines, 'left')
-        valueLines.forEach((value, index) => {
-          const x = rightSideX + productColWidth + (index * monthColWidth)
-          drawCell(x, summaryY, monthColWidth, cellHeight, value, 'right')
-        })
-        summaryY += cellHeight
-      })
-
-      if (summaryY > pageHeight - bottom - rowHeight) {
-        doc.addPage()
-        summaryY = 10
         drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
         monthLabels.forEach((label, index) => {
           const x = rightSideX + productColWidth + (index * monthColWidth)
           drawCell(x, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
         })
+        drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, headerHeight, '', 'left', true, [17, 24, 39], [255, 255, 255])
         summaryY += headerHeight
       }
 
-      // Total row
-      const pdfTotalAmount = pdfMonthlyProductSummary.reduce((sum, row) => sum + row.totalAmount, 0)
-      drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
+      const productTotal = pdfMonthlyProductSummary.find((item) => item.product === row.product)
+      const rowValues = monthKeys.map((monthKey) => {
+        const [year, month] = monthKey.split('-').map(Number)
+        const monthData = row.months.find((item) => item.year === year && item.month === month - 1)
+        return monthData ? `${monthData.quantity.toLocaleString('en-IN')}L - Rs ${(productTotal?.totalAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'
+      })
+
+      const productLines = toLines(row.product, productColWidth)
+      const valueLines = rowValues.map((value) => toLines(value, monthColWidth))
+      const maxLines = Math.max(productLines.length, ...valueLines.map((lines) => lines.length))
+      const cellHeight = Math.max(rowHeight, (maxLines * lineHeight) + 4)
+
+      drawCell(rightSideX, summaryY, productColWidth, cellHeight, productLines, 'left')
+      valueLines.forEach((value, index) => {
+        const x = rightSideX + productColWidth + (index * monthColWidth)
+        drawCell(x, summaryY, monthColWidth, cellHeight, value, 'right', false, [255, 255, 255], [17, 24, 39])
+      })
+      drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, cellHeight, '', 'left')
+      summaryY += cellHeight
+    })
+
+    if (summaryY > pageHeight - bottom - rowHeight) {
+      doc.addPage()
+      summaryY = 10
+      drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+      monthLabels.forEach((label, index) => {
+        const x = rightSideX + productColWidth + (index * monthColWidth)
+        drawCell(x, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+      })
+      drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, headerHeight, '', 'left', true, [17, 24, 39], [255, 255, 255])
+      summaryY += headerHeight
+    }
+
+    // Previous Balance row
+    if (summaryTotals.previousBalance > 0) {
+      drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
       monthLabels.forEach((_, index) => {
         const x = rightSideX + productColWidth + (index * monthColWidth)
-        drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${pdfTotalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
+        drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${summaryTotals.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
       })
+      drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, rowHeight, '', 'left', false, [255, 255, 255])
       summaryY += rowHeight
-
-      // Previous Balance row
-      if (summaryTotals.previousBalance > 0) {
-        drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
-        monthLabels.forEach((_, index) => {
-          const x = rightSideX + productColWidth + (index * monthColWidth)
-          drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${summaryTotals.previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
-        })
-        summaryY += rowHeight
-
-        const grandTotalWithPrev = pdfTotalAmount + summaryTotals.previousBalance
-        drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
-        monthLabels.forEach((_, index) => {
-          const x = rightSideX + productColWidth + (index * monthColWidth)
-          drawCell(x, summaryY, monthColWidth, rowHeight, `Rs ${grandTotalWithPrev.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
-        })
-        summaryY += rowHeight
-      }
+    }
     }
 
     currentY = Math.max(paymentsEndY, summaryY) + 4
@@ -1064,23 +1058,25 @@ export default function HousesPage() {
         return Array.isArray(lines) ? lines : [String(lines)]
       }
 
-      const drawCell = (
-        x: number, y: number, width: number, height: number,
-        text: string | string[], align: 'left' | 'right' = 'left',
-        bold = false, fillColor: [number, number, number] = [255, 255, 255],
-        textColor: [number, number, number] = [17, 24, 39],
-      ) => {
-        doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
-        doc.setDrawColor(210, 214, 220)
-        doc.rect(x, y, width, height, 'FD')
-        doc.setFont('helvetica', bold ? 'bold' : 'normal')
-        doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        const lines = Array.isArray(text) ? text : toLines(text, width)
-        const contentHeight = lines.length * lineHeight
-        const textY = y + Math.max(2, (height - contentHeight) / 2) + (lineHeight - 1)
-        const textX = align === 'right' ? x + width - paddingX : x + paddingX
-        doc.text(lines, textX, textY, { align })
-      }
+    const drawCell = (
+      x: number, y: number, width: number, height: number,
+      text: string | string[], align: 'left' | 'right' = 'left',
+      bold = false, fillColor: [number, number, number] = [255, 255, 255],
+      textColor: [number, number, number] = [17, 24, 39],
+      fontSize = 10,
+    ) => {
+      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
+      doc.setDrawColor(210, 214, 220)
+      doc.rect(x, y, width, height, 'FD')
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setFontSize(fontSize)
+      doc.setTextColor(textColor[0], textColor[1], textColor[2])
+      const lines = Array.isArray(text) ? text : toLines(text, width)
+      const contentHeight = lines.length * lineHeight
+      const textY = y + Math.max(2, (height - contentHeight) / 2) + (lineHeight - 1)
+      const textX = align === 'right' ? x + width - paddingX : x + paddingX
+      doc.text(lines, textX, textY, { align })
+    }
 
       // Track page numbers for each house (index 0 = index page, then house pages)
       const houseStartPages: number[] = []
@@ -1211,12 +1207,13 @@ export default function HousesPage() {
         const monthKeys = [`${year}-${String(month).padStart(2, '0')}`]
         const monthLabels = [monthLabel]
 
-        const paymentsExist = payRows.length > 0
-        const splitX = 90
-        const rightSideX = paymentsExist ? splitX : leftMargin
-        const rightTableWidth = paymentsExist ? (pageWidth - leftMargin - splitX) : (pageWidth - leftMargin - leftMargin)
-        const productColWidth = Math.max(45, Math.min(65, rightTableWidth * 0.4))
-        const monthColWidth = (rightTableWidth - productColWidth)
+         const paymentsExist = payRows.length > 0
+         const splitX = 90
+         const rightSideX = paymentsExist ? splitX : leftMargin
+         const emptyColWidth = 14
+         const rightTableWidth = paymentsExist ? (pageWidth - leftMargin - splitX - emptyColWidth) : (pageWidth - leftMargin - leftMargin - emptyColWidth)
+         const productColWidth = Math.max(45, Math.min(65, rightTableWidth * 0.4))
+         const monthColWidth = (rightTableWidth - productColWidth)
 
         let paymentsEndY = currentY
         if (paymentsExist) {
@@ -1252,73 +1249,66 @@ export default function HousesPage() {
         doc.setTextColor(17, 24, 39)
         doc.text('Monthly Product Summary', rightSideX, currentY)
 
-        let summaryY = currentY + 4
-        drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
-        monthLabels.forEach((label, idx) => {
-          drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
-        })
-        summaryY += headerHeight
+         let summaryY = currentY + 4
+         drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+         monthLabels.forEach((label, idx) => {
+           drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+         })
+         drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, headerHeight, '', 'left', true, [17, 24, 39], [255, 255, 255])
+         summaryY += headerHeight
 
-        if (monthlyProdSummary.length === 0) {
-          drawCell(rightSideX, summaryY, rightTableWidth, rowHeight, 'No product data available', 'left')
-          summaryY += rowHeight
-        } else {
-          for (const row of monthlyProdSummary) {
-            if (summaryY > pageHeight - bottom - rowHeight) {
-              doc.addPage()
-              summaryY = 10
-              drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
-              monthLabels.forEach((label, idx) => {
-                drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
-              })
-              summaryY += headerHeight
-            }
+         if (monthlyProdSummary.length === 0) {
+           drawCell(rightSideX, summaryY, rightTableWidth + emptyColWidth, rowHeight, 'No product data available', 'left')
+           summaryY += rowHeight
+         } else {
+           for (const row of monthlyProdSummary) {
+             if (summaryY > pageHeight - bottom - rowHeight) {
+               doc.addPage()
+               summaryY = 10
+               drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+               monthLabels.forEach((label, idx) => {
+                 drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+               })
+               drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, headerHeight, '', 'left', true, [17, 24, 39], [255, 255, 255])
+               summaryY += headerHeight
+             }
 
-            const prodTotal = productTotals.find(pt => pt.product === row.product)
-            const rowValues = monthKeys.map(() => prodTotal ? `${row.totalQuantity.toLocaleString('en-IN')}L - Rs ${prodTotal.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-')
+             const prodTotal = productTotals.find(pt => pt.product === row.product)
+             const rowValues = monthKeys.map(() => prodTotal ? `${row.totalQuantity.toLocaleString('en-IN')}L - Rs ${prodTotal.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-')
 
-            const prodLines = toLines(row.product, productColWidth)
-            const valLines = rowValues.map(v => toLines(v, monthColWidth))
-            const maxLines = Math.max(prodLines.length, ...valLines.map(l => l.length))
-            const cellHeight = Math.max(rowHeight, maxLines * lineHeight + 4)
+             const prodLines = toLines(row.product, productColWidth)
+             const valLines = rowValues.map(v => toLines(v, monthColWidth))
+             const maxLines = Math.max(prodLines.length, ...valLines.map(l => l.length))
+             const cellHeight = Math.max(rowHeight, maxLines * lineHeight + 4)
 
-            drawCell(rightSideX, summaryY, productColWidth, cellHeight, prodLines, 'left')
-            valLines.forEach((lines, idx) => {
-              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, cellHeight, lines, 'right')
-            })
-            summaryY += cellHeight
-          }
+             drawCell(rightSideX, summaryY, productColWidth, cellHeight, prodLines, 'left')
+             valLines.forEach((lines, idx) => {
+                drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, cellHeight, lines, 'right', false, [255, 255, 255], [17, 24, 39])
+             })
+             drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, cellHeight, '', 'left')
+             summaryY += cellHeight
+           }
 
-          if (summaryY > pageHeight - bottom - rowHeight) {
-            doc.addPage()
-            summaryY = 10
-            drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
-            monthLabels.forEach((label, idx) => {
-              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
-            })
-            summaryY += headerHeight
-          }
+           if (summaryY > pageHeight - bottom - rowHeight) {
+             doc.addPage()
+             summaryY = 10
+             drawCell(rightSideX, summaryY, productColWidth, headerHeight, 'Product', 'left', true, [17, 24, 39], [255, 255, 255])
+             monthLabels.forEach((label, idx) => {
+               drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, headerHeight, label, 'right', true, [17, 24, 39], [255, 255, 255])
+             })
+             drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, headerHeight, '', 'left', true, [17, 24, 39], [255, 255, 255])
+             summaryY += headerHeight
+           }
 
-          drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Total', 'left', true, [248, 250, 252])
-          monthLabels.forEach((_, idx) => {
-            drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [248, 250, 252])
-          })
-          summaryY += rowHeight
-
-          if (previousBalance > 0) {
-            drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
-            monthLabels.forEach((_, idx) => {
-              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
-            })
-            summaryY += rowHeight
-            const grandWithPrev = grandTotal + previousBalance
-            drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Grand Total', 'left', true, [255, 255, 255])
-            monthLabels.forEach((_, idx) => {
-              drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${grandWithPrev.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
-            })
-            summaryY += rowHeight
-          }
-        }
+             if (previousBalance > 0) {
+               drawCell(rightSideX, summaryY, productColWidth, rowHeight, 'Previous Balance', 'left', true, [255, 255, 255])
+               monthLabels.forEach((_, idx) => {
+                 drawCell(rightSideX + productColWidth + idx * monthColWidth, summaryY, monthColWidth, rowHeight, `Rs ${previousBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, 'right', true, [255, 255, 255])
+               })
+               drawCell(rightSideX + productColWidth + (monthLabels.length * monthColWidth), summaryY, emptyColWidth, rowHeight, '', 'left', false, [255, 255, 255])
+               summaryY += rowHeight
+             }
+           }
 
         currentY = Math.max(paymentsEndY, summaryY) + 4
 
@@ -1470,18 +1460,24 @@ export default function HousesPage() {
 
       if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
 
+      if (supplierFilter !== 'all') {
+        const config = house.configs?.[0]
+        const supplier = config?.supplierId ? suppliers.find(s => s.uuid === config.supplierId) : null
+        if (!supplier || supplier.username !== supplierFilter) return false
+      }
+
       return true
     })
 
     return getFilteredHouses(filtered, query)
-  }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
+  }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter, supplierFilter, suppliers])
 
   const visibleFiltered = useMemo(() => filtered.slice(0, visibleHouseCount), [filtered, visibleHouseCount])
   const hasMoreVisibleHouses = visibleHouseCount < filtered.length
 
   useEffect(() => {
     setVisibleHouseCount(HOUSES_PER_PAGE)
-  }, [filtered.length, search, shiftFilter, paymentFilter, houseStatusFilter])
+  }, [filtered.length, search, shiftFilter, paymentFilter, houseStatusFilter, supplierFilter])
 
   const loadMoreHouses = useCallback(() => {
     if (houseLoadMoreLockRef.current) return
@@ -1547,24 +1543,30 @@ export default function HousesPage() {
     }
   }, [hasMoreVisibleHouses, loadMoreHouses])
 
-  const searchSuggestions = useMemo(() => {
-    const query = search.trim()
-    if (!query) return []
+   const searchSuggestions = useMemo(() => {
+     const query = search.trim()
+     if (!query) return []
 
-    const filtered = houses.filter((house) => {
-      const shift = getHouseShift(house)
-      if (shiftFilter !== 'all' && shift !== shiftFilter) return false
+     const filtered = houses.filter((house) => {
+       const shift = getHouseShift(house)
+       if (shiftFilter !== 'all' && shift !== shiftFilter) return false
 
-      const paymentStatus = getHousePaymentStatus(house)
-      if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
+       const paymentStatus = getHousePaymentStatus(house)
+       if (paymentFilter !== 'all' && paymentStatus !== paymentFilter) return false
 
-      if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
+       if (!matchesHouseStatusFilter(house, houseStatusFilter)) return false
 
-      return true
-    })
+       if (supplierFilter !== 'all') {
+         const config = house.configs?.[0]
+         const supplier = config?.supplierId ? suppliers.find(s => s.uuid === config.supplierId) : null
+         if (!supplier || supplier.username !== supplierFilter) return false
+       }
 
-    return getFilteredHouses(filtered, query).slice(0, 6)
-  }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter])
+       return true
+     })
+
+     return getFilteredHouses(filtered, query).slice(0, 6)
+   }, [houses, search, shiftFilter, paymentFilter, houseStatusFilter, supplierFilter, suppliers])
 
   const handleSearchSelect = useCallback((value: string) => {
     setSearch(value)
@@ -2062,36 +2064,38 @@ export default function HousesPage() {
     doc.setFontSize(16)
     doc.text(title, 14, 16)
 
-    autoTable(doc, {
-      startY: 24,
-      head: [['House No', 'Address', 'Phone No', 'Balance']],
-      body: filtered.filter(h => h.active).map((house) => [
-        String(house.houseNo),
-        house.area || '-',
-        house.phoneNo || '-',
-        house.balance ? `₹${(Number(house.balance.previousBalance) + Number(house.balance.currentBalance)).toLocaleString('en-IN')}` : '-',
-      ]),
-      styles: {
-        font: 'helvetica',
-        fontSize: 9,
-        cellPadding: 3,
-        overflow: 'linebreak',
-      },
-      headStyles: {
-        fillColor: [17, 24, 39],
-        textColor: 255,
-      },
-      columnStyles: {
-        0: { cellWidth: 30 },
-        1: { cellWidth: 50 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 35 },
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      margin: { top: 30, left: 14, right: 14 },
-    })
+     autoTable(doc, {
+       startY: 24,
+       head: [['House No', 'Address', 'Phone No', 'Pre Bal', '']],
+       body: filtered.filter(h => h.active).map((house) => [
+         String(house.houseNo),
+         house.area || '-',
+         house.phoneNo || '-',
+         house.balance ? `Rs ${Number(house.balance.previousBalance).toLocaleString('en-IN')}` : '-',
+         '',
+       ]),
+       styles: {
+         font: 'helvetica',
+         fontSize: 9,
+         cellPadding: 3,
+         overflow: 'linebreak',
+       },
+       headStyles: {
+         fillColor: [17, 24, 39],
+         textColor: 255,
+       },
+       columnStyles: {
+         0: { cellWidth: 25 },
+         1: { cellWidth: 45 },
+         2: { cellWidth: 35 },
+         3: { cellWidth: 30 },
+         4: { cellWidth: 15 },
+       },
+       alternateRowStyles: {
+         fillColor: [248, 250, 252],
+       },
+       margin: { top: 30, left: 14, right: 14 },
+     })
 
     doc.save(`houses-list-${new Date().toISOString().split('T')[0]}.pdf`)
     toast.success('Houses exported successfully')
@@ -2150,7 +2154,7 @@ export default function HousesPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
         <Select value={shiftFilter} onValueChange={(value) => setShiftFilter(value as ShiftFilter)}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder="All Houses" />
@@ -2183,6 +2187,20 @@ export default function HousesPage() {
             <SelectItem value="all">All Houses</SelectItem>
             <SelectItem value="activated">Activated</SelectItem>
             <SelectItem value="deactivated">Deactivated</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={supplierFilter} onValueChange={(value) => setSupplierFilter(value as SupplierFilter)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All Suppliers" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Suppliers</SelectItem>
+            {suppliers.map(supplier => (
+              <SelectItem key={supplier.uuid} value={supplier.username}>
+                {supplier.username}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

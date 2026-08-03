@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download, AlertTriangle } from 'lucide-react'
-import { billsApi, deliveryLogsApi, housesApi, balanceApi, dairiesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory } from '@/lib/api'
+import { billsApi, deliveryLogsApi, housesApi, balanceApi, dairiesApi, productRatesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory, type ProductRate } from '@/lib/api'
 import { getDairySession } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
@@ -93,9 +93,19 @@ function formatPlainAmount(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '0'
 }
 
-function formatQtyLabel(value: number): string {
+function getUnitForItem(name: string, productRates: ProductRate[]): string {
+  if (!name || productRates.length === 0) return 'L'
+  const lower = name.trim().toLowerCase()
+  const rate = productRates.find(r => r.name.trim().toLowerCase() === lower)
+  if (rate && rate.unit) return rate.unit
+  if (lower === 'cow milk' || lower === 'buffalo milk' || lower.startsWith('cow milk') || lower.startsWith('buffalo milk')) return 'L'
+  return ''
+}
+
+function formatQtyLabel(value: number, itemName?: string, productRates: ProductRate[] = []): string {
   if (!Number.isFinite(value) || value <= 0) return ''
-  return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}L`
+  const unit = itemName ? getUnitForItem(itemName, productRates) : 'L'
+  return unit ? `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')} ${unit}` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}`
 }
 
 function formatBillDate(value?: string): string {
@@ -298,7 +308,8 @@ export default function BillsPage() {
   const [filterYear, setFilterYear] = useState<string>(String(CURRENT_YEAR))
   const [printMonth, setPrintMonth] = useState<string>(String(new Date().getMonth() + 1))
   const [printYear, setPrintYear] = useState<string>(String(CURRENT_YEAR))
-  const [dairySettings, setDairySettings] = useState<{ dedicatedItemNames?: string[] }>({ dedicatedItemNames: [] })
+   const [dairySettings, setDairySettings] = useState<{ dedicatedItemNames?: string[] }>({ dedicatedItemNames: [] })
+   const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [pendingOpen, setPendingOpen] = useState(false)
   const [pendingData, setPendingData] = useState<Array<{ houseNo: string; phoneNo: string; lastBillAmount: number; receivedThisMonth: number; balance: number; shift: string; supplier: string; receiptedThisMonth: boolean; position: number }>>([])
   const [pendingLoading, setPendingLoading] = useState(false)
@@ -338,20 +349,22 @@ export default function BillsPage() {
       if (!hasLoadedOnceRef.current) {
         setLoading(true)
       }
-      const [billsData, housesData, settingsData] = await Promise.all([
-        billsApi.list({
-          month: filterMonth ? parseInt(filterMonth) : undefined,
-          year: filterYear ? parseInt(filterYear) : undefined,
-        }),
-        housesApi.list(),
-        dairiesApi.getSettings(),
-      ])
-      setBills(billsData)
-      setHouses(housesData)
-      setDairySettings({
-        dedicatedItemNames: (settingsData.dedicatedItemNames as string[]) ?? [],
-      })
-      hasLoadedOnceRef.current = true
+       const [billsData, housesData, settingsData, ratesData] = await Promise.all([
+         billsApi.list({
+           month: filterMonth ? parseInt(filterMonth) : undefined,
+           year: filterYear ? parseInt(filterYear) : undefined,
+         }),
+         housesApi.list(),
+         dairiesApi.getSettings(),
+         productRatesApi.list(),
+       ])
+       setBills(billsData)
+       setHouses(housesData)
+       setDairySettings({
+         dedicatedItemNames: (settingsData.dedicatedItemNames as string[]) ?? [],
+       })
+       setProductRates(ratesData)
+       hasLoadedOnceRef.current = true
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : 'Failed to load bills')
     } finally {
@@ -819,7 +832,7 @@ export default function BillsPage() {
           const values = [
             String(index + 1),
             item.name ? item.name.toUpperCase() : '',
-            isOther ? '' : formatQtyLabel(Number(item.qty ?? 0)),
+              isOther ? '' : formatQtyLabel(Number(item.qty ?? 0), item.name ?? '', productRates),
             isOther ? '' : (Number(item.rate ?? 0) ? formatPlainAmount(Number(item.rate ?? 0)) : ''),
             Number(item.amount ?? 0) ? formatPlainAmount(Number(item.amount ?? 0)) : '',
           ]
@@ -845,18 +858,13 @@ export default function BillsPage() {
         })
 
         const outstandingAmount = Number(bill.outstandingAmount ?? bill.totalAmount ?? 0)
-        const receipts = Math.max(0, Number(bill.totalAmount ?? 0) - outstandingAmount)
 
-        const receiptsY = footerStartY
-        const receiptsWidth = innerWidth * 0.68
-        const totalWidth = innerWidth - receiptsWidth
-        drawCell(tableX, receiptsY, receiptsWidth, 8, `THIS MONTH RECEIPTS: Rs. ${formatPlainAmount(receipts)}`, 'left', { bold: true, size: 8, fill: true })
-        drawCell(tableX + receiptsWidth, receiptsY, totalWidth, 8, '', 'center', { bold: true, size: 8.5, fill: true })
+        const totalWidth = innerWidth
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(8.5)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text('Total', tableX + receiptsWidth + 1.4, receiptsY + 4.5, { baseline: 'middle' })
-        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0) + previousBalance), tableX + innerWidth - 1.4, receiptsY + 4.5, { align: 'right', baseline: 'middle' })
+        doc.text('Total', tableX + innerWidth * 0.68 + 1.4, footerStartY + 4.5, { baseline: 'middle' })
+        doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0) + previousBalance), tableX + innerWidth - 1.4, footerStartY + 4.5, { align: 'right', baseline: 'middle' })
 
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(6.5)
@@ -1511,22 +1519,14 @@ export default function BillsPage() {
                     <span>Grand Total</span>
                     <span className="text-primary">₹{(Number(viewBill.totalAmount) + Number(viewBill.previousBalance)).toLocaleString('en-IN')}</span>
                   </div>
-                  <div className="flex justify-between text-sm text-yellow-400">
+                  {/* <div className="flex justify-between text-sm text-yellow-400">
                     <span>Pending Amount</span>
                     <span className="font-semibold">
                       {formatCurrency(
                         Number(viewBill.outstandingAmount) + Number(viewBill.previousBalance)
                       )}
                     </span>
-                  </div>
-                  {viewBill.outstandingAmount != null && (
-                    <div className={`flex justify-between text-sm border-t border-border pt-2 mt-1 ${Number(viewBill.outstandingAmount) <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                      <span className="font-medium">{Number(viewBill.outstandingAmount) <= 0 ? 'Status' : 'Outstanding Amount'}</span>
-                      <span className="font-bold">
-                        {Number(viewBill.outstandingAmount) <= 0 ? '✓ Fully Paid' : `₹${Number(viewBill.outstandingAmount).toLocaleString('en-IN')} remaining`}
-                      </span>
-                    </div>
-                  )}
+                  </div> */}
                 </div>
                 {viewBill.note && (
                   <div className="text-sm text-muted-foreground rounded-lg bg-muted/30 p-3">
