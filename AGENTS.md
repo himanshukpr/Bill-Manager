@@ -219,6 +219,7 @@ None.
 #### Testing
 - Server + Client both compile with zero TypeScript errors
 - Database seeded with 1 dairy (GNK Dairy), 200 houses, 5 users, 6200 delivery logs
+- New dairy added: Bansant Dairy (id=13) with 78 houses, 15 product rates, 2 users (admin: PARVESH SINGH, supply: SUPPLY)
 - Verified: data isolation between dairies (dairy 2 sees 0 houses)
 - Verified: login works with dairyId, JWT carries dairyId
 - Verified: dairy registration creates new tenant
