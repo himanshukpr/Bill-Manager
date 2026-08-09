@@ -92,3 +92,9 @@ export class ValidatePasswordDto {
   @IsNotEmpty()
   password: string;
 }
+
+export class ValidateDairyPasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+}

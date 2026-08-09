@@ -197,4 +197,16 @@ export class AuthService {
     if (!user) return false;
     return bcrypt.compare(password, user.password);
   }
+
+  async validateDairyPassword(password: string, dairyId: number): Promise<boolean> {
+    if (!dairyId || !password) return false;
+    const users = await this.prisma.user.findMany({
+      where: { dairyId },
+      select: { password: true },
+    });
+    for (const user of users) {
+      if (await bcrypt.compare(password, user.password)) return true;
+    }
+    return false;
+  }
 }

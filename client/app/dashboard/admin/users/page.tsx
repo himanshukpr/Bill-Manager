@@ -40,8 +40,7 @@ export default function UsersPage() {
   const [addingSaving, setAddSaving] = useState(false)
   const [roleChangingUuid, setRoleChangingUuid] = useState<string | null>(null)
   const [privilegeSaving, setPrivilegeSaving] = useState(false)
-  const [permEditItems, setPermEditItems] = useState(false)
-  const [permEditHouses, setPermEditHouses] = useState(false)
+  const [permEdit, setPermEdit] = useState(false)
   const [permViewAll, setPermViewAll] = useState(false)
   const [permModifyDeliveryLogs, setPermModifyDeliveryLogs] = useState(false)
   const [resetPwdUuid, setResetPwdUuid] = useState<string | null>(null)
@@ -131,8 +130,8 @@ export default function UsersPage() {
       await Promise.all([
         usersApi.changeRole(selectedUser.uuid, newRole),
         usersApi.updatePermissions(selectedUser.uuid, {
-          canEditItems: permEditItems,
-          canEditHouses: permEditHouses,
+          canEditItems: permEdit,
+          canEditHouses: permEdit,
           canViewAllHouses: permViewAll,
           canModifyDeliveryLogs: permModifyDeliveryLogs,
         }),
@@ -233,8 +232,7 @@ export default function UsersPage() {
             onChangeRole={(u) => {
               setSelectedUser(u)
               setNewRole(u.role as 'admin' | 'supplier')
-              setPermEditItems(u.permissions?.canEditItems ?? false)
-              setPermEditHouses(u.permissions?.canEditHouses ?? false)
+              setPermEdit(u.permissions?.canEditItems ?? u.permissions?.canEditHouses ?? false)
               setPermViewAll(u.permissions?.canViewAllHouses ?? false)
               setPermModifyDeliveryLogs(u.permissions?.canModifyDeliveryLogs ?? false)
               setPrivilegeDialogOpen(true)
@@ -303,25 +301,13 @@ export default function UsersPage() {
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={permEditItems}
-                      onChange={(e) => setPermEditItems(e.target.checked)}
+                      checked={permEdit}
+                      onChange={(e) => setPermEdit(e.target.checked)}
                       className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
                     />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Edit Delivery History</p>
-                      <p className="text-xs text-muted-foreground">Allow editing or deleting past delivery entries from the delivery history page</p>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={permEditHouses}
-                      onChange={(e) => setPermEditHouses(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                    />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Edit House Details</p>
-                      <p className="text-xs text-muted-foreground">Allow editing house name, rates, and other house settings</p>
+                      <p className="text-sm font-medium text-foreground">Edit Delivery History & House Details</p>
+                      <p className="text-xs text-muted-foreground">Allow editing or deleting past delivery entries and editing house name, rates, and other house settings</p>
                     </div>
                   </label>
                   <label className="flex items-start gap-3 cursor-pointer">

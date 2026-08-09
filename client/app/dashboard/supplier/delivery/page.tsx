@@ -78,7 +78,7 @@ import {
     TableRow,
 } from '@/components/ui/table'
 import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
-import { getSessionAuth, getAuthHeader, getDairyIdFromCookie, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, getAuthHeader, getDairyIdFromCookie, apiValidateDairyPassword, type SessionAuth } from '@/lib/auth'
 import { isStoredDateInMonth, getStoredDateKey, formatStoredDateKey } from '@/lib/date-utils'
 import { fetchApi as directFetch } from '@/lib/api-base'
 import { toast } from 'sonner'
@@ -548,6 +548,10 @@ export default function DeliveryPage() {
     const [summaryBalance, setSummaryBalance] = useState<HouseBalance | null>(null)
     const summaryRequestIdRef = useRef(0)
     const [swipeDeleteConfirmIndex, setSwipeDeleteConfirmIndex] = useState<number | null>(null)
+    const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
+    const [passwordValue, setPasswordValue] = useState('')
+    const [passwordSaving, setPasswordSaving] = useState(false)
+    const pendingPasswordActionRef = useRef<(() => void | Promise<void>) | null>(null)
 
     const containerStyle = useMemo(
         () => ({ height: availableHeight ? `${availableHeight}px` : 'calc(100dvh - 0.5rem)' }),
@@ -1026,13 +1030,6 @@ export default function DeliveryPage() {
     const confirmClearToday = useCallback(async () => {
         if (!currentHouse || !selectedShift) return
 
-        const canModify = auth?.permissions?.canModifyDeliveryLogs === true
-        if (!canModify) {
-            toast.error('You do not have permission to modify delivery logs')
-            setClearTodayDialogOpen(false)
-            return
-        }
-
         const toDelete = currentHouseLogs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         if (toDelete.length === 0) {
@@ -1041,57 +1038,67 @@ export default function DeliveryPage() {
             return
         }
 
-        // Update local state immediately
-        setCurrentHouseLogs([])
-        setCompletedHouses((prev) => {
-            const next = new Set(prev)
-            next.delete(currentHouse.id)
-            return next
-        })
-        setAllocatedHouseProducts((prev) => {
-            const next = { ...prev }
-            delete next[currentHouse.id]
-            return next
-        })
-        setDeliveryItems([...defaultDeliveryItems])
-
-        const deletedProducts = new Map<string, number>()
-        for (const log of toDelete) {
-            for (const item of log.items) {
-                const name = item.milkType.trim()
-                if (!name) continue
-                deletedProducts.set(name, (deletedProducts.get(name) ?? 0) + Number(item.qty || 0))
-            }
+        if (houseLogsBlockedByBill(toDelete)) {
+            toast.error('Cannot clear — a bill has already been generated for this delivery')
+            setClearTodayDialogOpen(false)
+            return
         }
-        setSelectedDateProductTotals((prev) => {
-            const map = new Map(prev.map((p) => [p.productName, p.qty]))
-            for (const [name, qty] of deletedProducts) {
-                const current = map.get(name) ?? 0
-                const remaining = current - qty
-                if (remaining <= 0) map.delete(name)
-                else map.set(name, remaining)
+
+        const performClear = async () => {
+            // Update local state immediately
+            setCurrentHouseLogs([])
+            setCompletedHouses((prev) => {
+                const next = new Set(prev)
+                next.delete(currentHouse.id)
+                return next
+            })
+            setAllocatedHouseProducts((prev) => {
+                const next = { ...prev }
+                delete next[currentHouse.id]
+                return next
+            })
+            setDeliveryItems([...defaultDeliveryItems])
+
+            const deletedProducts = new Map<string, number>()
+            for (const log of toDelete) {
+                for (const item of log.items) {
+                    const name = item.milkType.trim()
+                    if (!name) continue
+                    deletedProducts.set(name, (deletedProducts.get(name) ?? 0) + Number(item.qty || 0))
+                }
             }
-            return Array.from(map.entries())
-                .map(([productName, qty]) => ({ productName, qty }))
-                .sort((a, b) => b.qty - a.qty)
-        })
+            setSelectedDateProductTotals((prev) => {
+                const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                for (const [name, qty] of deletedProducts) {
+                    const current = map.get(name) ?? 0
+                    const remaining = current - qty
+                    if (remaining <= 0) map.delete(name)
+                    else map.set(name, remaining)
+                }
+                return Array.from(map.entries())
+                    .map(([productName, qty]) => ({ productName, qty }))
+                    .sort((a, b) => b.qty - a.qty)
+            })
 
-        // Delete from server first, THEN clear cache so re-fetch gets empty result
-        await Promise.all(toDelete.map((log) => deliveryLogsApi.delete(log.id)))
+            // Delete from server first, THEN clear cache so re-fetch gets empty result
+            await Promise.all(toDelete.map((log) => deliveryLogsApi.delete(log.id)))
 
-        setHouseLogsCache((prev) => {
-            const next = { ...prev }
-            delete next[currentHouse.id]
-            return next
-        })
-        setLoadedHouseLogIds((prev) => {
-            const next = new Set(prev)
-            next.delete(currentHouse.id)
-            return next
-        })
+            setHouseLogsCache((prev) => {
+                const next = { ...prev }
+                delete next[currentHouse.id]
+                return next
+            })
+            setLoadedHouseLogIds((prev) => {
+                const next = new Set(prev)
+                next.delete(currentHouse.id)
+                return next
+            })
 
-        toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
-        setClearTodayDialogOpen(false)
+            toast.success(`Deleted ${toDelete.length} delivery log(s) from selected date`)
+            setClearTodayDialogOpen(false)
+        }
+
+        requireDairyPassword(performClear)
     }, [currentHouse, currentHouseLogs, selectedShift, selectedDate])
 
     const handleOpenHistory = useCallback(async () => {
@@ -1114,6 +1121,40 @@ export default function DeliveryPage() {
             setHistoryLoading(false)
         }
     }, [currentHouse])
+
+    function houseLogsBlockedByBill(logs: DeliveryLog[]): boolean {
+        return logs.some((log) => log.billGenerated === true)
+    }
+
+    const requireDairyPassword = useCallback((action: () => void | Promise<void>) => {
+        pendingPasswordActionRef.current = action
+        setPasswordValue('')
+        setPasswordDialogOpen(true)
+    }, [])
+
+    async function handleDairyPasswordVerify() {
+        if (!passwordValue.trim()) {
+            toast.error('Enter a password')
+            return
+        }
+        setPasswordSaving(true)
+        try {
+            const valid = await apiValidateDairyPassword(passwordValue.trim())
+            if (!valid) {
+                toast.error('Invalid password')
+                setPasswordValue('')
+                return
+            }
+            setPasswordDialogOpen(false)
+            const action = pendingPasswordActionRef.current
+            pendingPasswordActionRef.current = null
+            if (action) await action()
+        } catch (error: unknown) {
+            toast.error(summaryGetErrorMessage(error))
+        } finally {
+            setPasswordSaving(false)
+        }
+    }
 
     const summaryFilteredSummaryLogs = useMemo(() => {
         if (!summaryFromDate || !summaryToDate) return summaryLogs
@@ -1406,40 +1447,56 @@ export default function DeliveryPage() {
             return
         }
 
-        if (row.log) {
-            setEditingDeliveryLog(row.log)
-            const normalized = (row.log.items ?? []).map((item) => {
-                const milkType = summaryNormalizeMilkType(item.milkType)
-                const qty = Number(item.qty ?? 0)
-                const rate = summaryGetPreferredRateForHouse(milkType)
-                return { milkType, qty, rate, amount: qty * rate }
-            })
-            setEditDeliveryForm({ items: normalized, note: row.log.note })
-        } else {
-            const [year, month, day] = row.dateKey.split('-').map(Number)
-            const deliveryDate = new Date(year, month - 1, day)
-            const newLog: DeliveryLog = {
-                id: 0,
-                houseId: summaryHouse?.id ?? 0,
-                deliveredAt: `${deliveryDate.getFullYear()}-${String(deliveryDate.getMonth() + 1).padStart(2, '0')}-${String(deliveryDate.getDate()).padStart(2, '0')}T00:00:00.000Z`,
-                createdAt: new Date().toISOString(),
-                shift: (summaryHouse?.configs?.[0]?.shift ?? 'morning') as 'morning' | 'evening' | 'shop',
-                items: [],
-                billGenerated: false,
-                isClosed: false,
-                totalAmount: '0',
-                openingBalance: '0',
-                closingBalance: '0',
-                note: '',
+        const openEditor = () => {
+            if (row.log) {
+                setEditingDeliveryLog(row.log)
+                const normalized = (row.log.items ?? []).map((item) => {
+                    const milkType = summaryNormalizeMilkType(item.milkType)
+                    const qty = Number(item.qty ?? 0)
+                    const rate = summaryGetPreferredRateForHouse(milkType)
+                    return { milkType, qty, rate, amount: qty * rate }
+                })
+                setEditDeliveryForm({ items: normalized, note: row.log.note })
+            } else {
+                const [year, month, day] = row.dateKey.split('-').map(Number)
+                const deliveryDate = new Date(year, month - 1, day)
+                const newLog: DeliveryLog = {
+                    id: 0,
+                    houseId: summaryHouse?.id ?? 0,
+                    deliveredAt: `${deliveryDate.getFullYear()}-${String(deliveryDate.getMonth() + 1).padStart(2, '0')}-${String(deliveryDate.getDate()).padStart(2, '0')}T00:00:00.000Z`,
+                    createdAt: new Date().toISOString(),
+                    shift: (summaryHouse?.configs?.[0]?.shift ?? 'morning') as 'morning' | 'evening' | 'shop',
+                    items: [],
+                    billGenerated: false,
+                    isClosed: false,
+                    totalAmount: '0',
+                    openingBalance: '0',
+                    closingBalance: '0',
+                    note: '',
+                }
+                setEditingDeliveryLog(newLog)
+                setEditDeliveryForm({ items: [], note: '' })
             }
-            setEditingDeliveryLog(newLog)
-            setEditDeliveryForm({ items: [], note: '' })
+            setEditDeliveryDialogOpen(true)
         }
-        setEditDeliveryDialogOpen(true)
+
+        requireDairyPassword(openEditor)
     }
 
     async function handleSaveDeliveryEdit() {
         if (!editingDeliveryLog || !summaryHouse) return
+
+        if (editingDeliveryLog.id !== 0) {
+            if (editingDeliveryLog.billGenerated) {
+                toast.error('Cannot edit deliveries that were included in a generated bill')
+                return
+            }
+            const editDateKey = editingDeliveryLog.deliveredAt ? new Date(editingDeliveryLog.deliveredAt).toISOString().split('T')[0] : ''
+            if (editDateKey && summaryIsDeliveryBlockedByBill(editDateKey)) {
+                toast.error('Cannot edit deliveries that were included in a generated bill')
+                return
+            }
+        }
 
         setEditDeliverySaving(true)
         try {
@@ -2059,63 +2116,81 @@ export default function DeliveryPage() {
     }
 
     const removeDeliveryItem = async (idx: number) => {
-        const canModify = auth?.permissions?.canModifyDeliveryLogs === true
         const itemToRemove = deliveryItems[idx]
         const removedProductName = itemToRemove?.milkType.trim() ?? ''
         const itemsAfterDelete = deliveryItems.filter((_, i) => i !== idx)
 
-        if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
-            if (!canModify) {
-                toast.error('You do not have permission to modify delivery logs')
-                return
-            }
-            // Update local state immediately
-            setCurrentHouseLogs([])
-            setCompletedHouses((prev) => {
-                const next = new Set(prev)
-                next.delete(currentHouse.id)
-                return next
+        const resetDeliveryFormAfterRemoval = () => {
+            setDeliveryItems((prev) => {
+                if (prev.length <= 1) return [...defaultDeliveryItems]
+                return prev.filter((_, i) => i !== idx)
             })
-            setHouseLogsCache((prev) => {
-                return {
-                    ...prev,
-                    [currentHouse.id]: [],
-                }
-            })
-            setLoadedHouseLogIds((prev) => {
-                const next = new Set(prev)
-                next.add(currentHouse.id)
-                return next
-            })
-            setAllocatedHouseProducts((prev) => {
-                const next = { ...prev }
-                delete next[currentHouse.id]
-                return next
-            })
-            setSelectedDateProductTotals((prev) => {
-                const map = new Map(prev.map((p) => [p.productName, p.qty]))
-                for (const log of currentHouseLogs) {
-                    for (const item of log.items) {
-                        const name = item.milkType.trim()
-                        if (!name) continue
-                        const current = map.get(name) ?? 0
-                        const remaining = current - Number(item.qty || 0)
-                        if (remaining <= 0) map.delete(name)
-                        else map.set(name, remaining)
-                    }
-                }
-                return Array.from(map.entries())
-                    .map(([productName, qty]) => ({ productName, qty }))
-                    .sort((a, b) => b.qty - a.qty)
-            })
+            setSwipedDeliveryItem({ index: null, offset: 0 })
+            swipedDeliveryItemRef.current = { index: null, offset: 0 }
+            setHasUnsavedChanges(true)
+            setSaveStatus('idle')
+        }
 
-            // Remove the matching logs from the server before continuing.
-            await Promise.all(currentHouseLogs.map((log) => deliveryLogsApi.delete(log.id)))
-        } else if (removedProductName && currentHouseLogs.length > 0) {
-            if (!canModify) {
-                toast.error('You do not have permission to modify delivery logs')
+        if (itemsAfterDelete.length === 0 && currentHouseLogs.length > 0 && selectedShift) {
+            if (houseLogsBlockedByBill(currentHouseLogs)) {
+                toast.error('Cannot edit — a bill has already been generated for this delivery')
                 return
             }
+
+            const performRemoveAll = async () => {
+                // Update local state immediately
+                setCurrentHouseLogs([])
+                setCompletedHouses((prev) => {
+                    const next = new Set(prev)
+                    next.delete(currentHouse.id)
+                    return next
+                })
+                setHouseLogsCache((prev) => {
+                    return {
+                        ...prev,
+                        [currentHouse.id]: [],
+                    }
+                })
+                setLoadedHouseLogIds((prev) => {
+                    const next = new Set(prev)
+                    next.add(currentHouse.id)
+                    return next
+                })
+                setAllocatedHouseProducts((prev) => {
+                    const next = { ...prev }
+                    delete next[currentHouse.id]
+                    return next
+                })
+                setSelectedDateProductTotals((prev) => {
+                    const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                    for (const log of currentHouseLogs) {
+                        for (const item of log.items) {
+                            const name = item.milkType.trim()
+                            if (!name) continue
+                            const current = map.get(name) ?? 0
+                            const remaining = current - Number(item.qty || 0)
+                            if (remaining <= 0) map.delete(name)
+                            else map.set(name, remaining)
+                        }
+                    }
+                    return Array.from(map.entries())
+                        .map(([productName, qty]) => ({ productName, qty }))
+                        .sort((a, b) => b.qty - a.qty)
+                })
+
+                // Remove the matching logs from the server before continuing.
+                await Promise.all(currentHouseLogs.map((log) => deliveryLogsApi.delete(log.id)))
+
+                resetDeliveryFormAfterRemoval()
+            }
+
+            requireDairyPassword(performRemoveAll)
+        } else if (removedProductName && currentHouseLogs.length > 0) {
+            if (houseLogsBlockedByBill(currentHouseLogs)) {
+                toast.error('Cannot edit — a bill has already been generated for this delivery')
+                return
+            }
+
             const removedQty = currentHouseLogs.reduce((sum, log) => {
                 return sum + log.items.reduce((itemSum, item) => {
                     if (item.milkType.trim() !== removedProductName) return itemSum
@@ -2130,70 +2205,69 @@ export default function DeliveryPage() {
                 }))
                 .filter((log) => log.items.length > 0)
 
-            const persistChanges = currentHouseLogs.map(async (log) => {
-                const nextItems = log.items.filter((item) => item.milkType.trim() !== removedProductName)
+            const performRemoveProduct = async () => {
+                const persistChanges = currentHouseLogs.map(async (log) => {
+                    const nextItems = log.items.filter((item) => item.milkType.trim() !== removedProductName)
 
-                if (nextItems.length === 0) {
-                    await deliveryLogsApi.delete(log.id)
-                    return null
-                }
-
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                return deliveryLogsApi.update(log.id, { items: nextItems as any })
-            })
-
-            const savedLogs = (await Promise.all(persistChanges)).filter(Boolean) as DeliveryLog[]
-            const resolvedNextLogs = savedLogs.length > 0 ? savedLogs : nextHouseLogs
-
-            setCurrentHouseLogs(resolvedNextLogs)
-            setHouseLogsCache((prev) => ({
-                ...prev,
-                [currentHouse.id]: resolvedNextLogs,
-            }))
-            setAllocatedHouseProducts((prev) => {
-                const next = { ...prev }
-                if (resolvedNextLogs.length === 0) {
-                    delete next[currentHouse.id]
-                } else {
-                    const grouped = new Map<string, number>()
-                    for (const log of resolvedNextLogs) {
-                        for (const item of log.items) {
-                            const name = item.milkType.trim()
-                            if (!name) continue
-                            grouped.set(name, (grouped.get(name) ?? 0) + Number(item.qty || 0))
-                        }
+                    if (nextItems.length === 0) {
+                        await deliveryLogsApi.delete(log.id)
+                        return null
                     }
 
-                    next[currentHouse.id] = Array.from(grouped.entries())
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    return deliveryLogsApi.update(log.id, { items: nextItems as any })
+                })
+
+                const savedLogs = (await Promise.all(persistChanges)).filter(Boolean) as DeliveryLog[]
+                const resolvedNextLogs = savedLogs.length > 0 ? savedLogs : nextHouseLogs
+
+                setCurrentHouseLogs(resolvedNextLogs)
+                setHouseLogsCache((prev) => ({
+                    ...prev,
+                    [currentHouse.id]: resolvedNextLogs,
+                }))
+                setAllocatedHouseProducts((prev) => {
+                    const next = { ...prev }
+                    if (resolvedNextLogs.length === 0) {
+                        delete next[currentHouse.id]
+                    } else {
+                        const grouped = new Map<string, number>()
+                        for (const log of resolvedNextLogs) {
+                            for (const item of log.items) {
+                                const name = item.milkType.trim()
+                                if (!name) continue
+                                grouped.set(name, (grouped.get(name) ?? 0) + Number(item.qty || 0))
+                            }
+                        }
+
+                        next[currentHouse.id] = Array.from(grouped.entries())
+                            .filter(([, qty]) => qty > 0)
+                            .map(([name, qty]) => `${name} ${qty}L`)
+                            .join(', ')
+                    }
+
+                    return next
+                })
+                setSelectedDateProductTotals((prev) => {
+                    const map = new Map(prev.map((p) => [p.productName, p.qty]))
+                    const current = map.get(removedProductName) ?? 0
+                    const remaining = current - removedQty
+                    if (remaining <= 0) map.delete(removedProductName)
+                    else map.set(removedProductName, remaining)
+
+                    return Array.from(map.entries())
                         .filter(([, qty]) => qty > 0)
-                        .map(([name, qty]) => `${name} ${qty}L`)
-                        .join(', ')
-                }
+                        .map(([productName, qty]) => ({ productName, qty }))
+                        .sort((a, b) => b.qty - a.qty)
+                })
 
-                return next
-            })
-            setSelectedDateProductTotals((prev) => {
-                const map = new Map(prev.map((p) => [p.productName, p.qty]))
-                const current = map.get(removedProductName) ?? 0
-                const remaining = current - removedQty
-                if (remaining <= 0) map.delete(removedProductName)
-                else map.set(removedProductName, remaining)
+                resetDeliveryFormAfterRemoval()
+            }
 
-                return Array.from(map.entries())
-                    .filter(([, qty]) => qty > 0)
-                    .map(([productName, qty]) => ({ productName, qty }))
-                    .sort((a, b) => b.qty - a.qty)
-            })
+            requireDairyPassword(performRemoveProduct)
+        } else {
+            resetDeliveryFormAfterRemoval()
         }
-
-        setDeliveryItems((prev) => {
-            if (prev.length <= 1) return [...defaultDeliveryItems]
-            return prev.filter((_, i) => i !== idx)
-        })
-        setSwipedDeliveryItem({ index: null, offset: 0 })
-        swipedDeliveryItemRef.current = { index: null, offset: 0 }
-        setHasUnsavedChanges(true)
-        setSaveStatus('idle')
     }
 
     const handleDeliveryItemTouchStart = (index: number, event: TouchEvent<HTMLDivElement>) => {
@@ -2270,9 +2344,6 @@ export default function DeliveryPage() {
             })
             .filter((item) => item.qty > 0 && item.rate > 0)
 
-        // Check modify permission for suppliers
-        const canModify = auth?.permissions?.canModifyDeliveryLogs === true
-
         if (payloadItems.length === 0) {
             toast.error('Add at least one item with qty and rate before marking delivered')
             return
@@ -2281,28 +2352,36 @@ export default function DeliveryPage() {
         const now = new Date()
         const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
+        // Check if any existing log is already covered by a generated bill
+        const blockedByBill = houseLogsBlockedByBill(currentHouseLogs)
+
         if (isCompleted && currentHouseLogs.length > 0) {
-            if (!canModify) {
-                toast.error('You do not have permission to modify delivery logs')
+            if (blockedByBill) {
+                toast.error('Cannot edit — a bill has already been generated for this delivery')
                 return
             }
-            const primaryLog = currentHouseLogs[0]
-            const duplicateIds = currentHouseLogs.slice(1).map((l) => l.id)
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const updatedLog = await deliveryLogsApi.update(primaryLog.id, { items: payloadItems as any })
-            if (duplicateIds.length > 0) {
-                await Promise.all(duplicateIds.map((id) => deliveryLogsApi.delete(id)))
+            const performUpdate = async () => {
+                const primaryLog = currentHouseLogs[0]
+                const duplicateIds = currentHouseLogs.slice(1).map((l) => l.id)
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const updatedLog = await deliveryLogsApi.update(primaryLog.id, { items: payloadItems as any })
+                if (duplicateIds.length > 0) {
+                    await Promise.all(duplicateIds.map((id) => deliveryLogsApi.delete(id)))
+                }
+
+                setCurrentHouseLogs([updatedLog])
+                setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [updatedLog] }))
+                setHasUnsavedChanges(false)
+                setSaveStatus('saved')
+                setLastSavedAt(timeLabel)
+
+                updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)
+                toast.success(`${currentHouse.houseNo} delivery updated!`)
             }
 
-            setCurrentHouseLogs([updatedLog])
-            setHouseLogsCache((prev) => ({ ...prev, [currentHouse.id]: [updatedLog] }))
-            setHasUnsavedChanges(false)
-            setSaveStatus('saved')
-            setLastSavedAt(timeLabel)
-
-            updateAllocatedProductsOptimistically(currentHouse.id, payloadItems, setAllocatedHouseProducts, setSelectedDateProductTotals)
-            toast.success(`${currentHouse.houseNo} delivery updated!`)
+            requireDairyPassword(performUpdate)
         } else {
             setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
             setHasUnsavedChanges(false)
@@ -3649,11 +3728,11 @@ export default function DeliveryPage() {
                                                                         <Button variant="ghost" size="sm" onClick={() => summaryOpenEditDeliveryDialog(row)} title={blocked ? 'Cannot edit after bill generation' : 'Edit delivery'} disabled={blocked} className="h-8 w-8 p-0">
                                                                             <Edit2 className="h-4 w-4" />
                                                                         </Button>
-                                                                        {!blocked && row.log && (
-                                                                            <Button variant="ghost" size="sm" onClick={() => setDeletingDeliveryLog(row.log!)} title="Delete delivery" className="h-8 w-8 p-0 text-destructive hover:text-destructive">
-                                                                                <Trash2 className="h-4 w-4" />
-                                                                            </Button>
-                                                                        )}
+                                        {!blocked && row.log && (
+                                            <Button variant="ghost" size="sm" onClick={() => requireDairyPassword(() => setDeletingDeliveryLog(row.log!))} title="Delete delivery" className="h-8 w-8 p-0 text-destructive hover:text-destructive">
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        )}
                                                                     </div>
                                                                 </TableCell>
                                                             </TableRow>
@@ -3735,6 +3814,32 @@ export default function DeliveryPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Dairy Password Verification */}
+            <Dialog open={passwordDialogOpen} onOpenChange={(open) => { if (!open && !passwordSaving) { setPasswordDialogOpen(false); pendingPasswordActionRef.current = null } }}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>Enter Dairy Password</DialogTitle>
+                        <DialogDescription>
+                            Editing a saved delivery requires a valid password of any user in this dairy.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <Input
+                        type="password"
+                        value={passwordValue}
+                        onChange={(e) => setPasswordValue(e.target.value)}
+                        placeholder="Dairy password"
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !passwordSaving) void handleDairyPasswordVerify() }}
+                        autoFocus
+                    />
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setPasswordDialogOpen(false)} disabled={passwordSaving}>Cancel</Button>
+                        <Button onClick={handleDairyPasswordVerify} disabled={passwordSaving}>
+                            {passwordSaving ? 'Verifying...' : 'Verify'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
-import { RegisterDto, DairyLoginDto, ValidatePasswordDto } from './dto/auth.dto';
+import { RegisterDto, DairyLoginDto, ValidatePasswordDto, ValidateDairyPasswordDto } from './dto/auth.dto';
 import { LocalAuthGuard, JwtAuthGuard, AdminGuard } from './guards/auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
@@ -115,6 +115,17 @@ export class AuthController {
       return { valid: false };
     }
     const valid = await this.authService.validatePassword(dto.username, dto.password, effectiveDairyId);
+    return { valid };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('validate-dairy-password')
+  @HttpCode(HttpStatus.OK)
+  async validateDairyPassword(
+    @Body() dto: ValidateDairyPasswordDto,
+    @CurrentUser('dairyId') dairyId: number,
+  ) {
+    const valid = await this.authService.validateDairyPassword(dto.password, dairyId);
     return { valid };
   }
 }

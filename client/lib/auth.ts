@@ -429,3 +429,23 @@ export async function apiValidatePassword(username: string, password: string): P
     return false
   }
 }
+
+export async function apiValidateDairyPassword(password: string): Promise<boolean> {
+  try {
+    const session = getSessionAuth()
+    if (!session?.token) return false
+    const res = await fetchApi('/auth/validate-dairy-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.token}`,
+      },
+      body: JSON.stringify({ password }),
+    })
+    if (!res.ok) return false
+    const data = await res.json() as { valid: boolean }
+    return data.valid
+  } catch {
+    return false
+  }
+}
