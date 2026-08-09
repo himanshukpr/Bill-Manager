@@ -1,10 +1,0 @@
-﻿{
-  "version": "7.6.0",
-  "checksum": "recorded_by_migration",
-  "at": "20260802110000",
-  "sql": [
-    "ALTER TABLE \payment_history\ ADD COLUMN \ecorded_by\ VARCHAR(191) NULL AFTER \
-ote\;",
-    "CREATE INDEX IF NOT EXISTS \ecorded_by_idx\ ON \payment_history\ (\ecorded_by\);"
-  ]
-}

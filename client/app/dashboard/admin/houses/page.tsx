@@ -10,6 +10,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate, type User } from '@/lib/api'
 import { getDairyIdFromCookie, getSessionAuth, getAuthHeader } from '@/lib/auth'
+import { isStoredDateInMonth, getStoredDateKey, formatStoredDateKey } from '@/lib/date-utils'
 import { fetchApi } from '@/lib/api-base'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
@@ -168,9 +169,10 @@ function getLogPeriod(logs: DeliveryLog[]): { year: number; month: number } {
     return { year: now.getFullYear(), month: now.getMonth() }
   }
 
+  const key = getStoredDateKey(latest.toISOString())
   return {
-    year: latest.getFullYear(),
-    month: latest.getMonth(),
+    year: parseInt(key.slice(0, 4)),
+    month: parseInt(key.slice(5, 7)) - 1,
   }
 }
 
@@ -179,17 +181,12 @@ function buildHouseDeliverySummary(logs: DeliveryLog[], year: number, month: num
   const daysInMonth = new Date(year, month + 1, 0).getDate()
 
   for (const log of logs) {
-    const deliveredAt = new Date(log.deliveredAt)
-    if (deliveredAt.getFullYear() !== year || deliveredAt.getMonth() !== month) continue
+    const dateKey = getStoredDateKey(log.deliveredAt)
+    if (dateKey.slice(0, 7) !== `${year}-${String(month + 1).padStart(2, '0')}`) continue
 
-    const dateKey = getLocalDateKey(deliveredAt)
     const existing = byDate.get(dateKey) ?? {
       dateKey,
-      dayLabel: deliveredAt.toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      }),
+      dayLabel: formatStoredDateKey(dateKey),
       productsLabel: '',
       hasDelivery: false,
       logId: undefined,
@@ -252,11 +249,7 @@ function buildMonthlyProductSummary(logs: DeliveryLog[], year: number, month: nu
 
   // Group quantities by product for the selected month only.
   for (const log of logs) {
-    const deliveredAt = new Date(log.deliveredAt)
-    const logYear = deliveredAt.getFullYear()
-    const logMonth = deliveredAt.getMonth()
-
-    if (logYear !== year || logMonth !== month) continue
+    if (!isStoredDateInMonth(log.deliveredAt, year, month)) continue
 
     for (const item of log.items ?? []) {
       const product = normalizeMilkType(item.milkType)
@@ -480,13 +473,11 @@ export default function HousesPage() {
     const timer = setTimeout(async () => {
       setCustomBillSummary(null)
       try {
-        const allLogsRes = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
+        const allLogsRes = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
         const allLogs = allLogsRes as DeliveryLog[]
-        const fromDateObj = new Date(parseInt(customBillFromDate.slice(0, 4)), parseInt(customBillFromDate.slice(5, 7)) - 1, parseInt(customBillFromDate.slice(8, 10)))
-        const toDateObj = new Date(parseInt(customBillToDate.slice(0, 4)), parseInt(customBillToDate.slice(5, 7)) - 1, parseInt(customBillToDate.slice(8, 10)), 23, 59, 59, 999)
         const logsInRange = allLogs.filter(log => {
-          const d = new Date(log.deliveredAt)
-          return d >= fromDateObj && d <= toDateObj
+          const key = getStoredDateKey(log.deliveredAt)
+          return key >= customBillFromDate && key <= customBillToDate
         })
         if (logsInRange.length === 0) {
           setCustomBillSummary([])
@@ -542,11 +533,9 @@ export default function HousesPage() {
 
   const filteredSummaryLogs = useMemo(() => {
     if (!summaryFromDate || !summaryToDate) return summaryLogs
-    const from = new Date(parseInt(summaryFromDate.slice(0, 4)), parseInt(summaryFromDate.slice(5, 7)) - 1, parseInt(summaryFromDate.slice(8, 10)))
-    const to = new Date(parseInt(summaryToDate.slice(0, 4)), parseInt(summaryToDate.slice(5, 7)) - 1, parseInt(summaryToDate.slice(8, 10)), 23, 59, 59, 999)
     return summaryLogs.filter(log => {
-      const d = new Date(log.deliveredAt)
-      return d >= from && d <= to
+      const key = getStoredDateKey(log.deliveredAt)
+      return key >= summaryFromDate && key <= summaryToDate
     })
   }, [summaryLogs, summaryFromDate, summaryToDate])
 
@@ -566,10 +555,9 @@ export default function HousesPage() {
     if (!summaryHouse) return []
 
     // Compute ALL logs for this month (don't rely on billGenerated flag which may be stale in client cache)
-    const allMonthLogs = filteredSummaryLogs.filter(log => {
-      const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
-    })
+    const allMonthLogs = filteredSummaryLogs.filter(log =>
+      isStoredDateInMonth(log.deliveredAt, summaryPeriod.year, summaryPeriod.month),
+    )
 
     // Total quantities from all delivery logs
     const totalMap = new Map<string, number>()
@@ -610,10 +598,9 @@ export default function HousesPage() {
   const pdfMonthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
 
-    const allMonthLogs = filteredSummaryLogs.filter(log => {
-      const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
-    })
+    const allMonthLogs = filteredSummaryLogs.filter(log =>
+      isStoredDateInMonth(log.deliveredAt, summaryPeriod.year, summaryPeriod.month),
+    )
 
     const totalMap = new Map<string, { qty: number; amount: number }>()
     for (const log of allMonthLogs) {
@@ -687,12 +674,8 @@ export default function HousesPage() {
 
   const displaySummaryRows = useMemo(() => {
     if (!hasDateRangeFilter) return summaryRows
-    const from = new Date(summaryFromDate)
-    const to = new Date(summaryToDate)
-    to.setHours(23, 59, 59, 999)
     return summaryRows.filter(row => {
-      const d = new Date(row.dateKey)
-      return d >= from && d <= to
+      return row.dateKey >= summaryFromDate && row.dateKey <= summaryToDate
     })
   }, [summaryRows, summaryFromDate, summaryToDate, hasDateRangeFilter])
 
@@ -700,10 +683,9 @@ export default function HousesPage() {
     if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0, pendingTotal: 0 }
 
     // Compute ALL logs for this month (don't rely on stale billGenerated flag)
-    const allMonthLogs = filteredSummaryLogs.filter(log => {
-      const d = new Date(log.deliveredAt)
-      return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
-    })
+    const allMonthLogs = filteredSummaryLogs.filter(log =>
+      isStoredDateInMonth(log.deliveredAt, summaryPeriod.year, summaryPeriod.month),
+    )
 
     // Total quantities and amounts from all delivery logs
     const totalMap = new Map<string, { qty: number; amount: number }>()
@@ -1085,7 +1067,7 @@ export default function HousesPage() {
       const allHouseIds = sortedHouses.map(h => h.id)
       const [allBalances, allLogs, allBills, rates] = await Promise.all([
         Promise.all(allHouseIds.map(id => balanceApi.get(id).catch(() => ({ id: 0, houseId: id, previousBalance: '0', currentBalance: '0' } as HouseBalance)))),
-        Promise.all(allHouseIds.map(id => deliveryLogsApi.list({ houseId: id }, true))),
+        Promise.all(allHouseIds.map(id => deliveryLogsApi.list({ houseId: id, dairyId: dairyId ?? undefined }, true))),
         Promise.all(allHouseIds.map(id => billsApi.list({ houseId: id }))),
         productRatesApi.list(),
       ])
@@ -1102,10 +1084,9 @@ export default function HousesPage() {
         const bills = allBills[i]
 
         const period = { year, month: month - 1 }
-        const filteredLogs = logs.filter(log => {
-          const d = new Date(log.deliveredAt)
-          return d.getFullYear() === year && d.getMonth() === month - 1
-        })
+        const filteredLogs = logs.filter(log =>
+          isStoredDateInMonth(log.deliveredAt, year, month - 1),
+        )
 
         const matchingBills = bills.filter(b => {
           return b.month === month && b.year === year
@@ -1153,10 +1134,9 @@ export default function HousesPage() {
         const pm = new Map<string, { qty: number; amount: number }>()
 
         // Compute ALL logs for this month (don't rely on stale billGenerated flag)
-        const allMonthLogs = filteredLogs.filter(l => {
-          const d = new Date(l.deliveredAt)
-          return d.getFullYear() === year && d.getMonth() === month - 1
-        })
+        const allMonthLogs = filteredLogs.filter(l =>
+          isStoredDateInMonth(l.deliveredAt, year, month - 1),
+        )
         for (const log of allMonthLogs) {
           grandTotal += Number(log.totalAmount ?? 0)
           for (const item of log.items ?? []) {
@@ -1756,7 +1736,7 @@ export default function HousesPage() {
       const [freshHouse, balance, logs, bills, rates] = await Promise.all([
         housesApi.get(house.id),
         balanceApi.get(house.id),
-        deliveryLogsApi.list({ houseId: house.id }, true),
+        deliveryLogsApi.list({ houseId: house.id, dairyId: dairyId ?? undefined }, true),
         billsApi.list({ houseId: house.id }),
         productRatesApi.list(),
       ])
@@ -1943,9 +1923,8 @@ export default function HousesPage() {
       }
 
       // Reload logs to get clean updated data
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
       setSummaryLogs(logs)
-
       setEditDeliveryDialogOpen(false)
       setEditingDeliveryLog(null)
       setEditingDeliveryAllLogs([])
@@ -1969,9 +1948,9 @@ export default function HousesPage() {
     setEditDeliverySaving(true)
     try {
       await deliveryLogsApi.delete(deletingDeliveryLog.id)
-      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
-      setSummaryLogs(logs)
-      setDeletingDeliveryLog(null)
+      const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
+       setSummaryLogs(logs)
+       setDeletingDeliveryLog(null)
       toast.success('Delivery log deleted successfully')
     } catch (error: unknown) {
       toast.error(getErrorMessage(error))

@@ -5,7 +5,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download, AlertTriangle } from 'lucide-react'
 import { billsApi, deliveryLogsApi, housesApi, balanceApi, dairiesApi, productRatesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory, type ProductRate } from '@/lib/api'
-import { getDairySession } from '@/lib/auth'
+import { getDairySession, getDairyIdFromCookie } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -299,6 +299,7 @@ function getHouseBalanceSummary(house?: Partial<House> | null) {
 export default function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([])
   const [houses, setHouses] = useState<House[]>([])
+  const dairyId = getDairyIdFromCookie()
   const [loading, setLoading] = useState(true)
   const [exportingBalancePdf, setExportingBalancePdf] = useState(false)
   const [printBills, setPrintBills] = useState<Array<Bill & { house: NonNullable<Bill['house']> }>>([])
@@ -452,7 +453,7 @@ export default function BillsPage() {
         const selectedYear = parseInt(printYear)
         const [monthBills, monthLogs] = await Promise.all([
           billsApi.list({ month: selectedMonth, year: selectedYear }),
-          deliveryLogsApi.list({ fromDate: printRange.fromDate, toDate: printRange.toDate }),
+           deliveryLogsApi.list({ fromDate: printRange.fromDate, toDate: printRange.toDate, dairyId: dairyId ?? undefined }),
         ])
 
         const housesById = new Map(houses.map((house) => [house.id, house]))

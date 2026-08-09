@@ -6,6 +6,7 @@ import { ChevronLeft, Truck, Package, Edit2, Trash2, Save, X } from 'lucide-reac
 import { toast } from 'sonner'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
+import { getDairyIdFromCookie } from '@/lib/auth'
 
 import {
   AlertDialog,
@@ -47,6 +48,7 @@ type EditingLog = {
 
 export default function DeliveryLogsPage() {
   const [houses, setHouses] = useState<Map<number, House>>(new Map())
+  const dairyId = getDairyIdFromCookie()
   const [productRates, setProductRates] = useState<ProductRate[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -62,7 +64,7 @@ export default function DeliveryLogsPage() {
     async function load() {
       try {
         const [logsData, housesData, ratesData] = await Promise.all([
-          deliveryLogsApi.list(),
+           deliveryLogsApi.list({ dairyId: dairyId ?? undefined }),
           housesApi.list(),
           productRatesApi.list(),
         ])

@@ -26,6 +26,7 @@ export class DeliveryLogsController {
 
   @Get()
   findAll(
+    @Query('dairyId') dairyId?: string,
     @Query('houseId') houseId?: string,
     @Query('shift') shift?: string,
     @Query('fromDate') fromDate?: string,
@@ -37,6 +38,7 @@ export class DeliveryLogsController {
 
     return this.service.findAll(
       {
+        dairyId: dairyId ? parseInt(dairyId) : undefined,
         houseId: houseId ? parseInt(houseId) : undefined,
         shift: parsedShift,
         fromDate,

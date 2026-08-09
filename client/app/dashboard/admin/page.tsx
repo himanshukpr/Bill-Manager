@@ -3,6 +3,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator, MessageCircle, Settings } from 'lucide-react'
 import { deliveryLogsApi, housesApi, type DeliveryLog, type DeliveryLogItem, type House } from '@/lib/api'
+import { getDairyIdFromCookie } from '@/lib/auth'
+import { getStoredDateKey } from '@/lib/date-utils'
 import Link from 'next/link'
 import {
   Dialog,
@@ -72,6 +74,7 @@ type ShiftSupplierSummary = {
 export default function AdminDashboardPage() {
   const [todayLogs, setTodayLogs] = useState<DeliveryLog[]>([])
   const [loading, setLoading] = useState(true)
+  const dairyId = getDairyIdFromCookie()
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryDate, setSummaryDate] = useState<Date>(() => new Date())
@@ -92,10 +95,10 @@ export default function AdminDashboardPage() {
 
   const load = useCallback(async () => {
     try {
-      const [logsRes, housesRes] = await Promise.all([
-        deliveryLogsApi.list(),
-        housesApi.list(),
-      ])
+       const [logsRes, housesRes] = await Promise.all([
+         deliveryLogsApi.list({ dairyId: dairyId ?? undefined }),
+         housesApi.list(),
+       ])
       const logs = logsRes as DeliveryLog[]
       const today = new Date()
       const filteredLogs = logs.filter((log) => {
@@ -113,13 +116,11 @@ export default function AdminDashboardPage() {
     setCustomBillLoading(true)
     setCustomBillSummary(null)
     try {
-      const allLogsRes = await deliveryLogsApi.list({ houseId: parseInt(customBillHouseId) }, true)
+       const allLogsRes = await deliveryLogsApi.list({ houseId: parseInt(customBillHouseId), dairyId: dairyId ?? undefined }, true)
       const allLogs = allLogsRes as DeliveryLog[]
-      const fromDateObj = new Date(parseInt(customBillFromDate.slice(0, 4)), parseInt(customBillFromDate.slice(5, 7)) - 1, parseInt(customBillFromDate.slice(8, 10)))
-      const toDateObj = new Date(parseInt(customBillToDate.slice(0, 4)), parseInt(customBillToDate.slice(5, 7)) - 1, parseInt(customBillToDate.slice(8, 10)), 23, 59, 59, 999)
       const logsInRange = allLogs.filter(log => {
-        const d = new Date(log.deliveredAt)
-        return d >= fromDateObj && d <= toDateObj
+        const key = getStoredDateKey(log.deliveredAt)
+        return key >= customBillFromDate && key <= customBillToDate
       })
       if (logsInRange.length === 0) {
         setCustomBillSummary([])
@@ -166,10 +167,10 @@ export default function AdminDashboardPage() {
   const loadSummary = async (date: Date) => {
     setSummaryLoading(true)
     try {
-      const [logs, houses] = await Promise.all([
-        deliveryLogsApi.list(),
-        housesApi.list(),
-      ])
+       const [logs, houses] = await Promise.all([
+         deliveryLogsApi.list({ dairyId: dairyId ?? undefined }),
+         housesApi.list(),
+       ])
       const filteredLogs = (logs as DeliveryLog[]).filter((log) => {
         const logDate = new Date(log.deliveredAt || log.createdAt)
         return isSameLocalDate(logDate, date)

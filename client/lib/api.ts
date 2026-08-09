@@ -583,6 +583,7 @@ export type DeliveryLogItem = {
 export type DeliveryLog = {
   id: number;
   houseId: number;
+  dairyId?: number;
   supplierId?: string;
   shift: 'morning' | 'evening' | 'shop';
   billGenerated: boolean;
@@ -1734,7 +1735,7 @@ import {
 } from './delivery-storage';
 
 export const deliveryLogsApi = {
-  list: (params?: { houseId?: number; shift?: 'morning' | 'evening' | 'shop'; fromDate?: string; toDate?: string }, forceFresh = false) => {
+   list: (params?: { houseId?: number; dairyId?: number; shift?: 'morning' | 'evening' | 'shop'; fromDate?: string; toDate?: string }, forceFresh = false) => {
     if (params?.houseId && params.houseId < 0) {
       return Promise.resolve([] as DeliveryLog[]);
     }

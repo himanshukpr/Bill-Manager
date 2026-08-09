@@ -23,17 +23,17 @@ function tempId() {
 const STALE_MS = 30_000; // 30 seconds
 const lastSyncAt = new Map<string, number>();
 
-function cacheKey(params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string }): string {
-  return `${params?.houseId ?? ''}:${params?.shift ?? ''}:${params?.fromDate ?? ''}:${params?.toDate ?? ''}`;
+function cacheKey(params?: { houseId?: number; dairyId?: number; shift?: string; fromDate?: string; toDate?: string }): string {
+  return `${params?.dairyId ?? ''}:${params?.houseId ?? ''}:${params?.shift ?? ''}:${params?.fromDate ?? ''}:${params?.toDate ?? ''}`;
 }
 
-function isFresh(params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string }): boolean {
+function isFresh(params?: { houseId?: number; dairyId?: number; shift?: string; fromDate?: string; toDate?: string }): boolean {
   const key = cacheKey(params);
   const ts = lastSyncAt.get(key);
   return ts !== undefined && Date.now() - ts < STALE_MS;
 }
 
-function markSynced(params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string }): void {
+function markSynced(params?: { houseId?: number; dairyId?: number; shift?: string; fromDate?: string; toDate?: string }): void {
   lastSyncAt.set(cacheKey(params), Date.now());
 }
 
@@ -45,6 +45,7 @@ function invalidateSyncCache(): void {
 
 export async function getDeliveryLogs(params?: {
   houseId?: number;
+  dairyId?: number;
   shift?: string;
   fromDate?: string;
   toDate?: string;
@@ -57,6 +58,10 @@ export async function getDeliveryLogs(params?: {
     logs = await db.deliveryLogs.where('shift').equals(params.shift).toArray();
   } else {
     logs = await db.deliveryLogs.toArray();
+  }
+
+  if (params?.dairyId) {
+    logs = logs.filter((l) => l.dairyId === params.dairyId);
   }
 
   if (params?.fromDate) {
@@ -73,6 +78,7 @@ export async function getDeliveryLogs(params?: {
 
 async function fetchAndMerge(params?: {
   houseId?: number;
+  dairyId?: number;
   shift?: string;
   fromDate?: string;
   toDate?: string;
@@ -80,6 +86,7 @@ async function fetchAndMerge(params?: {
   if (!isOnline()) return;
 
   const q = new URLSearchParams();
+  if (params?.dairyId) q.set('dairyId', String(params.dairyId));
   if (params?.houseId) q.set('houseId', String(params.houseId));
   if (params?.shift) q.set('shift', params.shift);
   if (params?.fromDate) q.set('fromDate', params.fromDate);
@@ -99,6 +106,7 @@ async function fetchAndMerge(params?: {
 
 export async function pullDeliveryLogs(params?: {
   houseId?: number;
+  dairyId?: number;
   shift?: string;
   fromDate?: string;
   toDate?: string;
@@ -126,6 +134,7 @@ export async function pullDeliveryLogs(params?: {
 // Force fresh data - clear IDB and fetch from server
 export async function forceRefreshDeliveryLogs(params?: {
   houseId?: number;
+  dairyId?: number;
   shift?: string;
   fromDate?: string;
   toDate?: string;
@@ -138,11 +147,12 @@ export async function forceRefreshDeliveryLogs(params?: {
   } else {
     await db.deliveryLogs.clear();
   }
-  
+
   // Fetch fresh from server
   if (!isOnline()) return [];
-  
+
   const q = new URLSearchParams();
+  if (params?.dairyId) q.set('dairyId', String(params.dairyId));
   if (params?.houseId) q.set('houseId', String(params.houseId));
   if (params?.shift) q.set('shift', params.shift);
   if (params?.fromDate) q.set('fromDate', params.fromDate);
@@ -163,7 +173,7 @@ export async function forceRefreshDeliveryLogs(params?: {
 
 async function mergeServerLogsIntoIDB(
   serverLogs: DeliveryLog[],
-  params?: { houseId?: number; shift?: string; fromDate?: string; toDate?: string },
+  params?: { houseId?: number; dairyId?: number; shift?: string; fromDate?: string; toDate?: string },
 ): Promise<void> {
   const serverIds = new Set(serverLogs.map((l) => l.id));
 
@@ -196,6 +206,7 @@ async function mergeServerLogsIntoIDB(
   for (const log of idbLogs) {
     if (serverIds.has(log.id)) continue; // server still has it
     if (log.id < 0 && pendingTempIds.has(log.id)) continue; // tempLog being synced
+    if (params?.dairyId && log.dairyId !== params.dairyId) continue; // different dairy
     staleIds.push(log.id);
   }
 

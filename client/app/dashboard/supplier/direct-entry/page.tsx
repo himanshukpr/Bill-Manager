@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { billsApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
-import { getSessionAuth } from '@/lib/auth'
+import { getSessionAuth, getDairyIdFromCookie } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 
 type DeliveryEntryRow = {
@@ -197,6 +197,7 @@ function getHouseSearchText(house: House) {
 
 export default function SupplierDirectEntryPage() {
     const [loading, setLoading] = useState(true)
+    const dairyId = getDairyIdFromCookie()
     const [saving, setSaving] = useState(false)
     const [houses, setHouses] = useState<House[]>([])
     const [rates, setRates] = useState<ProductRate[]>([])
@@ -292,7 +293,7 @@ export default function SupplierDirectEntryPage() {
 
         if (cached) {
             setLogs(cached)
-            void deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey) })
+             void deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey), dairyId: dairyId ?? undefined })
                 .then((data) => {
                     setLogs(data)
                     writeDirectEntryCache(key, data)
@@ -301,7 +302,7 @@ export default function SupplierDirectEntryPage() {
             return
         }
 
-        const data = await deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey) })
+         const data = await deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey), dairyId: dairyId ?? undefined })
         setLogs(data)
         writeDirectEntryCache(key, data)
     }

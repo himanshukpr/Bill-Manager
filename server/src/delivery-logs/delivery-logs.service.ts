@@ -108,7 +108,7 @@ export class DeliveryLogsService {
   }
 
   async findAll(
-    filters?: { houseId?: number; shift?: Shift; fromDate?: string; toDate?: string },
+    filters?: { dairyId?: number; houseId?: number; shift?: Shift; fromDate?: string; toDate?: string },
     user?: UserInfo,
   ) {
     const where: {
@@ -119,7 +119,8 @@ export class DeliveryLogsService {
       deliveredAt?: { gte?: Date; lte?: Date };
     } = {};
 
-    if (user?.dairyId) where.dairyId = user.dairyId;
+    if (filters?.dairyId) where.dairyId = filters.dairyId;
+    else if (user?.dairyId) where.dairyId = user.dairyId;
     if (filters?.houseId) where.houseId = filters.houseId;
     if (filters?.shift) where.shift = filters.shift;
     if (filters?.fromDate || filters?.toDate) {

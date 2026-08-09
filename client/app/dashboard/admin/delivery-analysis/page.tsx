@@ -5,6 +5,7 @@ import { BarChart3, Download } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { deliveryLogsApi, deliveryPlansApi, type DeliveryLog, type DeliveryPlan } from '@/lib/api'
+import { getDairyIdFromCookie } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -76,6 +77,7 @@ function normalizeProductName(value: string): string {
 
 export default function DeliveryAnalysisPage() {
   const [loading, setLoading] = useState(true)
+  const dairyId = getDairyIdFromCookie()
   const [logs, setLogs] = useState<DeliveryLog[]>([])
   const [plans, setPlans] = useState<DeliveryPlan[]>([])
   const [selectedRow, setSelectedRow] = useState<DeliveryAnalysisRow | null>(null)
@@ -86,7 +88,7 @@ export default function DeliveryAnalysisPage() {
     async function load() {
       try {
         setLoading(true)
-        const [logData, planData] = await Promise.all([deliveryLogsApi.list(), deliveryPlansApi.list()])
+         const [logData, planData] = await Promise.all([deliveryLogsApi.list({ dairyId: dairyId ?? undefined }), deliveryPlansApi.list()])
         if (!active) return
         setLogs(logData)
         setPlans(planData)

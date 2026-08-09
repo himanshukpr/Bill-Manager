@@ -78,7 +78,8 @@ import {
     TableRow,
 } from '@/components/ui/table'
 import { LocationRouteMap } from '../../../../components/dashboard/supplier/location-route-map'
-import { getSessionAuth, getAuthHeader, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, getAuthHeader, getDairyIdFromCookie, type SessionAuth } from '@/lib/auth'
+import { isStoredDateInMonth, getStoredDateKey, formatStoredDateKey } from '@/lib/date-utils'
 import { fetchApi as directFetch } from '@/lib/api-base'
 import { toast } from 'sonner'
 
@@ -356,9 +357,10 @@ function summaryGetLogPeriod(logs: DeliveryLog[]): { year: number; month: number
         return { year: now.getFullYear(), month: now.getMonth() }
     }
 
+    const key = getStoredDateKey(latest.toISOString())
     return {
-        year: latest.getFullYear(),
-        month: latest.getMonth(),
+        year: parseInt(key.slice(0, 4)),
+        month: parseInt(key.slice(5, 7)) - 1,
     }
 }
 
@@ -367,13 +369,12 @@ function summaryBuildHouseDeliverySummary(logs: DeliveryLog[], year: number, mon
     const daysInMonth = new Date(year, month + 1, 0).getDate()
 
     for (const log of logs) {
-        const deliveredAt = new Date(log.deliveredAt)
-        if (deliveredAt.getFullYear() !== year || deliveredAt.getMonth() !== month) continue
+        const dateKey = getStoredDateKey(log.deliveredAt)
+        if (dateKey.slice(0, 7) !== `${year}-${String(month + 1).padStart(2, '0')}`) continue
 
-        const dateKey = getLocalDateKey(deliveredAt)
         const existing = byDate.get(dateKey) ?? {
             dateKey,
-            dayLabel: deliveredAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+            dayLabel: formatStoredDateKey(dateKey),
             productsLabel: '',
             hasDelivery: false,
             logId: undefined,
@@ -441,6 +442,7 @@ export default function DeliveryPage() {
     const [auth, setAuth] = useState<SessionAuth | null>(null)
     const [selectedShift, setSelectedShift] = useState<'morning' | 'evening' | null>(null)
     const [shiftSelectorOpen, setShiftSelectorOpen] = useState(true)
+    const dairyId = getDairyIdFromCookie()
 
     const [houses, setHouses] = useState<House[]>([])
     const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
@@ -807,7 +809,7 @@ export default function DeliveryPage() {
     const loadSelectedDateDeliveredSummary = useCallback(async () => {
         if (!auth || !selectedShift) return
 
-        const logs = await deliveryLogsApi.list({ shift: selectedShift }, true) // Force fresh on load
+         const logs = await deliveryLogsApi.list({ shift: selectedShift, dairyId: dairyId ?? undefined }, true) // Force fresh on load
         const deliveredForSelectedDate = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
         // Only count server-confirmed logs (positive IDs) for completed status.
@@ -935,10 +937,11 @@ export default function DeliveryPage() {
 
         loadingHouseLogIdsRef.current.add(houseId)
         try {
-            const logs = await deliveryLogsApi.list({
-                houseId,
-                shift: selectedShift,
-            }, true) // Force fresh from server on page load
+             const logs = await deliveryLogsApi.list({
+                 houseId,
+                 shift: selectedShift,
+                 dairyId: dairyId ?? undefined,
+             }, true) // Force fresh from server on page load
 
             const selectedDateLogs = logs.filter((log) => isSameLocalDate(new Date(log.deliveredAt), selectedDate))
 
@@ -972,10 +975,11 @@ export default function DeliveryPage() {
         const loadCurrentHouseLogs = async () => {
             try {
                 setLogsLoading(true)
-                const logs = await deliveryLogsApi.list({
-                    houseId: currentHouse.id,
-                    shift: selectedShift,
-                }, true) // Force fresh from server on page load
+                 const logs = await deliveryLogsApi.list({
+                     houseId: currentHouse.id,
+                     shift: selectedShift,
+                     dairyId: dairyId ?? undefined,
+                 }, true) // Force fresh from server on page load
 
                 const selectedDateLogs = logs.filter((log) => {
                     const deliveredAt = new Date(log.deliveredAt)
@@ -1095,7 +1099,7 @@ export default function DeliveryPage() {
         setHistoryDialogOpen(true)
         setHistoryLoading(true)
         try {
-            const logs = await deliveryLogsApi.list({ houseId: currentHouse.id })
+             const logs = await deliveryLogsApi.list({ houseId: currentHouse.id, dairyId: dairyId ?? undefined })
             const sorted = logs.sort((a, b) => new Date(b.deliveredAt).getTime() - new Date(a.deliveredAt).getTime())
             if (sorted.length === 0) {
                 setHistoryLogs([])
@@ -1113,12 +1117,9 @@ export default function DeliveryPage() {
 
     const summaryFilteredSummaryLogs = useMemo(() => {
         if (!summaryFromDate || !summaryToDate) return summaryLogs
-        const from = new Date(summaryFromDate)
-        const to = new Date(summaryToDate)
-        to.setHours(23, 59, 59, 999)
         return summaryLogs.filter(log => {
-            const d = new Date(log.deliveredAt)
-            return d >= from && d <= to
+            const key = getStoredDateKey(log.deliveredAt)
+            return key >= summaryFromDate && key <= summaryToDate
         })
     }, [summaryLogs, summaryFromDate, summaryToDate])
 
@@ -1175,12 +1176,8 @@ export default function DeliveryPage() {
 
     const summaryDisplaySummaryRows = useMemo(() => {
         if (!summaryHasDateRangeFilter) return summarySummaryRows
-        const from = new Date(summaryFromDate)
-        const to = new Date(summaryToDate)
-        to.setHours(23, 59, 59, 999)
         return summarySummaryRows.filter(row => {
-            const d = new Date(row.dateKey)
-            return d >= from && d <= to
+            return row.dateKey >= summaryFromDate && row.dateKey <= summaryToDate
         })
     }, [summarySummaryRows, summaryFromDate, summaryToDate, summaryHasDateRangeFilter])
 
@@ -1197,10 +1194,9 @@ export default function DeliveryPage() {
     const summaryMonthlyProductSummary = useMemo(() => {
         if (!summaryHouse) return []
 
-        const allMonthLogs = summaryFilteredSummaryLogs.filter(log => {
-            const d = new Date(log.deliveredAt)
-            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
-        })
+        const allMonthLogs = summaryFilteredSummaryLogs.filter(log =>
+            isStoredDateInMonth(log.deliveredAt, summaryPeriod.year, summaryPeriod.month),
+        )
 
         const totalMap = new Map<string, number>()
         for (const log of allMonthLogs) {
@@ -1239,10 +1235,9 @@ export default function DeliveryPage() {
     const summaryPdfMonthlyProductSummary = useMemo(() => {
         if (!summaryHouse) return []
 
-        const allMonthLogs = summaryFilteredSummaryLogs.filter(log => {
-            const d = new Date(log.deliveredAt)
-            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
-        })
+        const allMonthLogs = summaryFilteredSummaryLogs.filter(log =>
+            isStoredDateInMonth(log.deliveredAt, summaryPeriod.year, summaryPeriod.month),
+        )
 
         const totalMap = new Map<string, { qty: number; amount: number }>()
         for (const log of allMonthLogs) {
@@ -1271,10 +1266,9 @@ export default function DeliveryPage() {
     const summaryTotals = useMemo(() => {
         if (!summaryHouse) return { productTotals: [] as Array<{ product: string; quantity: number; amount: number }>, grandTotal: 0, previousBalance: 0, pendingTotal: 0 }
 
-        const allMonthLogs = summaryFilteredSummaryLogs.filter(log => {
-            const d = new Date(log.deliveredAt)
-            return d.getFullYear() === summaryPeriod.year && d.getMonth() === summaryPeriod.month
-        })
+        const allMonthLogs = summaryFilteredSummaryLogs.filter(log =>
+            isStoredDateInMonth(log.deliveredAt, summaryPeriod.year, summaryPeriod.month),
+        )
 
         const totalMap = new Map<string, { qty: number; amount: number }>()
         let allLogsGrandTotal = 0
@@ -1343,7 +1337,7 @@ export default function DeliveryPage() {
         try {
             const [freshHouse, logs, bills, rates, balance] = await Promise.all([
                 housesApi.get(currentHouse.id),
-                deliveryLogsApi.list({ houseId: currentHouse.id }, true),
+                 deliveryLogsApi.list({ houseId: currentHouse.id, dairyId: dairyId ?? undefined }, true),
                 billsApi.list({ houseId: currentHouse.id }),
                 productRatesApi.list(),
                 balanceApi.get(currentHouse.id),
@@ -1465,11 +1459,11 @@ export default function DeliveryPage() {
                     items: editDeliveryForm.items,
                     note: editDeliveryForm.note,
                 })
-                toast.success('Delivery updated successfully')
-            }
+                 toast.success('Delivery updated successfully')
+             }
 
-            const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
-            setSummaryLogs(logs)
+             const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
+             setSummaryLogs(logs)
 
             setEditDeliveryDialogOpen(false)
             setEditingDeliveryLog(null)
@@ -1490,8 +1484,8 @@ export default function DeliveryPage() {
         }
         setEditDeliverySaving(true)
         try {
-            await deliveryLogsApi.delete(deletingDeliveryLog.id)
-            const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id }, true)
+         await deliveryLogsApi.delete(deletingDeliveryLog.id)
+             const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
             setSummaryLogs(logs)
             setDeletingDeliveryLog(null)
             toast.success('Delivery log deleted successfully')

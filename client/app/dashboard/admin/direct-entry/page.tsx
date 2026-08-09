@@ -21,6 +21,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { balanceApi, billsApi, deliveryLogsApi, housesApi, productRatesApi, type DeliveryLog, type DeliveryLogItem, type House, type ProductRate } from '@/lib/api'
+import { getDairyIdFromCookie } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 
 
@@ -222,6 +223,7 @@ function getHouseSearchText(house: House) {
 
 export default function DeliveryEntryPage() {
   const [loading, setLoading] = useState(true)
+  const dairyId = getDairyIdFromCookie()
   const [saving, setSaving] = useState(false)
   const [houses, setHouses] = useState<House[]>([])
   const [rates, setRates] = useState<ProductRate[]>([])
@@ -325,7 +327,7 @@ export default function DeliveryEntryPage() {
 
     if (cached) {
       setLogs(cached)
-      void deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey) })
+       void deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey), dairyId: dairyId ?? undefined })
         .then((data) => {
           setLogs(data)
           writeDirectEntryCache(key, data)
@@ -334,7 +336,7 @@ export default function DeliveryEntryPage() {
       return
     }
 
-    const data = await deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey) })
+     const data = await deliveryLogsApi.list({ ...getDateRangeForDateKey(dateKey), dairyId: dairyId ?? undefined })
     setLogs(data)
     writeDirectEntryCache(key, data)
   }
