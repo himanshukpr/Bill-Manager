@@ -5,8 +5,8 @@ const STATIC_CACHE = 'dairy-vyapar-static-v1';
 const PRE_CACHE_ASSETS = [
   '/',
   '/manifest.json',
-  '/icon-192x192.png',
-  '/icon-512x512.png',
+  '/DairyVayapar Icon.png',
+  '/DairyVayapar Icon.png',
 ];
 
 // Install event - pre-cache static assets
