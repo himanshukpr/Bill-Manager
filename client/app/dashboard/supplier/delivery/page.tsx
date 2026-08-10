@@ -3165,26 +3165,46 @@ export default function DeliveryPage() {
                                                         `/delivery-logs?houseId=${currentHouse.id}&shift=${selectedShift}&fromDate=${fromDate}`,
                                                         { headers: { 'Content-Type': 'application/json', ...getAuthHeader() } },
                                                     )
-                                                    if (!res.ok) return
+                                                     if (!res.ok) return
                                                     const logs: DeliveryLog[] = await res.json()
 
-                                                    const freq = new Map<string, Map<number, number>>()
+                                                    const normalizeMilkKey = (p: string): string => {
+                                                        const s = p.toLowerCase().trim().replace(/\s+/g, ' ')
+                                                        if (s === 'milk' || s === 'cow milk' || s === 'cow milk milk' || s === 'buffalo milk') return 'milk-family'
+                                                        return s
+                                                    }
+
+                                                    const freq = new Map<string, Map<string, Map<number, number>>>()
                                                     for (const log of logs) {
                                                         for (const item of log.items) {
                                                             const product = String(item.milkType ?? '').trim()
                                                             if (!product) continue
                                                             const qty = Number(item.qty)
                                                             if (!qty || qty <= 0) continue
-                                                            const qm = freq.get(product) ?? new Map()
+                                                            const groupKey = normalizeMilkKey(product)
+                                                            const labelMap = freq.get(groupKey) ?? new Map()
+                                                            const qm = labelMap.get(product) ?? new Map()
                                                             qm.set(qty, (qm.get(qty) ?? 0) + 1)
-                                                            freq.set(product, qm)
+                                                            labelMap.set(product, qm)
+                                                            freq.set(groupKey, labelMap)
                                                         }
                                                     }
 
                                                     const recs: Array<{ milkType: string; qty: number }> = []
-                                                    for (const [product, qm] of freq) {
-                                                        const best = Array.from(qm.entries()).sort((a, b) => b[1] - a[1])[0]
-                                                        if (best) recs.push({ milkType: product, qty: best[0] })
+                                                    for (const labelMap of freq.values()) {
+                                                        let bestLabel: string | null = null
+                                                        let bestQty: number | null = null
+                                                        let bestCount = -1
+                                                        for (const [label, qm] of labelMap) {
+                                                            const sorted = Array.from(qm.entries()).sort((a, b) => b[1] - a[1])
+                                                            const [qty, count] = sorted[0]
+                                                            if (count > bestCount) {
+                                                                bestCount = count
+                                                                bestLabel = label
+                                                                bestQty = qty
+                                                            }
+                                                        }
+                                                        if (bestLabel !== null && bestQty !== null) recs.push({ milkType: bestLabel, qty: bestQty })
                                                     }
 
                                                     if (recs.length === 0) return
