@@ -34,13 +34,13 @@ self.addEventListener('activate', (event) => {
 // Fetch event - network first, fallback to cache for navigation
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  
+
   // Skip non-GET requests
   if (request.method !== 'GET') return;
-  
+
   // Skip API calls
   if (request.url.includes('/api/')) return;
-  
+
   // Navigation requests - network first, cache fallback
   if (request.mode === 'navigate') {
     event.respondWith(
@@ -60,7 +60,7 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
-  
+
   // Static assets - cache first, network fallback
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
@@ -72,13 +72,13 @@ self.addEventListener('fetch', (event) => {
               cache.put(request, response);
             });
           }
-        }).catch(() => {});
+        }).catch(() => { });
         return cachedResponse;
       }
-      
+
       return fetch(request).then((response) => {
         if (!response || response.status !== 200) return response;
-        
+
         const responseClone = response.clone();
         caches.open(CACHE_NAME).then((cache) => {
           cache.put(request, responseClone);

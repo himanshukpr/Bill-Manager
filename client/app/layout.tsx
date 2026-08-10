@@ -33,8 +33,8 @@ export const metadata: Metadata = {
     telephone: false,
   },
   icons: {
-    icon: "/icon-192x192.png",
-    apple: "/icon-512x512.png",
+    icon: "/DairyVayapar Icon.png",
+    apple: "/DairyVayapar Icon.png",
   },
 }
 
