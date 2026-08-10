@@ -1,4 +1,3 @@
-import type { Metadata, Viewport } from "next"
 import { Geist_Mono, Nunito_Sans, Inter } from "next/font/google"
 
 import "./globals.css"
@@ -8,7 +7,6 @@ import { StorageGate } from "@/components/storage-gate"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils";
-import { ServiceWorkerRegister } from "@/components/service-worker-register"
 
 const interHeading = Inter({ subsets: ['latin'], variable: '--font-heading' });
 
@@ -19,32 +17,6 @@ const fontMono = Geist_Mono({
   variable: "--font-mono",
   preload: false,
 })
-
-export const metadata: Metadata = {
-  title: "Dairy Vyapar - Dairy Management System",
-  description: "Manage your dairy business - billing, deliveries, payments, and more.",
-  manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "Dairy Vyapar",
-  },
-  formatDetection: {
-    telephone: false,
-  },
-  icons: {
-    icon: "/DairyVayapar Icon.png",
-    apple: "/DairyVayapar Icon.png",
-  },
-}
-
-export const viewport: Viewport = {
-  themeColor: "#2563eb",
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-}
 
 export default function RootLayout({
   children,
@@ -62,7 +34,6 @@ export default function RootLayout({
         <ThemeProvider>
           <StorageGate>
             <TooltipProvider>
-              <ServiceWorkerRegister />
               <Toaster />
               {children}
             </TooltipProvider>
