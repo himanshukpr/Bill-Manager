@@ -2318,21 +2318,12 @@ export default function HousesPage() {
                     </td>
                     <td className="px-2 py-2 sm:px-3">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => openView(h)} title="View">
-                          <Eye className="h-4 w-4" />
-                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => openSummary(h)} title="Summary">
                           <Rows3 className="h-4 w-4" />
                         </Button>
-                        {h.active ? (
-                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('deactivate-confirm') }} title="Deactivate" className="text-destructive hover:text-destructive">
-                            <PowerOff className="h-4 w-4" />
-                          </Button>
-                        ) : (
-                          <Button variant="ghost" size="icon" onClick={() => { setToggleId(h.id); setToggleDialogMode('inactive-choice') }} title="Activate or delete permanently" className="text-green-600 hover:text-green-700">
-                            <Save className="h-4 w-4" />
-                          </Button>
-                        )}
+                        <Button variant="ghost" size="icon" onClick={() => openView(h)} title="View">
+                          <Eye className="h-4 w-4" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -2645,11 +2636,24 @@ export default function HousesPage() {
                 </div>
               </div>
 
-              <DialogFooter>
-                <Button variant="outline" onClick={() => { setViewHouse(null); openEdit(viewHouse) }}>
-                  <Pencil className="h-4 w-4 mr-2" /> Edit
-                </Button>
-                <Button onClick={() => setViewHouse(null)}>Close</Button>
+              <DialogFooter className="flex flex-row items-center justify-between gap-2">
+                <div>
+                  {viewHouse.active ? (
+                    <Button variant="ghost" size="sm" onClick={() => { setToggleId(viewHouse.id); setToggleDialogMode('deactivate-confirm') }} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5">
+                      <PowerOff className="h-3.5 w-3.5" /> Deactivate
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={() => { setToggleId(viewHouse.id); setToggleDialogMode('inactive-choice') }} className="text-green-600 hover:text-green-700 hover:bg-green-50 gap-1.5">
+                      <Save className="h-3.5 w-3.5" /> Activate
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => { setViewHouse(null); openEdit(viewHouse) }}>
+                    <Pencil className="h-4 w-4 mr-2" /> Edit
+                  </Button>
+                  <Button onClick={() => setViewHouse(null)}>Close</Button>
+                </div>
               </DialogFooter>
             </>
           )}

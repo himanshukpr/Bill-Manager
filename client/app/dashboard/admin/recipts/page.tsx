@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2, Eye, Calendar } from 'lucide-react'
+import { IndianRupee, Plus, Search, Receipt, History, Check, ChevronDown, Rows3, ChevronLeft, ChevronRight, Edit2, Trash2, Eye, Calendar, MessageCircle } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, housesApi, billsApi, deliveryLogsApi, productRatesApi, invalidateCache, type PaymentHistory, type House, type HouseBalance, type Bill, type BillItem, type DeliveryLog, type ProductRate } from '@/lib/api'
@@ -351,11 +351,63 @@ export default function ReceiptsPage() {
   const [summaryFromDate, setSummaryFromDate] = useState<string>('')
   const [summaryToDate, setSummaryToDate] = useState<string>('')
   const summaryRequestIdRef = useRef(0)
+  const [customBillOpen, setCustomBillOpen] = useState(false)
+  const [customBillFromDate, setCustomBillFromDate] = useState<string>('')
+  const [customBillToDate, setCustomBillToDate] = useState<string>('')
+  const [customBillSummary, setCustomBillSummary] = useState<{ name: string; qty: number; rate: number; amount: number }[] | null>(null)
+  const [whatsappOpen, setWhatsappOpen] = useState(false)
+  const [whatsappMsg, setWhatsappMsg] = useState('')
 
   const setCachedFormPaidAt = useCallback((value: string) => {
     paymentDateCache = value
     setFormPaidAt(value)
   }, [])
+
+  useEffect(() => {
+    if (!customBillOpen || !customBillFromDate || !customBillToDate || !summaryHouse) return
+    const timer = setTimeout(async () => {
+      setCustomBillSummary(null)
+      try {
+        const allLogsRes = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
+        const allLogs = allLogsRes as DeliveryLog[]
+        const logsInRange = allLogs.filter(log => {
+          const key = getStoredDateKey(log.deliveredAt)
+          return key >= customBillFromDate && key <= customBillToDate
+        })
+        if (logsInRange.length === 0) {
+          setCustomBillSummary([])
+          return
+        }
+        const itemMap = new Map<string, { name: string; qty: number; rate: number; amount: number }>()
+        for (const log of logsInRange) {
+          for (const item of log.items ?? []) {
+            const milkType = String(item.milkType ?? item.name ?? 'milk')
+            const qty = Number(item.qty ?? 0)
+            const rate = Number(item.rate ?? 0)
+            const amount = Number(item.amount ?? qty * rate)
+            if (qty <= 0) continue
+            const normalizedType = milkType.toLowerCase()
+            let displayName = normalizedType
+            if (normalizedType === 'cow milk' || normalizedType.startsWith('cow milk ')) displayName = 'Cow Milk'
+            else if (normalizedType === 'buffalo milk' || normalizedType.startsWith('buffalo milk ')) displayName = 'Buffalo Milk'
+            else displayName = normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1)
+            const key = `${displayName}:${rate}`
+            const existing = itemMap.get(key)
+            if (!existing) {
+              itemMap.set(key, { name: displayName, qty, rate, amount })
+            } else {
+              existing.qty += qty
+              existing.amount += amount
+            }
+          }
+        }
+        setCustomBillSummary(Array.from(itemMap.values()))
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to calculate')
+      }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [customBillOpen, customBillFromDate, customBillToDate, summaryHouse, dairyId])
 
   const filteredSummaryLogs = useMemo(() => {
     if (!summaryFromDate || !summaryToDate) return summaryLogs
@@ -872,6 +924,15 @@ export default function ReceiptsPage() {
     }
   }
 
+  async function openView(h: House) {
+    try {
+      const full = await housesApi.get(h.id)
+      setSummaryHouse(full)
+    } catch {
+      // keep current summaryHouse
+    }
+  }
+
   async function handleChangeSummaryPeriod(newPeriod: { year: number; month: number }) {
     if (!summaryHouse || !isValidMonth(newPeriod.year, newPeriod.month)) return
     setSummaryPeriod(newPeriod)
@@ -1070,7 +1131,7 @@ export default function ReceiptsPage() {
 
     const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
     const title = `House ${summaryHouse.houseNo} Delivery Summary`
-    const periodLabel = `${MONTH_NAMES[summaryPeriod.month + 1]} ${summaryPeriod.year}`
+    const periodLabel = `${MONTH_NAMES[summaryPeriod.month]} ${summaryPeriod.year}`
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(13)
@@ -2038,6 +2099,10 @@ export default function ReceiptsPage() {
           setEditingDeliveryLog(null)
           setEditingDeliveryAllLogs([])
           setEditDeliveryForm({ items: [], note: '' })
+          setCustomBillOpen(false)
+          setCustomBillSummary(null)
+          setCustomBillFromDate('')
+          setCustomBillToDate('')
         }
       }}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -2047,6 +2112,9 @@ export default function ReceiptsPage() {
                 <DialogTitle className="flex items-center gap-2">
                   <Rows3 className="h-5 w-5 text-primary" />
                   House {summaryHouse.houseNo} Delivery Summary
+                  <Button variant="ghost" size="icon" onClick={() => { setSummaryOpen(false); openView(summaryHouse) }} title="View Details">
+                    <Eye className="h-4 w-4" />
+                  </Button>
                 </DialogTitle>
               </DialogHeader>
 
@@ -2081,7 +2149,7 @@ export default function ReceiptsPage() {
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <span className="min-w-48 text-center text-sm font-medium">
-                    {MONTH_NAMES[summaryPeriod.month + 1]} {summaryPeriod.year}
+                    {MONTH_NAMES[summaryPeriod.month]} {summaryPeriod.year}
                   </span>
                   <Button
                     variant="ghost"
@@ -2408,7 +2476,10 @@ export default function ReceiptsPage() {
                 </div>
               )}
 
-              <DialogFooter>
+              <DialogFooter className="mt-4 border-t border-border/40 pt-4">
+                <Button variant="outline" onClick={() => setCustomBillOpen(true)} disabled={summaryLoading || summaryLogs.length === 0}>
+                  Delivery Summary
+                </Button>
                 <Button variant="outline" onClick={handleExportSummaryPdf} disabled={summaryLoading || summaryRows.length === 0}>
                   Export PDF
                 </Button>
@@ -2416,6 +2487,127 @@ export default function ReceiptsPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delivery Summary Dialog */}
+      <Dialog open={customBillOpen} onOpenChange={setCustomBillOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Delivery Summary - House {summaryHouse?.houseNo}</DialogTitle>
+            <DialogDescription>
+              Enter a date range to see a summary of deliveries logged in that period.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="custom-bill-from">From Date</Label>
+                <Input id="custom-bill-from" type="date" value={customBillFromDate} onChange={e => setCustomBillFromDate(e.target.value)} className="h-9 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="custom-bill-to">To Date</Label>
+                <Input id="custom-bill-to" type="date" value={customBillToDate} onChange={e => setCustomBillToDate(e.target.value)} className="h-9 text-sm" />
+              </div>
+            </div>
+            {customBillSummary !== null && (
+              <div className="rounded-lg border border-border bg-muted/10 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30">
+                      <th className="px-4 py-2 text-left font-semibold text-muted-foreground">Product</th>
+                      <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Qty (L)</th>
+                      <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Rate (₹)</th>
+                      <th className="px-4 py-2 text-right font-semibold text-muted-foreground">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customBillSummary.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground text-sm">No delivery logs found for this date range</td>
+                      </tr>
+                    ) : (
+                      <>
+                        {customBillSummary.map((item, idx) => (
+                          <tr key={idx} className="border-b border-border/50 last:border-0">
+                            <td className="px-4 py-2 font-medium">{item.name}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{item.qty.toLocaleString('en-IN')}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">₹{Number(item.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                            <td className="px-4 py-2 text-right font-semibold tabular-nums">₹{Number(item.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-muted/20">
+                          <td className="px-4 py-2 font-semibold">Total</td>
+                          <td className="px-4 py-2 text-right font-bold tabular-nums">{customBillSummary.reduce((sum, i) => sum + i.qty, 0).toLocaleString('en-IN')}L</td>
+                          <td className="px-4 py-2 text-right text-muted-foreground">—</td>
+                          <td className="px-4 py-2 text-right font-bold tabular-nums">₹{customBillSummary.reduce((sum, i) => sum + i.amount, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setCustomBillOpen(false)
+              setCustomBillSummary(null)
+              setCustomBillFromDate('')
+              setCustomBillToDate('')
+            }}>Close</Button>
+            {customBillSummary && customBillSummary.length > 0 && (
+              <Button variant="outline" onClick={() => {
+                const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-IN')}L @ ₹${Number(i.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })} = ₹${Number(i.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`).join('\n')
+                const totalQty = customBillSummary.reduce((sum, i) => sum + i.qty, 0)
+                const totalAmount = customBillSummary.reduce((sum, i) => sum + i.amount, 0)
+                setWhatsappMsg(`Delivery Summary for House ${summaryHouse?.houseNo}:\n${lines}\n\nTotal: ${totalQty.toLocaleString('en-IN')}L / ₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`)
+                setWhatsappOpen(true)
+              }}>
+                <MessageCircle className="h-4 w-4 mr-1" /> WhatsApp
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* WhatsApp Send Dialog */}
+      <Dialog open={whatsappOpen} onOpenChange={setWhatsappOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send WhatsApp Message</DialogTitle>
+            <DialogDescription>
+              Message will be sent to house {summaryHouse?.houseNo}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Phone Number</Label>
+              <Input value={summaryHouse?.phoneNo ?? ''} disabled />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="whatsapp-msg">Message</Label>
+              <Textarea
+                id="whatsapp-msg"
+                value={whatsappMsg}
+                onChange={e => setWhatsappMsg(e.target.value)}
+                rows={4}
+                placeholder="Edit your message here..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWhatsappOpen(false)}>Cancel</Button>
+            <Button onClick={() => {
+              if (!summaryHouse?.phoneNo) return
+              const phone = summaryHouse.phoneNo.replace(/\D/g, '')
+              const text = encodeURIComponent(whatsappMsg)
+              window.open(`https://wa.me/${phone}?text=${text}`, '_blank')
+              setWhatsappOpen(false)
+            }} className="gap-2">
+              <MessageCircle className="h-4 w-4" /> Send via WhatsApp
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
