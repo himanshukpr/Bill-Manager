@@ -429,16 +429,6 @@ export default function ReceiptsPage() {
     })
   }, [summaryBills, summaryPeriod])
 
-  const currentMonthBills = useMemo(() => {
-    const monthStart = new Date(summaryPeriod.year, summaryPeriod.month, 1)
-    const monthEnd = new Date(summaryPeriod.year, summaryPeriod.month + 1, 1)
-    return summaryBills.filter(b => {
-      const bFrom = new Date(b.fromDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-01`)
-      const bTo = new Date(b.toDate ?? `${b.year}-${String(b.month).padStart(2, '0')}-28`)
-      return bFrom < monthEnd && bTo > monthStart
-    })
-  }, [summaryBills, summaryPeriod])
-
   const monthlyProductSummary = useMemo(() => {
     if (!summaryHouse) return []
 
@@ -459,7 +449,7 @@ export default function ReceiptsPage() {
     }
 
     // If bills exist, subtract bill items to get pending-only quantities
-    for (const bill of currentMonthBills) {
+    for (const bill of matchingBills) {
       if (bill.items?.length) {
         const items = bill.items as BillItem[]
         for (const item of items) {
@@ -598,7 +588,7 @@ export default function ReceiptsPage() {
     }
 
     // If bills exist, subtract bill items to get pending-only quantities
-    for (const bill of currentMonthBills) {
+    for (const bill of matchingBills) {
       const billItems = (bill.items as BillItem[]) ?? []
       for (const item of billItems) {
         if (item.name && item.qty > 0) {
@@ -612,7 +602,7 @@ export default function ReceiptsPage() {
       }
     }
 
-    const billsTotalAmount = currentMonthBills.reduce((sum, b) => sum + Number(b.totalAmount), 0)
+    const billsTotalAmount = matchingBills.reduce((sum, b) => sum + Number(b.totalAmount), 0)
     const pendingGrandTotal = allLogsGrandTotal - billsTotalAmount
     const pendingTotal = Array.from(totalMap.values()).reduce((sum, d) => sum + d.amount, 0)
 
