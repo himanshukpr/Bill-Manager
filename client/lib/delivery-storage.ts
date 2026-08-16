@@ -330,22 +330,34 @@ export async function deleteDeliveryLog(id: number): Promise<void> {
   await db.deliveryLogs.delete(id);
 
   if (id > 0 && isOnline()) {
+    let serverRes: Response | null = null;
     try {
-      const res = await fetchApi(`/delivery-logs/${id}`, {
+      serverRes = await fetchApi(`/delivery-logs/${id}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       });
-
-      if (res.ok) {
-        await invalidateCache('/delivery-logs');
-        invalidateSyncCache();
-        return;
-      }
     } catch {
-      // fall through to enqueue
+      // Network failure (offline / backend unreachable) — enqueue for retry.
+      await enqueue({ op: 'delete', serverId: id, status: 'pending', createdAt: Date.now(), attempts: 0, nextRetryAt: Date.now() });
+      return;
     }
+
+    if (serverRes.ok) {
+      await invalidateCache('/delivery-logs');
+      invalidateSyncCache();
+      return;
+    }
+
+    // The server explicitly rejected the delete (e.g. 403 permission denied,
+    // 404 not found). Surface this to the caller instead of silently
+    // swallowing it — otherwise the UI reports success while nothing was
+    // actually deleted. Retry-queue only applies to transient network errors.
+    const body = await serverRes.clone().json().catch(() => null) as { message?: string } | null;
+    const msg = Array.isArray(body?.message) ? body.message[0] : (body?.message ?? `Delete failed with status ${serverRes.status}`);
+    throw new Error(msg);
   }
 
+  // Offline path: enqueue for later sync.
   if (id > 0) {
     await enqueue({ op: 'delete', serverId: id, status: 'pending', createdAt: Date.now(), attempts: 0, nextRetryAt: Date.now() });
   }

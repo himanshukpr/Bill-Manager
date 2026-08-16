@@ -200,8 +200,9 @@ export class AuthService {
 
   async validateDairyPassword(password: string, dairyId: number): Promise<boolean> {
     if (!dairyId || !password) return false;
+    // Only admin users' passwords are accepted as the dairy password.
     const users = await this.prisma.user.findMany({
-      where: { dairyId },
+      where: { dairyId, role: 'admin' },
       select: { password: true },
     });
     for (const user of users) {

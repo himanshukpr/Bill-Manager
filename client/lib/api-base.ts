@@ -98,12 +98,29 @@ export async function fetchApi(path: string, init?: RequestInit): Promise<Respon
     try {
       const response = await fetch(buildApiUrl(baseUrl, path), init);
 
-      if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403)) {
+      if (typeof window !== 'undefined' && response.status === 401) {
         const body = await response.clone().json().catch(() => null) as { message?: string } | null;
-        if (body?.message === 'PLAN_EXPIRED') {
+        const msg = (body?.message ?? '').toString().toLowerCase();
+        if (msg === 'PLAN_EXPIRED'.toLowerCase() || msg === 'plan_expired') {
           const { clearAllAuth } = await import('./auth');
           clearAllAuth();
           window.location.replace('/?plan-expired=1');
+          return response;
+        }
+        // Only treat genuinely-invalid-token responses (invalid/expired JWT
+        // signature, unknown account, etc.) as "session must be reset".
+        // Permission or resource errors must NOT wipe the session — the user
+        // is still authenticated and should just see an inline error.
+        const isTokenInvalid =
+          msg.includes('invalid token') ||
+          msg.includes('jwt expired') ||
+          msg.includes('invalid signature') ||
+          msg.includes('unknown account') ||
+          msg.includes('no auth');
+        if (isTokenInvalid) {
+          const { clearAllAuth } = await import('./auth');
+          clearAllAuth();
+          window.location.replace('/');
           return response;
         }
       }

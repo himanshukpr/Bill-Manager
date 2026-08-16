@@ -159,24 +159,10 @@ export class DeliveryLogsService {
       throw new BadRequestException('Invalid user context');
     }
 
-    // Check modify permission for suppliers
-    if (user.role === 'supplier' && !user.permissions?.canModifyDeliveryLogs) {
-      throw new ForbiddenException(
-        'You do not have permission to modify delivery logs',
-      );
-    }
-
     const log = await this.prisma.deliveryLog.findFirst({
       where: { id, dairyId: user.dairyId },
     });
     if (!log) throw new NotFoundException(`Delivery log #${id} not found in this dairy`);
-
-    // Only supplier who created it can update
-    if (user.role === 'supplier' && log.supplierId !== user.uuid) {
-      throw new ForbiddenException(
-        'You can only update your own delivery logs',
-      );
-    }
 
     // If items are updated, recalculate total
     if (dto.items && dto.items.length > 0) {
@@ -247,24 +233,10 @@ export class DeliveryLogsService {
       throw new BadRequestException('Invalid user context');
     }
 
-    // Check modify permission for suppliers
-    if (user.role === 'supplier' && !user.permissions?.canModifyDeliveryLogs) {
-      throw new ForbiddenException(
-        'You do not have permission to modify delivery logs',
-      );
-    }
-
     const log = await this.prisma.deliveryLog.findFirst({
       where: { id, dairyId: user.dairyId },
     });
     if (!log) throw new NotFoundException(`Delivery log #${id} not found in this dairy`);
-
-    // Only supplier who created it or admin can delete
-    if (user.role === 'supplier' && log.supplierId !== user.uuid) {
-      throw new ForbiddenException(
-        'You can only delete your own delivery logs',
-      );
-    }
 
     const [deleted] = await this.prisma.$transaction([
       this.prisma.deliveryLog.delete({ where: { id } }),

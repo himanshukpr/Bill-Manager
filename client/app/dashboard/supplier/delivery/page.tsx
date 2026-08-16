@@ -1541,14 +1541,14 @@ export default function DeliveryPage() {
         }
         setEditDeliverySaving(true)
         try {
-         await deliveryLogsApi.delete(deletingDeliveryLog.id)
-             const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
+            await deliveryLogsApi.delete(deletingDeliveryLog.id)
+            const logs = await deliveryLogsApi.list({ houseId: summaryHouse.id, dairyId: dairyId ?? undefined }, true)
             setSummaryLogs(logs)
-            setDeletingDeliveryLog(null)
             toast.success('Delivery log deleted successfully')
         } catch (error: unknown) {
             toast.error(summaryGetErrorMessage(error))
         } finally {
+            setDeletingDeliveryLog(null)
             setEditDeliverySaving(false)
         }
     }
@@ -3168,11 +3168,18 @@ export default function DeliveryPage() {
                                                      if (!res.ok) return
                                                     const logs: DeliveryLog[] = await res.json()
 
-                                                    const normalizeMilkKey = (p: string): string => {
-                                                        const s = p.toLowerCase().trim().replace(/\s+/g, ' ')
-                                                        if (s === 'milk' || s === 'cow milk' || s === 'cow milk milk' || s === 'buffalo milk') return 'milk-family'
-                                                        return s
-                                                    }
+                                                     const normalizeMilkKey = (p: string): string => {
+                                                         const s = p.toLowerCase().trim().replace(/\s+/g, ' ')
+                                                         // Group only variant spellings of the SAME milk type.
+                                                         // Cow Milk variants → "cow milk"; Buffalo Milk variants → "buffalo milk";
+                                                         // bare "milk" stays its own group (distinct from cow/buffalo).
+                                                         if (s === 'milk' || s === 'milk milk' || s === 'milk 1l' || s === '1l milk') return 'milk'
+                                                         if (s === 'cow milk' || s === 'cow milk milk' || s === 'cow milk 1l' || s === '1l cow milk') return 'cow milk'
+                                                         if (s === 'buffalo milk' || s === 'buffalo milk milk' || s === 'buffalo milk 1l' || s === '1l buffalo milk') return 'buffalo milk'
+                                                         if (s.startsWith('cow milk') || s.startsWith('cow')) return 'cow milk'
+                                                         if (s.startsWith('buffalo milk') || s.startsWith('buffalo')) return 'buffalo milk'
+                                                         return s
+                                                     }
 
                                                     const freq = new Map<string, Map<string, Map<number, number>>>()
                                                     for (const log of logs) {
@@ -3841,7 +3848,7 @@ export default function DeliveryPage() {
                     <DialogHeader>
                         <DialogTitle>Enter Dairy Password</DialogTitle>
                         <DialogDescription>
-                            Editing a saved delivery requires a valid password of any user in this dairy.
+                            Editing a saved delivery requires the admin password of this dairy.
                         </DialogDescription>
                     </DialogHeader>
                     <Input
