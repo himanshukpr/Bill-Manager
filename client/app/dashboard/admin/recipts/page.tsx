@@ -1602,11 +1602,11 @@ export default function ReceiptsPage() {
                           <span className="font-bold text-emerald-600 dark:text-emerald-400">
                             ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                           </span>
-                          {Number(p.discount ?? 0) > 0 && (
+                          {/* {Number(p.discount ?? 0) > 0 && (
                             <span className="ml-1 text-xs font-normal text-red-500">
                               (₹{Number(p.discount).toLocaleString('en-IN', { maximumFractionDigits: 2 })} discount)
                             </span>
-                          )}
+                          )} */}
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
                           {p.recordedBy ?? '—'}
