@@ -11,7 +11,7 @@ import {
     SidebarMenuItem,
     useSidebar,
 } from "@/components/ui/sidebar"
-import { clearAllAuth, getSessionAuth } from "@/lib/auth"
+import { getSessionAuth, handleExpiredDairySession } from "@/lib/auth"
 
 export function NavMain({
     items,
@@ -31,7 +31,7 @@ export function NavMain({
         if (session?.planExpiry) {
             const expiryDate = new Date(session.planExpiry)
             if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-                clearAllAuth()
+                handleExpiredDairySession()
                 router.replace("/?plan-expired=1")
                 return false
             }

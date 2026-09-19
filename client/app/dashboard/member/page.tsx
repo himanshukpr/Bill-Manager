@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { PeriodSelector } from "@/components/member/period-selector"
 import { StatCard } from "@/components/dashboard/stat-card"
-import { clearSessionAuth, getDairyIdFromCookie } from "@/lib/auth"
+import { ProfileSwitcherList } from "@/components/auth/profile-switcher"
+import { getDairyIdFromCookie, logoutSavedProfile } from "@/lib/auth"
 import { useAuthGuard } from "@/hooks/use-auth-guard"
 
 const memberStats = [
@@ -19,7 +20,7 @@ export default function MemberDashboardPage() {
   const { auth, ready } = useAuthGuard('member')
 
   function logout() {
-    clearSessionAuth()
+    logoutSavedProfile()
     const dairyId = getDairyIdFromCookie()
     window.location.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }
@@ -47,6 +48,14 @@ export default function MemberDashboardPage() {
             </Button>
           </div>
         </header>
+
+        <section className="rounded-3xl border border-border/70 bg-card p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">Switch account</h2>
+          <p className="mt-1 text-sm text-slate-600">Move between dairies without signing out the other accounts.</p>
+          <div className="mt-3">
+            <ProfileSwitcherList />
+          </div>
+        </section>
 
         <section className="grid gap-4 sm:grid-cols-3">
           {memberStats.map((item) => (

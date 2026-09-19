@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { House, HouseConfig, DeliveryLog, Bill, User } from './api';
+import type { House, HouseConfig, DeliveryLog, Bill, User, CashHouse, CashLog, CashPayment } from './api';
 
 export type SyncAction = {
   id?: number;
@@ -11,6 +11,8 @@ export type SyncAction = {
   attempts?: number;
   nextRetryAt?: number;
   lastError?: string;
+  dairyId?: number;
+  profileId?: string;
 };
 
 export type QueryCacheEntry = {
@@ -29,8 +31,10 @@ export type DeliveryQueueEntry = {
   createdAt: number;
   attempts: number;
   nextRetryAt: number;
-  lastError?: string;
   status: 'pending' | 'completed' | 'failed';
+  lastError?: string;
+  dairyId?: number;
+  profileId?: string;
 };
 
 export class BillManagerDB extends Dexie {
@@ -42,6 +46,9 @@ export class BillManagerDB extends Dexie {
   syncQueue!: Table<SyncAction, number>;
   queryCache!: Table<QueryCacheEntry, string>;
   deliveryQueue!: Table<DeliveryQueueEntry, number>;
+  cashHouses!: Table<CashHouse, number>;
+  cashLogs!: Table<CashLog, number>;
+  cashPayments!: Table<CashPayment, number>;
 
   constructor() {
     super('BillManagerDB');
@@ -54,6 +61,19 @@ export class BillManagerDB extends Dexie {
       syncQueue: '++id, createdAt, nextRetryAt',
       queryCache: 'key, updatedAt',
       deliveryQueue: '++id, op, status, createdAt, nextRetryAt, tempId, serverId',
+    });
+    this.version(4).stores({
+      houses: 'id, houseNo, phoneNo',
+      houseConfigs: 'id, houseId, shift, supplierId',
+      deliveryLogs: 'id, houseId, supplierId, shift, deliveredAt',
+      bills: 'id, houseId, month, year',
+      users: 'uuid, username, role',
+      syncQueue: '++id, createdAt, nextRetryAt',
+      queryCache: 'key, updatedAt',
+      deliveryQueue: '++id, op, status, createdAt, nextRetryAt, tempId, serverId',
+      cashHouses: 'id, houseNo, dairyId, supplierId',
+      cashLogs: 'id, houseId, dairyId',
+      cashPayments: 'id, houseId, dairyId',
     });
   }
 }

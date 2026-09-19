@@ -1,5 +1,5 @@
 import { db, type DeliveryQueueEntry } from './db';
-import { getAuthHeader } from './auth';
+import { getAuthHeader, getSessionAuth, profileIdForSession } from './auth';
 import { fetchApi } from './api-base';
 import { invalidateCache } from './api';
 import { SYNC_DEBOUNCE_MS } from '@/lib/timing';
@@ -366,8 +366,19 @@ export async function deleteDeliveryLog(id: number): Promise<void> {
 // ─── Queue ────────────────────────────────────────────────────────────────────
 
 async function enqueue(entry: Omit<DeliveryQueueEntry, 'id'>): Promise<void> {
-  await db.deliveryQueue.add(entry as DeliveryQueueEntry);
+  const session = getSessionAuth();
+  await db.deliveryQueue.add({
+    ...entry,
+    ...(session ? { dairyId: session.dairyId, profileId: profileIdForSession(session) } : {}),
+  } as DeliveryQueueEntry);
   scheduleProcessQueue();
+}
+
+function canProcessDeliveryAction(action: DeliveryQueueEntry): boolean {
+  if (!action.profileId) return true;
+  const session = getSessionAuth();
+  if (!session) return false;
+  return profileIdForSession(session) === action.profileId;
 }
 
 let processTimer: ReturnType<typeof setTimeout> | null = null;
@@ -398,6 +409,7 @@ export async function processDeliveryQueue(): Promise<void> {
     for (const action of actions) {
       if (!isOnline()) break;
       if (!action.id) continue;
+      if (!canProcessDeliveryAction(action)) continue;
 
       try {
         if (action.op === 'create' && action.data) {

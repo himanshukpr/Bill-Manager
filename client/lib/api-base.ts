@@ -102,8 +102,8 @@ export async function fetchApi(path: string, init?: RequestInit): Promise<Respon
         const body = await response.clone().json().catch(() => null) as { message?: string } | null;
         const msg = (body?.message ?? '').toString().toLowerCase();
         if (msg === 'PLAN_EXPIRED'.toLowerCase() || msg === 'plan_expired') {
-          const { clearAllAuth } = await import('./auth');
-          clearAllAuth();
+          const { handleExpiredDairySession } = await import('./auth');
+          handleExpiredDairySession();
           window.location.replace('/?plan-expired=1');
           return response;
         }
@@ -118,8 +118,8 @@ export async function fetchApi(path: string, init?: RequestInit): Promise<Respon
           msg.includes('unknown account') ||
           msg.includes('no auth');
         if (isTokenInvalid) {
-          const { clearAllAuth } = await import('./auth');
-          clearAllAuth();
+          const { removeActiveSavedProfile } = await import('./auth');
+          removeActiveSavedProfile();
           window.location.replace('/');
           return response;
         }

@@ -60,6 +60,7 @@ export class HouseBalanceService {
           amount: dto.amount,
           note: dto.note,
           discount: dto.discount || 0,
+          paymentMethod: dto.paymentMethod ?? 'cash',
           dairyId,
           ...(dto.paidAt ? { paidAt: parseDateAsUTC(dto.paidAt) } : {}),
           ...(dto.billIds ? { billIds: dto.billIds } : {}),
@@ -157,7 +158,7 @@ export class HouseBalanceService {
     });
   }
 
-  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number; paidAt?: string }, dairyId: number) {
+  async updatePayment(id: number, dto: { note?: string; amount?: number; discount?: number; paidAt?: string; paymentMethod?: 'cash' | 'online' | 'cheque' }, dairyId: number) {
     const payment = await this.prisma.paymentHistory.findFirst({
       where: { id, dairyId },
       include: { balance: true },
@@ -170,6 +171,7 @@ export class HouseBalanceService {
     if (dto.amount !== undefined) data.amount = dto.amount;
     if (dto.discount !== undefined) data.discount = dto.discount;
     if (dto.paidAt !== undefined) data.paidAt = parseDateAsUTC(dto.paidAt);
+    if (dto.paymentMethod !== undefined) data.paymentMethod = dto.paymentMethod;
 
     const oldTotal = Number(payment.amount) + Number(payment.discount ?? 0);
     const newTotal =

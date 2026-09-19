@@ -27,8 +27,9 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { EllipsisVerticalIcon, KeyRound, LogOut } from "lucide-react"
+import { EllipsisVerticalIcon, KeyRound, LogOut, Users } from "lucide-react"
 import { LogoutConfirmButton } from "@/components/dashboard/shared/logout-confirm-button"
+import { ProfileSwitcherList } from "@/components/auth/profile-switcher"
 import { getSessionAuth } from "@/lib/auth"
 import { toast } from "sonner"
 import { dairiesApi } from "@/lib/api"
@@ -46,6 +47,7 @@ export function NavUser({
 }) {
     const { isMobile } = useSidebar()
     const [pwdDialogOpen, setPwdDialogOpen] = useState(false)
+    const [accountsOpen, setAccountsOpen] = useState(false)
     const [newPassword, setNewPassword] = useState("")
     const [saving, setSaving] = useState(false)
     const session = getSessionAuth()
@@ -121,6 +123,16 @@ export function NavUser({
                             <DropdownMenuItem
                                 onSelect={(e) => {
                                     e.preventDefault()
+                                    setAccountsOpen(true)
+                                }}
+                                className="cursor-pointer"
+                            >
+                                <Users className="mr-2 h-4 w-4" />
+                                Switch account
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onSelect={(e) => {
+                                    e.preventDefault()
                                     setPwdDialogOpen(true)
                                 }}
                                 className="cursor-pointer"
@@ -168,6 +180,15 @@ export function NavUser({
                             {saving ? 'Saving...' : 'Change Password'}
                         </Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+            <Dialog open={accountsOpen} onOpenChange={setAccountsOpen}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>Switch account</DialogTitle>
+                        <DialogDescription>Move between dairies without signing out the other accounts.</DialogDescription>
+                    </DialogHeader>
+                    <ProfileSwitcherList onAddAccount={() => setAccountsOpen(false)} />
                 </DialogContent>
             </Dialog>
         </>

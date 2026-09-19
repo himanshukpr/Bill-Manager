@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ClipboardList, Home, List, Settings, Truck } from "lucide-react"
+import { ClipboardList, Home, List, Settings, Truck, Wallet } from "lucide-react"
 import { NavMain } from "@/components/dashboard/shared/nav-main"
 import { NavUser } from "@/components/dashboard/shared/nav-user"
 import {
@@ -19,6 +19,7 @@ const navItems = [
   { title: "Dashboard", url: "/dashboard/supplier", icon: Home },
   { title: "My Houses", url: "/dashboard/supplier/houses", icon: List },
   { title: "All Houses", url: "/dashboard/supplier/houses-all", icon: List },
+  { title: "Cash Section", url: "/dashboard/supplier/cash", icon: Wallet },
   // { title: "Direct Entry", url: "/dashboard/supplier/direct-entry", icon: Truck },
   // { title: "Delivery Plan", url: "/dashboard/supplier/ap", icon: ClipboardList },
   { title: "Settings", url: "/dashboard/supplier/settings", icon: Settings },

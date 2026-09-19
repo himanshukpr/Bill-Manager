@@ -40,6 +40,7 @@ export function middleware(request: NextRequest) {
   const isPendingPage = pathname === "/pending"
   const isDairyAuth = /^\/dairy\/\d+\/auth$/.test(pathname)
   const isDairyUsers = /^\/dairy\/\d+\/users$/.test(pathname)
+  const isAddAccount = request.nextUrl.searchParams.get("add-account") === "1"
 
   // ── 0. Plan expired → force logout everything ──────────────────────────────
   if (planExpiry) {
@@ -71,7 +72,14 @@ export function middleware(request: NextRequest) {
   }
 
   // ── 3. Already logged in → redirect away from auth pages ───────────────────
-  if (isLoggedIn && isAuthPage) {
+  // add-account=1 explicitly permits opening dairy/user login forms to add
+  // another profile. Also allow a signed-in user to open another dairy's
+  // login pages: the form shows a notice and signing in switches accounts.
+  const canAddAccount = isAddAccount && pathname !== "/signup"
+  const routeDairyMatch = pathname.match(/^\/dairy\/(\d+)\/(auth|users|register)$/)
+  const routeDairyId = routeDairyMatch ? Number(routeDairyMatch[1]) : null
+  const isOtherDairyLogin = routeDairyId !== null && String(routeDairyId) !== (dairyId ?? "")
+  if (isLoggedIn && isAuthPage && !canAddAccount && !isOtherDairyLogin) {
     if (verified !== "true") {
       return NextResponse.redirect(new URL("/pending", request.url))
     }

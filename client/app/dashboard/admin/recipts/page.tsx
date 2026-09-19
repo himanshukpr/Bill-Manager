@@ -140,6 +140,14 @@ function getLocalDateKey(date: Date = new Date()): string {
   return `${year}-${month}-${day}`
 }
 
+type ReceiptPaymentMethod = 'cash' | 'online' | 'cheque'
+
+function paymentMethodLabel(method: string | null | undefined): string {
+  if (method === 'online') return 'Online'
+  if (method === 'cheque') return 'Cheque'
+  return 'Cash'
+}
+
 function getLogPeriod(logs: DeliveryLog[]): { year: number; month: number } {
   const latest = logs
     .map((log) => new Date(log.deliveredAt))
@@ -304,6 +312,7 @@ export default function ReceiptsPage() {
   const [viewBillDialogOpen, setViewBillDialogOpen] = useState(false)
   const [formSelectedBillIds, setFormSelectedBillIds] = useState<number[]>([])
   const [formDiscount, setFormDiscount] = useState('')
+  const [formPaymentMethod, setFormPaymentMethod] = useState<ReceiptPaymentMethod>('cash')
   const [formPaymentMode, setFormPaymentMode] = useState<'all' | 'selected'>('all')
   const [formClosePeriod, setFormClosePeriod] = useState(false)
   const [showNote, setShowNote] = useState(false)
@@ -340,6 +349,7 @@ export default function ReceiptsPage() {
   const [editingPaymentAmount, setEditingPaymentAmount] = useState('')
   const [editingPaymentDiscount, setEditingPaymentDiscount] = useState('')
   const [editingPaymentPaidAt, setEditingPaymentPaidAt] = useState('')
+  const [editingPaymentMethod, setEditingPaymentMethod] = useState<ReceiptPaymentMethod>('cash')
   const [deletingPayment, setDeletingPayment] = useState<PaymentHistory | null>(null)
   const [deletePassword, setDeletePassword] = useState('')
   const [deletePasswordError, setDeletePasswordError] = useState('')
@@ -1373,12 +1383,14 @@ export default function ReceiptsPage() {
           amount: isNaN(newAmount) ? undefined : newAmount,
           discount: isNaN(newDiscount) ? undefined : newDiscount,
           note: editingPaymentNote || undefined,
+          paymentMethod: editingPaymentMethod,
           ...paidAtPayload,
         })
         toast.success('Payment updated')
       } else {
         await balanceApi.updatePayment(editingPayment.id, {
           note: editingPaymentNote || undefined,
+          paymentMethod: editingPaymentMethod,
           ...paidAtPayload,
         })
         toast.success('Payment updated')
@@ -1462,6 +1474,7 @@ export default function ReceiptsPage() {
           billIds: formSelectedBillIds.length > 0 ? formSelectedBillIds : undefined,
           discount: discount > 0 ? discount : undefined,
           recordedBy: getSessionAuth()?.username,
+          paymentMethod: formPaymentMethod,
           ...(formPaidAt ? { paidAt: new Date(formPaidAt).toISOString() } : {}),
         })
       }
@@ -1476,6 +1489,7 @@ export default function ReceiptsPage() {
       setFormHouseQuery('')
       setFormDiscount('')
       setFormPaidAt('')
+      setFormPaymentMethod('cash')
       setFormClosePeriod(false)
       setShowNote(false)
       setFormFromDate('')
@@ -1567,6 +1581,7 @@ export default function ReceiptsPage() {
                   <tr className="border-b border-border bg-muted/40">
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
+                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Method</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Recorded By</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Created At</th>
@@ -1609,6 +1624,9 @@ export default function ReceiptsPage() {
                           )} */}
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
+                          {paymentMethodLabel(p.paymentMethod)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">
                           {p.recordedBy ?? '—'}
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
@@ -1646,6 +1664,7 @@ export default function ReceiptsPage() {
                               setEditingPaymentNote(p.note ?? '')
                               setEditingPaymentAmount(String(Number(p.amount)))
                               setEditingPaymentDiscount(String(Number(p.discount ?? 0)))
+                              setEditingPaymentMethod((p.paymentMethod as ReceiptPaymentMethod) || 'cash')
                               setEditingPaymentPaidAt(p.paidAt ? new Date(p.paidAt).toISOString().split('T')[0] : '')
                             }}
                             title="Edit payment"
@@ -1687,6 +1706,7 @@ export default function ReceiptsPage() {
           setFormHouseQuery('')
           setFormDiscount('')
           setFormPaidAt('')
+          setFormPaymentMethod('cash')
           setFormClosePeriod(false)
           setShowNote(false)
           setFormFromDate('')
@@ -1844,23 +1864,36 @@ export default function ReceiptsPage() {
                   </span>
                 </div>
 
-                <div className="space-y-1">
-                  <Label htmlFor="receipt-date" className="text-xs">Payment Date</Label>
-                  <div className="relative flex gap-1">
-                    <Input id="receipt-date" type="date"
-                      value={formPaidAt}
-                      onChange={e => setCachedFormPaidAt(e.target.value)}
-                      className="flex-1" />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-9 px-2 shrink-0"
-                      onClick={() => setCachedFormPaidAt(getLocalDateKey())}
-                      title="Set to today"
-                    >
-                      <Calendar className="h-3.5 w-3.5" />
-                    </Button>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="receipt-method" className="text-xs">Payment Method</Label>
+                    <Select value={formPaymentMethod} onValueChange={(v: ReceiptPaymentMethod) => setFormPaymentMethod(v)}>
+                      <SelectTrigger id="receipt-method"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="online">Online</SelectItem>
+                        <SelectItem value="cheque">Cheque</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="receipt-date" className="text-xs">Payment Date</Label>
+                    <div className="relative flex gap-1">
+                      <Input id="receipt-date" type="date"
+                        value={formPaidAt}
+                        onChange={e => setCachedFormPaidAt(e.target.value)}
+                        className="flex-1" />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9 px-2 shrink-0"
+                        onClick={() => setCachedFormPaidAt(getLocalDateKey())}
+                        title="Set to today"
+                      >
+                        <Calendar className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -2820,6 +2853,17 @@ export default function ReceiptsPage() {
               <Input id="edit-date" type="date"
                 value={editingPaymentPaidAt}
                 onChange={e => setEditingPaymentPaidAt(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-method">Payment Method</Label>
+              <Select value={editingPaymentMethod} onValueChange={(v: ReceiptPaymentMethod) => setEditingPaymentMethod(v)}>
+                <SelectTrigger id="edit-method"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="online">Online</SelectItem>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label htmlFor="edit-note">Note</Label>

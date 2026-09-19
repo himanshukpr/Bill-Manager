@@ -1,4 +1,4 @@
-import { getAuthHeader, getSessionAuth, getDairyIdFromCookie } from './auth';
+import { DAIRY_STORAGE_KEY, getAuthHeader, getSessionAuth, getDairyIdFromCookie } from './auth';
 import { db } from './db';
 import { syncEngine } from './sync-engine';
 import { fetchApi } from './api-base';
@@ -10,7 +10,7 @@ import {
 } from './house-config-cache';
 import { DEFAULT_CACHE_FRESH_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 
-const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'theme', 'next-theme']);
+const LOCAL_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'bill-manager-profiles', DAIRY_STORAGE_KEY, 'theme', 'next-theme']);
 const SESSION_STORAGE_PRESERVE_KEYS = new Set(['bill-manager-auth', 'adminSession']);
 const revalidationLocks = new Map<string, Promise<void>>();
 const activeGetQueries = new Map<
@@ -195,6 +195,18 @@ export async function invalidateCache(path: string): Promise<void> {
   await Promise.all(activeRefreshes);
 }
 
+/**
+ * Reset in-memory and IndexedDB query state when the active account changes.
+ * Domain tables are intentionally preserved; callers scope reads by dairy.
+ */
+export async function resetAccountQueryState(): Promise<void> {
+  if (!isBrowser()) return;
+  activeGetQueries.clear();
+  lastOnDataPayloadByCacheKey.clear();
+  await db.queryCache.clear();
+  clearHouseConfigSessionCache();
+}
+
 // ─── Serialized queryCache updates ────────────────────────────────────────────
 let qcWriteQueue: Promise<void> = Promise.resolve();
 
@@ -264,8 +276,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
     if (msg === 'PLAN_EXPIRED') {
       if (typeof window !== 'undefined' && !window.location.search.includes('plan-expired=1')) {
-        const { clearAllAuth } = await import('./auth');
-        clearAllAuth();
+        const { handleExpiredDairySession } = await import('./auth');
+        handleExpiredDairySession();
         window.location.replace('/?plan-expired=1');
       }
       throw new Error('PLAN_EXPIRED');
@@ -404,6 +416,7 @@ export type House = {
   rate2?: string;
   createdAt: string;
   active: boolean;
+  dairyId?: number;
   balance?: HouseBalance;
   configs?: HouseConfig[];
   bills?: Bill[];
@@ -437,6 +450,14 @@ function normalizeHouseRecord<T extends { configs?: unknown }>(house: T): Omit<T
 
 function normalizeHouseCollection<T extends { configs?: unknown }>(houses: T[]): Array<Omit<T, 'configs'> & { configs?: HouseConfig[] }> {
   return houses.map((house) => normalizeHouseRecord(house));
+}
+
+/** Read locally cached houses without leaking another signed-in dairy's rows. */
+export function queryHousesForActiveDairy(): Promise<House[]> {
+  const dairyId = getSessionAuth()?.dairyId ?? getDairyIdFromCookie() ?? null;
+  return db.houses.toArray().then((houses) =>
+    houses.filter((house) => dairyId === null || house.dairyId == null || house.dairyId === dairyId),
+  );
 }
 
 function mergeHouseConfigCaches(existing: HouseConfig[], incoming: HouseConfig[]): HouseConfig[] {
@@ -483,6 +504,7 @@ export type PaymentHistory = {
   recordedBy?: string;
   createdAt: string;
   paidAt: string;
+  paymentMethod?: string;
   billIds?: number[];
   balance?: { house?: { id: number; houseNo: string; area?: string } };
 };
@@ -626,8 +648,17 @@ export const housesApi = {
         const normalized = normalizeHouseCollection(data as House[]);
         if (isBrowser()) {
           const serverIds = new Set(normalized.map((h) => h.id));
+          const activeDairyId = getSessionAuth()?.dairyId ?? getDairyIdFromCookie() ?? null;
+          const staleIds = await db.houses
+            .where('id')
+            .above(0)
+            .filter((house) =>
+              !serverIds.has(house.id) &&
+              (activeDairyId === null || house.dairyId == null || house.dairyId === activeDairyId),
+            )
+            .primaryKeys();
           await db.transaction('rw', db.houses, async () => {
-            await db.houses.where('id').above(0).and((h) => !serverIds.has(h.id)).delete();
+            if (staleIds.length > 0) await db.houses.bulkDelete(staleIds);
             await db.houses.where('id').below(0).delete();
             await db.houses.bulkPut(normalized);
           });
@@ -1337,7 +1368,7 @@ export const balanceApi = {
 
     return { queued: true };
   },
-  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number; paidAt?: string; recordedBy?: string }) => {
+  record: async (data: { houseId: number; amount: number; note?: string; billIds?: number[]; discount?: number; paidAt?: string; recordedBy?: string; paymentMethod?: string }) => {
     const applyLocalPaymentUpdate = async (payment?: PaymentHistory, balance?: HouseBalance) => {
       if (!isBrowser()) return;
 
@@ -1350,6 +1381,7 @@ export const balanceApi = {
         amount: String(data.amount),
         note: data.note,
         recordedBy: data.recordedBy,
+        paymentMethod: data.paymentMethod ?? 'cash',
         createdAt: payment?.createdAt ?? now,
         paidAt: data.paidAt ?? now,
         balance: payment?.balance ?? (existingHouse ? { house: { id: existingHouse.id, houseNo: existingHouse.houseNo, area: existingHouse.area } } : undefined),
@@ -1467,7 +1499,7 @@ export const balanceApi = {
 
     return null;
   },
-  updatePayment: async (id: number, data: { note?: string; amount?: number; discount?: number; paidAt?: string }) => {
+  updatePayment: async (id: number, data: { note?: string; amount?: number; discount?: number; paidAt?: string; paymentMethod?: string }) => {
     const res = await apiPatch<PaymentHistory>(`/house-balance/payment/${id}`, data);
     if (isBrowser()) {
       await invalidateCache('/house-balance');
@@ -1796,5 +1828,585 @@ export const geocodeApi = {
     });
     if (!res.ok) throw new Error('Geocoding failed');
     return res.json();
+  },
+};
+
+// ─── Cash Section (independent: cash_houses / cash_logs / cash_payments) ────
+
+export type CashSupplier = {
+  uuid: string;
+  username: string;
+  email?: string;
+};
+
+export type CashHouse = {
+  id: number;
+  dairyId?: number;
+  houseNo: string;
+  area?: string;
+  phoneNo?: string;
+  note?: string;
+  supplierId?: string | null;
+  supplier?: CashSupplier | null;
+  position: number;
+  previousBalance: number | string;
+  active: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  _count?: { logs: number; payments: number };
+  logs?: CashLog[];
+  payments?: CashPayment[];
+};
+
+export type CashLog = {
+  id: number;
+  houseId: number;
+  dairyId?: number;
+  type: string;
+  title?: string;
+  description?: string;
+  amount?: number | string | null;
+  balanceChange?: number | string | null;
+  balanceAfter?: number | string | null;
+  createdBy?: string;
+  createdAt: string;
+};
+
+export type CashPayment = {
+  id: number;
+  houseId: number;
+  dairyId?: number;
+  amount: number | string;
+  discount?: number | string;
+  note?: string;
+  recordedBy?: string;
+  paidAt: string;
+  createdAt: string;
+  house?: { id: number; houseNo: string };
+};
+
+export type CashStats = {
+  totalHouses: number;
+  totalPreviousBalance: number | string;
+  totalBalance: number | string;
+  totalReceived: number | string;
+  totalDiscount: number | string;
+};
+
+function cashActiveDairyId(): number | null {
+  return getSessionAuth()?.dairyId ?? getDairyIdFromCookie() ?? null;
+}
+
+/** Read locally cached cash houses without leaking another signed-in dairy's rows. */
+export function queryCashHousesForActiveDairy(): Promise<CashHouse[]> {
+  const dairyId = cashActiveDairyId();
+  return db.cashHouses.toArray().then((houses) =>
+    houses
+      .filter((h) => dairyId === null || h.dairyId == null || h.dairyId === dairyId)
+      .sort((a, b) => (a.position - b.position) || a.houseNo.localeCompare(b.houseNo)),
+  );
+}
+
+/** Read locally cached cash logs for one house, newest first. */
+export function queryCashLogsForActiveDairy(houseId: number): Promise<CashLog[]> {
+  const dairyId = cashActiveDairyId();
+  return db.cashLogs
+    .where('houseId').equals(houseId).toArray()
+    .then((logs) =>
+      logs
+        .filter((l) => dairyId === null || l.dairyId == null || l.dairyId === dairyId)
+        .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
+    );
+}
+
+/** Read locally cached cash payments, newest first (capped at 200 without a house filter). */
+export function queryCashPaymentsForActiveDairy(houseId?: number): Promise<CashPayment[]> {
+  const dairyId = cashActiveDairyId();
+  const query = houseId === undefined
+    ? db.cashPayments.toCollection()
+    : db.cashPayments.where('houseId').equals(houseId);
+  return query.toArray().then((pays) => {
+    const rows = pays
+      .filter((p) => dairyId === null || p.dairyId == null || p.dairyId === dairyId)
+      .sort((a, b) => String(b.paidAt ?? '').localeCompare(String(a.paidAt ?? '')));
+    return houseId === undefined ? rows.slice(0, 200) : rows;
+  });
+}
+
+function cashTempId(): number {
+  return -Math.floor(Math.random() * 100000);
+}
+
+function cashNowIso(): string {
+  return new Date().toISOString();
+}
+
+function cashNum(v: unknown): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+const SYSTEM_CASH_LOG_TYPES = ['payment', 'payment_update', 'payment_reversed'];
+
+async function patchCashQueryCache<T>(matches: (cacheKey: string) => boolean, update: (data: T) => T): Promise<void> {
+  if (!isBrowser()) return;
+  await updateCachedQueries<T>(matches, update);
+}
+
+function appendCashRow<T extends { id: number }>(row: T, list: T[]): T[] {
+  return [...list, row];
+}
+
+function removeCashRow<T extends { id: number }>(id: number, list: T[]): T[] {
+  return list.filter((item) => item.id !== id);
+}
+
+export const cashApi = {
+  stats: () => apiGet<CashStats>('/cash/stats'),
+  suppliers: () => apiGet<CashSupplier[]>('/cash/suppliers'),
+  houses: {
+    list: () =>
+      apiGet<CashHouse[]>('/cash/houses', {
+        onData: async (data) => {
+          if (!isBrowser()) return;
+          const dairyId = cashActiveDairyId();
+          const serverIds = new Set(data.map((h) => h.id));
+          const staleIds = await db.cashHouses
+            .where('id').above(0)
+            .filter((h) => !serverIds.has(h.id) && (dairyId === null || h.dairyId == null || h.dairyId === dairyId))
+            .primaryKeys();
+          await db.transaction('rw', db.cashHouses, async () => {
+            if (staleIds.length > 0) await db.cashHouses.bulkDelete(staleIds);
+            await db.cashHouses.where('id').below(0).delete();
+            await db.cashHouses.bulkPut(data);
+          });
+        },
+      }),
+    get: (id: number) =>
+      apiGet<CashHouse>(`/cash/houses/${id}`, {
+        onData: async (data) => {
+          if (isBrowser()) await db.cashHouses.put(data);
+        },
+      }),
+    create: async (data: Partial<CashHouse>) => {
+      const tempHouse: CashHouse = {
+        id: cashTempId(),
+        dairyId: cashActiveDairyId() ?? undefined,
+        houseNo: data.houseNo ?? '',
+        area: data.area,
+        phoneNo: data.phoneNo,
+        note: data.note,
+        supplierId: data.supplierId,
+        position: data.position ?? 0,
+        previousBalance: data.previousBalance ?? 0,
+        active: true,
+        createdAt: cashNowIso(),
+      };
+      if (isBrowser()) {
+        await db.cashHouses.put(tempHouse);
+        await patchCashQueryCache<CashHouse[]>(
+          (cacheKey) => cacheKey === 'GET:/cash/houses',
+          (cached) => (Array.isArray(cached) ? appendCashRow(tempHouse, cached) : cached),
+        );
+      }
+      if (isOnline()) {
+        try {
+          const res = await apiPost<CashHouse>('/cash/houses', data);
+          if (isBrowser()) {
+            await db.cashHouses.delete(tempHouse.id);
+            await db.cashHouses.put(res);
+            await patchCashQueryCache<CashHouse[]>(
+              (cacheKey) => cacheKey === 'GET:/cash/houses',
+              (cached) => (Array.isArray(cached) ? [...removeCashRow(tempHouse.id, cached), res] : cached),
+            );
+            await invalidateCache('/cash');
+          }
+          return res;
+        } catch (error: unknown) {
+          if (isBrowser()) {
+            await db.cashHouses.delete(tempHouse.id);
+            await patchCashQueryCache<CashHouse[]>(
+              (cacheKey) => cacheKey === 'GET:/cash/houses',
+              (cached) => (Array.isArray(cached) ? removeCashRow(tempHouse.id, cached) : cached),
+            );
+          }
+          throw error;
+        }
+      }
+      if (isBrowser()) await syncEngine.enqueue('/cash/houses', 'POST', data);
+      return tempHouse;
+    },
+    update: async (id: number, data: Partial<CashHouse>) => {
+      if (isBrowser()) {
+        const existing = await db.cashHouses.get(id);
+        const next = existing ? ({ ...existing, ...data } as CashHouse) : ({ id, ...data } as CashHouse);
+        if (isOnline()) {
+          const res = await apiPatch<CashHouse>(`/cash/houses/${id}`, data);
+          await db.cashHouses.put(res);
+          await patchCashQueryCache<CashHouse[]>(
+            (cacheKey) => cacheKey === 'GET:/cash/houses' || cacheKey === `GET:/cash/houses/${id}`,
+            (cached) => {
+              if (Array.isArray(cached)) return cached.map((h) => (h.id === id ? res : h));
+              return (cached as unknown as CashHouse)?.id === id ? (res as unknown as CashHouse[]) : cached;
+            },
+          );
+          await invalidateCache('/cash');
+          return res;
+        }
+        await db.cashHouses.put(next);
+        await patchCashQueryCache<CashHouse[]>(
+          (cacheKey) => cacheKey === 'GET:/cash/houses' || cacheKey === `GET:/cash/houses/${id}`,
+          (cached) => {
+            if (Array.isArray(cached)) return cached.map((h) => (h.id === id ? next : h));
+            return (cached as unknown as CashHouse)?.id === id ? (next as unknown as CashHouse[]) : cached;
+          },
+        );
+        await syncEngine.enqueue(`/cash/houses/${id}`, 'PATCH', data);
+        return next;
+      }
+      return apiPatch<CashHouse>(`/cash/houses/${id}`, data);
+    },
+    reorder: async (ids: number[]) => {
+      if (isBrowser() && !isOnline()) {
+        await db.transaction('rw', db.cashHouses, async () => {
+          for (let index = 0; index < ids.length; index += 1) {
+            const house = await db.cashHouses.get(ids[index]!);
+            if (house) await db.cashHouses.put({ ...house, position: index });
+          }
+        });
+        await syncEngine.enqueue('/cash/houses/reorder', 'PATCH', { ids });
+        return queryCashHousesForActiveDairy();
+      }
+      const res = await apiPatch<CashHouse[]>('/cash/houses/reorder', { ids });
+      if (isBrowser()) {
+        await db.cashHouses.bulkPut(res);
+        await invalidateCache('/cash');
+      }
+      return res;
+    },
+    remove: async (id: number) => {
+      if (isBrowser()) {
+        await db.transaction('rw', db.cashHouses, db.cashLogs, db.cashPayments, async () => {
+          await db.cashLogs.where('houseId').equals(id).delete();
+          await db.cashPayments.where('houseId').equals(id).delete();
+          await db.cashHouses.delete(id);
+        });
+        await patchCashQueryCache<CashHouse[]>(
+          (cacheKey) => cacheKey === 'GET:/cash/houses' || cacheKey === `GET:/cash/houses/${id}`,
+          (cached) => (Array.isArray(cached) ? removeCashRow(id, cached) : cached),
+        );
+        await invalidateCache('/cash');
+      }
+      if (isOnline()) return apiDelete(`/cash/houses/${id}`);
+      if (isBrowser()) await syncEngine.enqueue(`/cash/houses/${id}`, 'DELETE');
+      return null;
+    },
+  },
+  logs: {
+    list: (houseId: number) =>
+      apiGet<CashLog[]>(`/cash/logs?houseId=${houseId}`, {
+        onData: async (data) => {
+          if (!isBrowser()) return;
+          const dairyId = cashActiveDairyId();
+          const serverIds = new Set(data.map((l) => l.id));
+          const staleIds = await db.cashLogs
+            .where('houseId').equals(houseId)
+            .filter((l) => !serverIds.has(l.id) && (dairyId === null || l.dairyId == null || l.dairyId === dairyId))
+            .primaryKeys();
+          await db.transaction('rw', db.cashLogs, async () => {
+            if (staleIds.length > 0) await db.cashLogs.bulkDelete(staleIds);
+            await db.cashLogs.where('houseId').equals(houseId).filter((l) => l.id < 0).delete();
+            await db.cashLogs.bulkPut(data);
+          });
+        },
+      }),
+    create: async (data: { houseId: number; type?: string; title?: string; description?: string; amount?: number; balanceChange?: number }) => {
+      const tempLog: CashLog = {
+        id: cashTempId(),
+        houseId: data.houseId,
+        dairyId: cashActiveDairyId() ?? undefined,
+        type: data.type ?? 'note',
+        title: data.title,
+        description: data.description,
+        amount: data.amount,
+        balanceChange: data.balanceChange,
+        createdBy: getSessionAuth()?.username,
+        createdAt: cashNowIso(),
+      };
+      const applyBalanceEffect = async () => {
+        if (!data.balanceChange) return;
+        const house = await db.cashHouses.get(data.houseId);
+        if (house) {
+          await db.cashHouses.put({
+            ...house,
+            previousBalance: String(cashNum(house.previousBalance) + data.balanceChange),
+          });
+        }
+      };
+      const reverseBalanceEffect = async () => {
+        if (!data.balanceChange) return;
+        const house = await db.cashHouses.get(data.houseId);
+        if (house) {
+          await db.cashHouses.put({
+            ...house,
+            previousBalance: String(cashNum(house.previousBalance) - data.balanceChange),
+          });
+        }
+      };
+      if (isBrowser()) {
+        await db.transaction('rw', db.cashLogs, db.cashHouses, async () => {
+          await db.cashLogs.put(tempLog);
+          await applyBalanceEffect();
+        });
+        await patchCashQueryCache<CashLog[]>(
+          (cacheKey) => cacheKey === `GET:/cash/logs?houseId=${data.houseId}`,
+          (cached) => (Array.isArray(cached) ? appendCashRow(tempLog, cached) : cached),
+        );
+      }
+      if (isOnline()) {
+        try {
+          const res = await apiPost<CashLog>('/cash/logs', data);
+          if (isBrowser()) {
+            await db.transaction('rw', db.cashLogs, db.cashHouses, async () => {
+              await db.cashLogs.delete(tempLog.id);
+              await db.cashLogs.put(res);
+              // Server applied the same balance effect; re-sync local balance.
+              if (data.balanceChange) {
+                const house = await db.cashHouses.get(data.houseId);
+                if (house) {
+                  const serverAfter = res.balanceAfter;
+                  await db.cashHouses.put({
+                    ...house,
+                    previousBalance: serverAfter ?? String(cashNum(house.previousBalance)),
+                  });
+                }
+              }
+            });
+            await patchCashQueryCache<CashLog[]>(
+              (cacheKey) => cacheKey === `GET:/cash/logs?houseId=${data.houseId}`,
+              (cached) => (Array.isArray(cached) ? [...removeCashRow(tempLog.id, cached), res] : cached),
+            );
+            await invalidateCache('/cash');
+          }
+          return res;
+        } catch (error: unknown) {
+          if (isBrowser()) {
+            await db.transaction('rw', db.cashLogs, db.cashHouses, async () => {
+              await db.cashLogs.delete(tempLog.id);
+              await reverseBalanceEffect();
+            });
+            await patchCashQueryCache<CashLog[]>(
+              (cacheKey) => cacheKey === `GET:/cash/logs?houseId=${data.houseId}`,
+              (cached) => (Array.isArray(cached) ? removeCashRow(tempLog.id, cached) : cached),
+            );
+          }
+          throw error;
+        }
+      }
+      if (isBrowser()) await syncEngine.enqueue('/cash/logs', 'POST', data);
+      return tempLog;
+    },
+    remove: async (id: number) => {
+      if (isBrowser()) {
+        const existing = await db.cashLogs.get(id);
+        const isSystemLog = existing ? SYSTEM_CASH_LOG_TYPES.includes(existing.type) : false;
+        if (!isSystemLog) {
+          await db.transaction('rw', db.cashLogs, db.cashHouses, async () => {
+            await db.cashLogs.delete(id);
+            const change = cashNum(existing?.balanceChange);
+            if (change !== 0 && existing) {
+              const house = await db.cashHouses.get(existing.houseId);
+              if (house) {
+                await db.cashHouses.put({
+                  ...house,
+                  previousBalance: String(cashNum(house.previousBalance) - change),
+                });
+              }
+            }
+          });
+          await patchCashQueryCache<CashLog[]>(
+            (cacheKey) => cacheKey.startsWith('GET:/cash/logs'),
+            (cached) => (Array.isArray(cached) ? removeCashRow(id, cached) : cached),
+          );
+        }
+        await invalidateCache('/cash');
+      }
+      if (isOnline()) return apiDelete(`/cash/logs/${id}`);
+      if (isBrowser()) {
+        const existing = await db.cashLogs.get(id).catch(() => undefined);
+        if (!existing || !SYSTEM_CASH_LOG_TYPES.includes(existing.type)) {
+          await syncEngine.enqueue(`/cash/logs/${id}`, 'DELETE');
+        }
+      }
+      return null;
+    },
+  },
+  payments: {
+    list: (houseId?: number) => {
+      const path = houseId ? `/cash/payments?houseId=${houseId}` : '/cash/payments';
+      return apiGet<CashPayment[]>(path, {
+        onData: async (data) => {
+          if (!isBrowser()) return;
+          const dairyId = cashActiveDairyId();
+          const serverIds = new Set(data.map((p) => p.id));
+          const scope = houseId === undefined
+            ? db.cashPayments.toCollection()
+            : db.cashPayments.where('houseId').equals(houseId);
+          const staleIds = await scope
+            .filter((p) => !serverIds.has(p.id) && (dairyId === null || p.dairyId == null || p.dairyId === dairyId))
+            .primaryKeys();
+          await db.transaction('rw', db.cashPayments, async () => {
+            if (staleIds.length > 0) await db.cashPayments.bulkDelete(staleIds);
+            if (houseId === undefined) {
+              await db.cashPayments.filter((p) => p.id < 0).delete();
+            } else {
+              await db.cashPayments.where('houseId').equals(houseId).filter((p) => p.id < 0).delete();
+            }
+            await db.cashPayments.bulkPut(data);
+          });
+        },
+      });
+    },
+    create: async (data: { houseId: number; amount: number; discount?: number; note?: string; paidAt?: string }) => {
+      const total = data.amount + (data.discount ?? 0);
+      const tempPayment: CashPayment = {
+        id: cashTempId(),
+        houseId: data.houseId,
+        dairyId: cashActiveDairyId() ?? undefined,
+        amount: data.amount,
+        discount: data.discount ?? 0,
+        note: data.note,
+        recordedBy: getSessionAuth()?.username,
+        paidAt: data.paidAt ?? cashNowIso(),
+        createdAt: cashNowIso(),
+      };
+      if (isBrowser()) {
+        await db.transaction('rw', db.cashPayments, db.cashHouses, async () => {
+          await db.cashPayments.put(tempPayment);
+          const house = await db.cashHouses.get(data.houseId);
+          if (house) {
+            await db.cashHouses.put({
+              ...house,
+              previousBalance: String(cashNum(house.previousBalance) - total),
+            });
+          }
+        });
+        await patchCashQueryCache<CashPayment[]>(
+          (cacheKey) => cacheKey === 'GET:/cash/payments' || cacheKey === `GET:/cash/payments?houseId=${data.houseId}`,
+          (cached) => (Array.isArray(cached) ? appendCashRow(tempPayment, cached) : cached),
+        );
+      }
+      if (isOnline()) {
+        try {
+          const res = await apiPost<CashPayment>('/cash/payments', data);
+          if (isBrowser()) {
+            await db.transaction('rw', db.cashPayments, db.cashHouses, async () => {
+              await db.cashPayments.delete(tempPayment.id);
+              await db.cashPayments.put(res);
+            });
+            await patchCashQueryCache<CashPayment[]>(
+              (cacheKey) => cacheKey === 'GET:/cash/payments' || cacheKey === `GET:/cash/payments?houseId=${data.houseId}`,
+              (cached) => (Array.isArray(cached) ? [...removeCashRow(tempPayment.id, cached), res] : cached),
+            );
+            await invalidateCache('/cash');
+          }
+          return res;
+        } catch (error: unknown) {
+          if (isBrowser()) {
+            await db.transaction('rw', db.cashPayments, db.cashHouses, async () => {
+              await db.cashPayments.delete(tempPayment.id);
+              const house = await db.cashHouses.get(data.houseId);
+              if (house) {
+                await db.cashHouses.put({
+                  ...house,
+                  previousBalance: String(cashNum(house.previousBalance) + total),
+                });
+              }
+            });
+            await patchCashQueryCache<CashPayment[]>(
+              (cacheKey) => cacheKey === 'GET:/cash/payments' || cacheKey === `GET:/cash/payments?houseId=${data.houseId}`,
+              (cached) => (Array.isArray(cached) ? removeCashRow(tempPayment.id, cached) : cached),
+            );
+          }
+          throw error;
+        }
+      }
+      if (isBrowser()) await syncEngine.enqueue('/cash/payments', 'POST', data);
+      return tempPayment;
+    },
+    update: async (id: number, data: Partial<CashPayment>) => {
+      if (isBrowser()) {
+        const existing = await db.cashPayments.get(id);
+        const applyDelta = async (delta: number, houseId: number) => {
+          if (delta === 0) return;
+          const house = await db.cashHouses.get(houseId);
+          if (house) {
+            await db.cashHouses.put({
+              ...house,
+              previousBalance: String(cashNum(house.previousBalance) + delta),
+            });
+          }
+        };
+        if (isOnline()) {
+          const res = await apiPatch<CashPayment>(`/cash/payments/${id}`, data);
+          await db.transaction('rw', db.cashPayments, db.cashHouses, async () => {
+            await db.cashPayments.put(res);
+            if (existing) {
+              const oldTotal = cashNum(existing.amount) + cashNum(existing.discount);
+              const newTotal = cashNum(res.amount) + cashNum(res.discount);
+              await applyDelta(oldTotal - newTotal, existing.houseId);
+            }
+          });
+          await patchCashQueryCache<CashPayment[]>(
+            (cacheKey) => cacheKey.startsWith('GET:/cash/payments'),
+            (cached) => (Array.isArray(cached) ? cached.map((p) => (p.id === id ? res : p)) : cached),
+          );
+          await invalidateCache('/cash');
+          return res;
+        }
+        if (existing) {
+          const oldTotal = cashNum(existing.amount) + cashNum(existing.discount);
+          const next = { ...existing, ...data } as CashPayment;
+          const newTotal = cashNum(next.amount) + cashNum(next.discount);
+          await db.transaction('rw', db.cashPayments, db.cashHouses, async () => {
+            await db.cashPayments.put(next);
+            await applyDelta(oldTotal - newTotal, existing.houseId);
+          });
+          await patchCashQueryCache<CashPayment[]>(
+            (cacheKey) => cacheKey.startsWith('GET:/cash/payments'),
+            (cached) => (Array.isArray(cached) ? cached.map((p) => (p.id === id ? next : p)) : cached),
+          );
+          await syncEngine.enqueue(`/cash/payments/${id}`, 'PATCH', data);
+          return next;
+        }
+      }
+      return apiPatch<CashPayment>(`/cash/payments/${id}`, data);
+    },
+    remove: async (id: number) => {
+      if (isBrowser()) {
+        const existing = await db.cashPayments.get(id);
+        if (existing) {
+          const total = cashNum(existing.amount) + cashNum(existing.discount);
+          await db.transaction('rw', db.cashPayments, db.cashHouses, async () => {
+            await db.cashPayments.delete(id);
+            const house = await db.cashHouses.get(existing.houseId);
+            if (house) {
+              await db.cashHouses.put({
+                ...house,
+                previousBalance: String(cashNum(house.previousBalance) + total),
+              });
+            }
+          });
+          await patchCashQueryCache<CashPayment[]>(
+            (cacheKey) => cacheKey.startsWith('GET:/cash/payments'),
+            (cached) => (Array.isArray(cached) ? removeCashRow(id, cached) : cached),
+          );
+        }
+        await invalidateCache('/cash');
+      }
+      if (isOnline()) return apiDelete(`/cash/payments/${id}`);
+      if (isBrowser()) await syncEngine.enqueue(`/cash/payments/${id}`, 'DELETE');
+      return null;
+    },
   },
 };

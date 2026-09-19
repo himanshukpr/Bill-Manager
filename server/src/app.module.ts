@@ -14,6 +14,7 @@ import { DeliveryLogsModule } from './delivery-logs/delivery-logs.module';
 import { DeliveryPlansModule } from './delivery-plans/delivery-plans.module';
 import { DairiesModule } from './dairies/dairies.module';
 import { GeocodingModule } from './geocoding/geocoding.module';
+import { CashModule } from './cash/cash.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { GeocodingModule } from './geocoding/geocoding.module';
     DeliveryPlansModule,
     DairiesModule,
     GeocodingModule,
+    CashModule,
   ],
   controllers: [AppController],
   providers: [AppService],

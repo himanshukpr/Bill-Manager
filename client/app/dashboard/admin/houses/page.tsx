@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate, type User } from '@/lib/api'
+import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, queryHousesForActiveDairy, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate, type User } from '@/lib/api'
 import { getDairyIdFromCookie, getSessionAuth, getAuthHeader } from '@/lib/auth'
 import { isStoredDateInMonth, getStoredDateKey, formatStoredDateKey } from '@/lib/date-utils'
 import { fetchApi } from '@/lib/api-base'
@@ -424,7 +424,7 @@ function getFilteredHouses(houses: House[], query: string): House[] {
 }
 
 export default function HousesPage() {
-  const cachedHouses = useLiveQuery(() => db.houses.toArray())
+  const cachedHouses = useLiveQuery(() => queryHousesForActiveDairy())
   const dairyId = getDairyIdFromCookie()
   const cachedSuppliers = useLiveQuery(() => db.users.where('role').equals('supplier').filter(u => !dairyId || u.dairyId === dairyId).toArray())
   const houses = useMemo(() => (cachedHouses ?? []).filter((h) => h.id > 0), [cachedHouses])

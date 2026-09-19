@@ -1,5 +1,5 @@
 import { db } from './db';
-import { getAuthHeader } from './auth';
+import { getAuthHeader, getSessionAuth, profileIdForSession } from './auth';
 import { fetchApi } from './api-base';
 import { SYNC_DEBOUNCE_MS, GLOBAL_SYNC_INTERVAL_MS } from '@/lib/timing';
 import { awaitQCWriteQueue } from './api';
@@ -10,6 +10,20 @@ function nextRetryDelay(attempts: number): number {
   const base = 3000;
   const delay = base * Math.pow(2, Math.max(0, attempts));
   return Math.min(delay, MAX_RETRY_DELAY_MS);
+}
+
+function queueIdentity(): { dairyId?: number; profileId?: string } {
+  const session = getSessionAuth();
+  if (!session) return {};
+  return { dairyId: session.dairyId, profileId: profileIdForSession(session) };
+}
+
+function canProcessAction(action: { dairyId?: number; profileId?: string }): boolean {
+  // Never replay one account's queued writes while another account is active.
+  if (!action.profileId) return true;
+  const session = getSessionAuth();
+  if (!session) return false;
+  return profileIdForSession(session) === action.profileId;
 }
 
 class SyncEngine {
@@ -72,6 +86,7 @@ class SyncEngine {
           createdAt: now,
           attempts: 0,
           nextRetryAt: now,
+          ...queueIdentity(),
         });
       }
     } else if (method === 'DELETE') {
@@ -88,6 +103,7 @@ class SyncEngine {
         createdAt: now,
         attempts: 0,
         nextRetryAt: now,
+        ...queueIdentity(),
       });
     } else {
       await db.syncQueue.add({
@@ -97,6 +113,7 @@ class SyncEngine {
         createdAt: now,
         attempts: 0,
         nextRetryAt: now,
+        ...queueIdentity(),
       });
     }
     if (typeof navigator !== 'undefined' && navigator.onLine) {
@@ -122,6 +139,7 @@ class SyncEngine {
       
       for (const action of actions) {
         if (!navigator.onLine) break; // Lost connection midway
+        if (!canProcessAction(action)) continue; // Queued by another signed-in profile
         
         // If a DELETE targets a house that no longer exists locally, skip it
         if (action.method === 'DELETE' && (action.url || '').startsWith('/houses/')) {
@@ -216,6 +234,8 @@ class SyncEngine {
                         db.queryCache.where('key').startsWith('GET:/house-balance').delete(),
                         db.queryCache.where('key').startsWith('GET:/bills').delete(),
                       ]);
+                    } else if (url.startsWith('/cash')) {
+                      await db.queryCache.where('key').startsWith('GET:/cash').delete();
                     }
                   } catch {
                     // ignore cache invalidation errors

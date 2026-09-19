@@ -1,16 +1,17 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
-import { apiGetDairy, apiDairyLogin, getDairySession, type DairyInfo } from "@/lib/auth"
+import { apiGetDairy, apiDairyLogin, getDairySession, getSessionAuth, hasDairyCookie, syncDairySessionCookies, type DairyInfo } from "@/lib/auth"
 
 type Props = { dairyId: number }
 
 export function DairyAuthForm({ dairyId }: Props) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [dairy, setDairy] = useState<DairyInfo | null>(null)
   const [dairyLoading, setDairyLoading] = useState(true)
   const [dairyNotFound, setDairyNotFound] = useState(false)
@@ -19,11 +20,20 @@ export function DairyAuthForm({ dairyId }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    const existing = getDairySession()
-    if (existing?.dairyId === dairyId) {
-      router.replace(`/dairy/${dairyId}/users`)
+    // A persisted dairy session may exist while its cookies lapsed; restore
+    // the cookies so middleware and the users page see the same dairy.
+    const existing = getDairySession() ?? syncDairySessionCookies()
+    if (existing?.dairyId === dairyId || hasDairyCookie(dairyId)) {
+      const params = new URLSearchParams(searchParams.toString())
+      // Keep an active user signed in and let them add this dairy as another
+      // account instead of being bounced straight to their old dashboard.
+      if (getSessionAuth()?.token && !params.has("add-account")) {
+        params.set("add-account", "1")
+      }
+      const qs = params.toString()
+      router.replace(`/dairy/${dairyId}/users${qs ? `?${qs}` : ""}`)
     }
-  }, [router, dairyId])
+  }, [router, dairyId, searchParams])
 
   useEffect(() => {
     apiGetDairy(dairyId)
@@ -46,7 +56,13 @@ export function DairyAuthForm({ dairyId }: Props) {
 
     try {
       await apiDairyLogin(dairy!.email, password)
-      router.push(`/dairy/${dairyId}/users`)
+      // If a user is already signed in (possibly to another dairy), keep that
+      // session and open the users page in add-account mode so the login form
+      // is shown instead of bouncing back to the old dashboard.
+      const usersUrl = getSessionAuth()?.token
+        ? `/dairy/${dairyId}/users?add-account=1`
+        : `/dairy/${dairyId}/users`
+      router.push(usersUrl)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Invalid password. Please try again."
       setErrorMessage(msg)

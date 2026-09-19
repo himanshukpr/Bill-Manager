@@ -5,8 +5,9 @@ import { ArrowLeftCircle } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
-import { clearAllAuth, clearSessionAuth, saveSessionAuth, restoreAdminSession, removeAdminSession, dashboardPath, getDairyIdFromCookie, getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { clearSessionAuth, handleExpiredDairySession, logoutSavedProfile, saveSessionAuth, restoreAdminSession, removeAdminSession, dashboardPath, getDairyIdFromCookie, getSessionAuth, type SessionAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
+import { clearProfileScopedCaches } from '@/lib/account-switch'
 import { SupplierSidebar } from '@/components/dashboard/supplier/app-sidebar'
 import { SiteHeader } from '@/components/dashboard/admin/site-header'
 import { useAuthGuard } from '@/hooks/use-auth-guard'
@@ -25,7 +26,7 @@ export default function SupplierLayout({ children }: SupplierLayoutProps) {
     if (session?.planExpiry) {
       const expiryDate = new Date(session.planExpiry)
       if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-        clearAllAuth()
+        handleExpiredDairySession()
         router.replace("/?plan-expired=1")
       }
     }
@@ -42,14 +43,15 @@ export default function SupplierLayout({ children }: SupplierLayoutProps) {
     new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date()), [])
 
   function logout() { 
-    clearSessionAuth()
+    logoutSavedProfile()
     const dairyId = getDairyIdFromCookie()
     window.location.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }
 
-  function switchBack() {
+  async function switchBack() {
     const adminSession = restoreAdminSession('adminSession')
     if (adminSession) {
+      await clearProfileScopedCaches()
       saveSessionAuth(adminSession)
       removeAdminSession('adminSession')
       window.location.href = dashboardPath('admin')

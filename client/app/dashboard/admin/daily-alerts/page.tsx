@@ -19,7 +19,7 @@ import {
 
 import { parseDailyAlerts, createAlertId, type AlertDays, type HouseAlert } from '@/lib/alerts'
 
-import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
+import { houseConfigApi, housesApi, queryHousesForActiveDairy, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
 import { useHouseConfigs } from '@/hooks/use-house-configs'
@@ -204,7 +204,7 @@ export default function AdminDailyAlertsPage() {
   const [addDialogSaving, setAddDialogSaving] = useState(false)
 
   const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
-  const houses = useLiveQuery(() => db.houses.toArray())
+  const houses = useLiveQuery(() => queryHousesForActiveDairy())
   const suppliers = useLiveQuery(() => db.users.where('role').equals('supplier').toArray())
 
   const loading = !houses || !suppliers || configsLoading

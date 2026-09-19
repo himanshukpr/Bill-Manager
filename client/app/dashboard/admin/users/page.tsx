@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Users, Search, ShieldCheck, Trash2, UserPlus, ShieldOff, Lock, SwitchCamera, KeyRound } from 'lucide-react'
 import { usersApi, type User } from '@/lib/api'
 import { apiImpersonate, saveSessionAuth, saveAdminSession, dashboardPath, getSessionAuth } from '@/lib/auth'
+import { clearProfileScopedCaches } from '@/lib/account-switch'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -179,6 +180,8 @@ export default function UsersPage() {
       const adminSession = { ...getSessionAuth()! }
       saveAdminSession('adminSession', adminSession)
       const impersonated = await apiImpersonate(u.uuid)
+      await clearProfileScopedCaches()
+      saveAdminSession('adminSession', adminSession)
       saveSessionAuth(impersonated)
       router.push(dashboardPath('supplier'))
     } catch (e) {

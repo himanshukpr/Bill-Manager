@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
-  clearSessionAuth,
   getSessionAuth,
   getDairyIdFromCookie,
   saveSessionAuth,
+  logoutSavedProfile,
   dashboardPath,
   type SessionAuth,
   type AppRole,
@@ -77,7 +77,7 @@ export default function PendingVerificationPage() {
   }
 
   function handleLogout() {
-    clearSessionAuth()
+    logoutSavedProfile()
     const dairyId = getDairyIdFromCookie()
     router.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }

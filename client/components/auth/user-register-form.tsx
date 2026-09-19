@@ -1,16 +1,19 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
+import { ProfileSwitcherList } from "@/components/auth/profile-switcher"
 import { apiRegister, apiGetDairy, getSessionAuth, dashboardPath, type DairyInfo } from "@/lib/auth"
 
 type Props = { dairyId: number }
 
 export function UserRegisterForm({ dairyId }: Props) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isAddAccount = searchParams.get("add-account") === "1"
   const [dairy, setDairy] = useState<DairyInfo | null>(null)
   const [ready, setReady] = useState(false)
   const [username, setUsername] = useState("")
@@ -21,14 +24,16 @@ export function UserRegisterForm({ dairyId }: Props) {
 
   useEffect(() => {
     const userSession = getSessionAuth()
-    if (userSession?.token) {
+    // Only auto-continue when the signed-in user already belongs to THIS dairy;
+    // a session from another dairy must not swallow this form.
+    if (userSession?.token && !isAddAccount && userSession.dairyId === dairyId) {
       router.replace(dashboardPath(userSession.role))
       return
     }
     apiGetDairy(dairyId)
       .then((d) => { setDairy(d); setReady(true) })
       .catch(() => router.replace("/"))
-  }, [router, dairyId])
+  }, [router, dairyId, isAddAccount])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -99,6 +104,20 @@ export function UserRegisterForm({ dairyId }: Props) {
         </div>
       </div>
 
+      {isAddAccount && (
+        <div className="mb-6 rounded-2xl border border-border bg-background/60 p-4">
+          <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+            Add another account
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Your current account stays signed in while you register here.
+          </p>
+          <div className="mt-3">
+            <ProfileSwitcherList />
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block space-y-2">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Username</span>
@@ -155,7 +174,7 @@ export function UserRegisterForm({ dairyId }: Props) {
 
         <p className="text-center text-sm text-slate-600 dark:text-slate-400">
           Already have an account?{" "}
-          <Link href={`/dairy/${dairyId}/users`} className="font-semibold text-slate-900 hover:underline dark:text-slate-100">
+          <Link href={`/dairy/${dairyId}/users${isAddAccount ? "?add-account=1" : ""}`} className="font-semibold text-slate-900 hover:underline dark:text-slate-100">
             Sign In
           </Link>
         </p>

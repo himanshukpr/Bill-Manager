@@ -1,33 +1,49 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
-import { apiLogin, apiGetDairy, dashboardPath, getSessionAuth, type DairyInfo } from "@/lib/auth"
+import { ProfileSwitcherList } from "@/components/auth/profile-switcher"
+import { apiLogin, apiGetDairy, dashboardPath, getSessionAuth, syncDairySessionCookies, type DairyInfo } from "@/lib/auth"
 
 type Props = { dairyId: number }
 
 export function UserLoginForm({ dairyId }: Props) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isAddAccount = searchParams.get("add-account") === "1"
   const [dairy, setDairy] = useState<DairyInfo | null>(null)
   const [ready, setReady] = useState(false)
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Snapshot of a session from ANOTHER dairy, if one is active. A foreign
+  // session must never auto-redirect this form away (that caused the stuck
+  // "Loading…" screen); instead we show a notice below.
+  const [activeSession] = useState<{ username: string; dairyId: number } | null>(() => {
+    const userSession = getSessionAuth()
+    return userSession?.token && userSession.dairyId !== dairyId
+      ? { username: userSession.username, dairyId: userSession.dairyId }
+      : null
+  })
 
   useEffect(() => {
+    // Restore dairy cookies from the persisted dairy session so this page and
+    // middleware agree about which dairy was authenticated.
+    syncDairySessionCookies()
     const userSession = getSessionAuth()
-    if (userSession?.token) {
+    // Only auto-continue when the signed-in user already belongs to THIS dairy.
+    if (userSession?.token && !isAddAccount && userSession.dairyId === dairyId) {
       router.replace(dashboardPath(userSession.role))
       return
     }
     apiGetDairy(dairyId)
       .then((d) => { setDairy(d); setReady(true) })
       .catch(() => router.replace("/"))
-  }, [router, dairyId])
+  }, [router, dairyId, isAddAccount])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -93,6 +109,31 @@ export function UserLoginForm({ dairyId }: Props) {
         </div>
       </div>
 
+      {activeSession && !isAddAccount && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+            You&apos;re signed in as {activeSession.username} on another dairy.
+          </p>
+          <p className="mt-1 text-sm text-amber-800 dark:text-amber-300">
+            Sign in below to switch to this dairy. Your other account stays saved on this device.
+          </p>
+        </div>
+      )}
+
+      {isAddAccount && (
+        <div className="mb-6 rounded-2xl border border-border bg-background/60 p-4">
+          <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+            Add another account
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Your current account stays signed in while you sign in here.
+          </p>
+          <div className="mt-3">
+            <ProfileSwitcherList />
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block space-y-2">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Username</span>
@@ -136,7 +177,7 @@ export function UserLoginForm({ dairyId }: Props) {
 
         <p className="text-center text-sm text-slate-600 dark:text-slate-400">
           Don&apos;t have an account?{" "}
-          <Link href={`/dairy/${dairyId}/register`} className="font-semibold text-slate-900 hover:underline dark:text-slate-100">
+          <Link href={`/dairy/${dairyId}/register${isAddAccount ? "?add-account=1" : ""}`} className="font-semibold text-slate-900 hover:underline dark:text-slate-100">
             Register New User
           </Link>
         </p>

@@ -1,15 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 
-import { getSessionAuth, clearAllAuth, getDairyIdFromCookie, type AppRole, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, clearSessionAuth, handleExpiredDairySession, getDairyIdFromCookie, type AppRole, type SessionAuth } from '@/lib/auth'
 
 export function useAuthGuard(requiredRole: AppRole) {
   const router = useRouter()
   const pathname = usePathname()
   const [auth, setAuth] = useState<SessionAuth | null>(null)
   const [ready, setReady] = useState(false)
+  const activeProfileId = useRef<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -22,11 +23,21 @@ export function useAuthGuard(requiredRole: AppRole) {
       const session = getSessionAuth()
 
       if (!session?.token) {
-        clearAllAuth()
+        activeProfileId.current = null
+        clearSessionAuth()
         const dairyId = getDairyIdFromCookie()
         router.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
         return false
       }
+
+      const nextProfileId = `${session.dairyId}:${session.uuid}`
+      if (activeProfileId.current && activeProfileId.current !== nextProfileId) {
+        // Another tab switched accounts; reload so cookies, guards, and caches
+        // are re-established for the newly active profile.
+        window.location.reload()
+        return false
+      }
+      activeProfileId.current = nextProfileId
 
       if (session.role !== requiredRole) {
         // Role mismatch — redirect to the correct dashboard WITHOUT clearing the session.
@@ -46,7 +57,7 @@ export function useAuthGuard(requiredRole: AppRole) {
       if (session.planExpiry) {
         const expiryDate = new Date(session.planExpiry)
         if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-          clearAllAuth()
+          handleExpiredDairySession()
           router.replace("/?plan-expired=1")
           return false
         }

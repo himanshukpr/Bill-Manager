@@ -4,7 +4,8 @@ import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
-import { apiListDairies, apiDairyLogin, getSessionAuth, dashboardPath, type DairyInfo } from "@/lib/auth"
+import { ProfileSwitcherList } from "@/components/auth/profile-switcher"
+import { apiListDairies, apiDairyLogin, getSessionAuth, dashboardPath, listSavedProfiles, type DairyInfo } from "@/lib/auth"
 
 export function DairySelectForm() {
   const router = useRouter()
@@ -16,6 +17,8 @@ export function DairySelectForm() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [hasSavedAccounts, setHasSavedAccounts] = useState(false)
+  const isAddAccount = searchParams.get("add-account") === "1"
 
   useEffect(() => {
     if (searchParams.get("plan-expired") === "1") {
@@ -25,10 +28,23 @@ export function DairySelectForm() {
 
   useEffect(() => {
     const session = getSessionAuth()
-    if (session?.token) {
+    if (session?.token && !isAddAccount) {
       router.replace(dashboardPath(session.role))
     }
-  }, [router])
+  }, [router, isAddAccount])
+
+  useEffect(() => {
+    const refreshSavedAccounts = () => {
+      setHasSavedAccounts(listSavedProfiles().length > 0)
+    }
+    refreshSavedAccounts()
+    window.addEventListener("storage", refreshSavedAccounts)
+    window.addEventListener("bill-manager-profiles-updated", refreshSavedAccounts)
+    return () => {
+      window.removeEventListener("storage", refreshSavedAccounts)
+      window.removeEventListener("bill-manager-profiles-updated", refreshSavedAccounts)
+    }
+  }, [])
 
   useEffect(() => {
     apiListDairies()
@@ -69,7 +85,8 @@ export function DairySelectForm() {
 
     try {
       await apiDairyLogin(selectedDairy.email, password)
-      router.push(`/dairy/${selectedDairy.id}/users`)
+      const keepSession = isAddAccount || Boolean(getSessionAuth()?.token)
+      router.push(`/dairy/${selectedDairy.id}/users${keepSession ? "?add-account=1" : ""}`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invalid password. Please try again.")
       setSubmitting(false)
@@ -102,6 +119,22 @@ export function DairySelectForm() {
           <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Select Dairy</h1>
         </div>
       </div>
+
+      {(isAddAccount || hasSavedAccounts) && (
+        <div className="mb-6 rounded-2xl border border-border bg-background/60 p-4">
+          <p className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+            {isAddAccount ? "Signed-in accounts" : "Continue as"}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {isAddAccount
+              ? "Your current account stays signed in while you add another dairy."
+              : "Pick an account to continue without entering its password again."}
+          </p>
+          <div className="mt-3">
+            <ProfileSwitcherList />
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-3">

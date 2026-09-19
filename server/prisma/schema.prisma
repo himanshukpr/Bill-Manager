@@ -31,6 +31,9 @@ model Dairy {
   deliveryLogs  DeliveryLog[]
   deliveryPlans DeliveryPlan[]
   payments      PaymentHistory[]
+  cashHouses    CashHouse[]
+  cashLogs      CashLog[]
+  cashPayments  CashPayment[]
 
   @@map("dairies")
 }
@@ -50,6 +53,7 @@ model User {
   deliveries    DeliveryLog[]
   deliveryPlans DeliveryPlan[]
   houseConfigs  HouseConfig[]
+  cashHouses    CashHouse[]
 
   @@unique([dairyId, username])
   @@index([dairyId])
@@ -127,6 +131,7 @@ model PaymentHistory {
   createdAt  DateTime     @default(now()) @map("created_at")
   paidAt     DateTime     @default(now()) @map("paid_at")
   billIds    Json?        @map("bill_ids")
+  paymentMethod PaymentMethod @default(cash) @map("payment_method")
   dairyId    Int
   balance    HouseBalance @relation(fields: [balanceRef], references: [id], onDelete: Cascade)
   dairy      Dairy        @relation(fields: [dairyId], references: [id])
@@ -231,6 +236,69 @@ model DeliveryPlan {
   @@map("delivery_plans")
 }
 
+model CashHouse {
+  id              Int      @id @default(autoincrement())
+  dairyId         Int
+  dairy           Dairy    @relation(fields: [dairyId], references: [id])
+  houseNo         String   @map("house_no")
+  area            String?
+  phoneNo         String?  @map("phone_no")
+  note            String?
+  supplierId      String?  @map("supplier_id")
+  supplier        User?    @relation(fields: [supplierId], references: [uuid], onDelete: SetNull)
+  position        Int      @default(0)
+  previousBalance Decimal  @default(0) @map("previous_balance") @db.Decimal(10, 2)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  logs     CashLog[]
+  payments CashPayment[]
+
+  @@unique([dairyId, houseNo])
+  @@index([dairyId])
+  @@index([dairyId, supplierId])
+  @@map("cash_houses")
+}
+
+model CashLog {
+  id           Int       @id @default(autoincrement())
+  dairyId      Int
+  dairy        Dairy     @relation(fields: [dairyId], references: [id])
+  houseId      Int       @map("house_id")
+  house        CashHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  type         String    @default("note") @db.VarChar(50)
+  title        String?   @db.VarChar(255)
+  description  String?   @db.Text
+  amount       Decimal?  @db.Decimal(10, 2)
+  balanceChange Decimal? @map("balance_change") @db.Decimal(10, 2)
+  balanceAfter Decimal?  @map("balance_after") @db.Decimal(10, 2)
+  createdBy    String?   @map("created_by") @db.VarChar(100)
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([dairyId])
+  @@index([houseId, createdAt])
+  @@map("cash_logs")
+}
+
+model CashPayment {
+  id         Int       @id @default(autoincrement())
+  dairyId    Int
+  dairy      Dairy     @relation(fields: [dairyId], references: [id])
+  houseId    Int       @map("house_id")
+  house      CashHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  amount     Decimal   @db.Decimal(10, 2)
+  discount   Decimal   @default(0) @db.Decimal(10, 2)
+  note       String?
+  recordedBy String?   @map("recorded_by") @db.VarChar(100)
+  paidAt     DateTime  @default(now()) @map("paid_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([dairyId])
+  @@index([houseId, createdAt])
+  @@map("cash_payments")
+}
+
 enum Role {
   admin
   supplier
@@ -240,4 +308,10 @@ enum Shift {
   morning
   evening
   shop
+}
+
+enum PaymentMethod {
+  cash
+  online
+  cheque
 }

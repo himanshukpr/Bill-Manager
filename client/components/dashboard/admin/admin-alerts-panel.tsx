@@ -3,8 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Bell } from 'lucide-react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '@/lib/db'
-import { housesApi } from '@/lib/api'
+import { housesApi, queryHousesForActiveDairy } from '@/lib/api'
 import { parseDailyAlerts, type AlertDays } from '@/lib/alerts'
 import {
   Sheet,
@@ -19,7 +18,7 @@ import { useHouseConfigs } from '@/hooks/use-house-configs'
 export function AdminAlertsPanel() {
   const [open, setOpen] = useState(false)
   
-  const houses = useLiveQuery(() => db.houses.toArray())
+  const houses = useLiveQuery(() => queryHousesForActiveDairy())
   const { configs: rawConfigs } = useHouseConfigs()
 
   const [todayKey] = useMemo(() => {

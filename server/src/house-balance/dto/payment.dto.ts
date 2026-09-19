@@ -5,8 +5,10 @@ import {
   IsString,
   Min,
   IsArray,
+  IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PaymentMethod } from '@prisma/client';
 
 export class RecordPaymentDto {
   @Type(() => Number)
@@ -40,6 +42,10 @@ export class RecordPaymentDto {
   @IsOptional()
   @IsString()
   recordedBy?: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }
 
 export class UpdatePreviousBalanceDto {
@@ -74,4 +80,8 @@ export class UpdatePaymentDto {
   @IsOptional()
   @IsString()
   paidAt?: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

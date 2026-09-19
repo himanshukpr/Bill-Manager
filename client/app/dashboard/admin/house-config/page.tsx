@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { houseConfigApi, housesApi, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
+import { houseConfigApi, housesApi, queryHousesForActiveDairy, usersApi, type House, type HouseConfig, type User } from '@/lib/api'
 import { db } from '@/lib/db'
 import { getDairyIdFromCookie } from '@/lib/auth'
 import { toast } from 'sonner'
@@ -114,7 +114,7 @@ export default function AdminHouseConfigPage() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const { configs: rawConfigs, loading: configsLoading } = useHouseConfigs()
-  const cachedHouses = useLiveQuery(() => db.houses.toArray())
+  const cachedHouses = useLiveQuery(() => queryHousesForActiveDairy())
   const cachedSuppliers = useLiveQuery(() => {
     const dairyId = getDairyIdFromCookie()
     return db.users.where('role').equals('supplier').filter(u => !dairyId || u.dairyId === dairyId).toArray()

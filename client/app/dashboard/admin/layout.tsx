@@ -7,7 +7,7 @@ import { AppSidebar } from "@/components/dashboard/admin/app-sidebar"
 import { SiteHeader } from "@/components/dashboard/admin/site-header"
 import { AdminAlertsPanel } from "@/components/dashboard/admin/admin-alerts-panel"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
-import { clearSessionAuth, clearAllAuth, getSessionAuth, getDairyIdFromCookie, type SessionAuth } from "@/lib/auth"
+import { getSessionAuth, getDairyIdFromCookie, handleExpiredDairySession, logoutSavedProfile } from "@/lib/auth"
 import { useAuthGuard } from "@/hooks/use-auth-guard"
 
 type AdminLayoutProps = {
@@ -25,7 +25,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (session?.planExpiry) {
       const expiryDate = new Date(session.planExpiry)
       if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-        clearAllAuth()
+        handleExpiredDairySession()
         router.replace("/?plan-expired=1")
       }
     }
@@ -40,6 +40,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       "/dashboard/admin/daily-alerts": "Daily Alerts",
       "/dashboard/admin/bills": "Bills",
       "/dashboard/admin/recipts": "Receipts",
+      "/dashboard/admin/cash": "Cash Section",
       "/dashboard/admin/delivery-analysis": "Delivery Analysis",
       "/dashboard/admin/rates": "Rates",
       "/dashboard/admin/users": "Users",
@@ -69,7 +70,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   )
 
   function logout() {
-    clearSessionAuth()
+    logoutSavedProfile()
     const dairyId = getDairyIdFromCookie()
     window.location.replace(dairyId ? `/dairy/${dairyId}/users` : "/")
   }
