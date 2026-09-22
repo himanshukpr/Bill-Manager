@@ -1,13 +1,13 @@
 "use client"
 
 import { useEffect, useMemo } from "react"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 
 import { AppSidebar } from "@/components/dashboard/admin/app-sidebar"
 import { SiteHeader } from "@/components/dashboard/admin/site-header"
 import { AdminAlertsPanel } from "@/components/dashboard/admin/admin-alerts-panel"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
-import { getSessionAuth, getDairyIdFromCookie, handleExpiredDairySession, logoutSavedProfile } from "@/lib/auth"
+import { getDairyIdFromCookie, ensurePlanValid, logoutSavedProfile } from "@/lib/auth"
 import { useAuthGuard } from "@/hooks/use-auth-guard"
 
 type AdminLayoutProps = {
@@ -17,19 +17,11 @@ type AdminLayoutProps = {
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const { auth, ready } = useAuthGuard("admin")
   const pathname = usePathname()
-  const router = useRouter()
 
   useEffect(() => {
     if (window.location.search.includes("plan-expired=1")) return
-    const session = getSessionAuth()
-    if (session?.planExpiry) {
-      const expiryDate = new Date(session.planExpiry)
-      if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-        handleExpiredDairySession()
-        router.replace("/?plan-expired=1")
-      }
-    }
-  }, [pathname, router])
+    void ensurePlanValid()
+  }, [pathname])
 
   const pageTitle = useMemo(() => {
     const titleMap: Record<string, string> = {

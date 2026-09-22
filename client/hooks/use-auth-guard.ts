@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 
-import { getSessionAuth, clearSessionAuth, handleExpiredDairySession, getDairyIdFromCookie, type AppRole, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, clearSessionAuth, ensurePlanValid, getDairyIdFromCookie, type AppRole, type SessionAuth } from '@/lib/auth'
 
 export function useAuthGuard(requiredRole: AppRole) {
   const router = useRouter()
@@ -15,7 +15,7 @@ export function useAuthGuard(requiredRole: AppRole) {
   useEffect(() => {
     let active = true
 
-    const syncAuth = () => {
+    const syncAuth = async () => {
       if (typeof window !== "undefined" && window.location.search.includes("plan-expired=1")) {
         return false
       }
@@ -53,15 +53,9 @@ export function useAuthGuard(requiredRole: AppRole) {
         return false
       }
 
-      // Check plan expiry
-      if (session.planExpiry) {
-        const expiryDate = new Date(session.planExpiry)
-        if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-          handleExpiredDairySession()
-          router.replace("/?plan-expired=1")
-          return false
-        }
-      }
+      // Revalidate with the server before treating the plan as expired —
+      // the session snapshot may be stale and must never wipe accounts alone.
+      if (!(await ensurePlanValid())) return false
 
       if (active) {
         setAuth(session)
@@ -71,13 +65,13 @@ export function useAuthGuard(requiredRole: AppRole) {
       return true
     }
 
-    syncAuth()
+    void syncAuth()
 
     const handleStorage = () => {
-      syncAuth()
+      void syncAuth()
     }
 
-    const intervalId = window.setInterval(syncAuth, 30000)
+    const intervalId = window.setInterval(() => { void syncAuth() }, 30000)
 
     window.addEventListener('storage', handleStorage)
 

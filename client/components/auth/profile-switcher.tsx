@@ -11,7 +11,7 @@ import {
   switchSavedProfile,
   type SavedProfile,
 } from '@/lib/account-switch'
-import { listSavedProfiles, logoutSavedProfile, removeSavedProfile, removeSavedProfilesForDairy } from '@/lib/auth'
+import { listSavedProfiles, logoutSavedProfile, removeSavedProfile } from '@/lib/auth'
 import { toast } from 'sonner'
 
 export function useSavedProfiles() {
@@ -20,21 +20,10 @@ export function useSavedProfiles() {
   const [switchingId, setSwitchingId] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
-    let next = listSavedProfiles()
-    const expiredDairyIds = new Set<number>()
-    for (const profile of next) {
-      if (!profile.planExpiry) continue
-      const expiry = new Date(profile.planExpiry).getTime()
-      if (!Number.isNaN(expiry) && expiry < Date.now()) {
-        expiredDairyIds.add(profile.dairyId)
-      }
-    }
-    for (const dairyId of expiredDairyIds) {
-      removeSavedProfilesForDairy(dairyId)
-    }
-    if (expiredDairyIds.size > 0) {
-      next = listSavedProfiles()
-    }
+    // NOTE: never delete profiles here based on the stored planExpiry
+    // snapshot — it can be stale (plan renewed after login). Expiry is
+    // enforced by ensurePlanValid() and by server PLAN_EXPIRED responses.
+    const next = listSavedProfiles()
     setProfiles(next)
     try {
       const raw = window.localStorage.getItem('bill-manager-auth')

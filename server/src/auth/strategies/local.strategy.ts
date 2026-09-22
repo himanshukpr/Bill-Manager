@@ -12,8 +12,9 @@ export class LocalStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(request: { body: { dairyId?: number } }, username: string, password: string) {
-    const dairyId = request.body?.dairyId;
+  async validate(request: { body: { dairyId?: number | string } }, username: string, password: string) {
+    const rawDairyId = request.body?.dairyId;
+    const dairyId = rawDairyId != null ? Number(rawDairyId) : undefined;
     const user = await this.authService.validateUser(username, password, dairyId);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');

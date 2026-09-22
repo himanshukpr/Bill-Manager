@@ -11,7 +11,7 @@ import {
     SidebarMenuItem,
     useSidebar,
 } from "@/components/ui/sidebar"
-import { getSessionAuth, handleExpiredDairySession } from "@/lib/auth"
+import { ensurePlanValid } from "@/lib/auth"
 
 export function NavMain({
     items,
@@ -26,17 +26,17 @@ export function NavMain({
     const router = useRouter()
     const { isMobile, setOpenMobile } = useSidebar()
 
-    function checkPlanExpiry(): boolean {
-        const session = getSessionAuth()
-        if (session?.planExpiry) {
-            const expiryDate = new Date(session.planExpiry)
-            if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-                handleExpiredDairySession()
-                router.replace("/?plan-expired=1")
-                return false
+    function handleNavClick(e: React.MouseEvent, url: string) {
+        // Block navigation until the plan is validated; expired dairies are
+        // redirected by ensurePlanValid itself.
+        e.preventDefault()
+        void (async () => {
+            if (!(await ensurePlanValid())) return
+            if (isMobile) {
+                setOpenMobile(false)
             }
-        }
-        return true
+            router.push(url)
+        })()
     }
 
     return (
@@ -52,15 +52,7 @@ export function NavMain({
                                 <SidebarMenuButton asChild tooltip={item.title} isActive={isActive}>
                                     <Link
                                         href={item.url}
-                                        onClick={(e) => {
-                                            if (!checkPlanExpiry()) {
-                                                e.preventDefault()
-                                                return
-                                            }
-                                            if (isMobile) {
-                                                setOpenMobile(false)
-                                            }
-                                        }}
+                                        onClick={(e) => handleNavClick(e, item.url)}
                                     >
                                         {Icon && <Icon className="h-4 w-4" />}
                                         <span>{item.title}</span>

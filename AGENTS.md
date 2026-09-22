@@ -8,6 +8,10 @@ Fix and maintain the Bill Manager app's billing, balance, payment, receipt displ
 ### Branch/Working State
 - All changes are in working directory (no active DB changes since last instruction)
 - Both server and client TypeScript compile cleanly
+- SSL cert renewed via TLS-ALPN-01 (valid until Dec 21, 2026)
+- Backend login 500 error fixed (dairyId string→number conversion)
+- HTTP→HTTPS redirect working (301)
+- VPS: LiteSpeed + nginx + PM2 stack healthy
 
 ## Key Changes Made
 
@@ -223,6 +227,45 @@ None.
 - Verified: data isolation between dairies (dairy 2 sees 0 houses)
 - Verified: login works with dairyId, JWT carries dairyId
 - Verified: dairy registration creates new tenant
+
+### 28. SSL Certificate renewal via TLS-ALPN-01 challenge (VPS server)
+- **Problem**: Old Let's Encrypt cert for `dairyvyapar.clustcoders.com` expired Sep 22, 2026 at 2:32 PM UTC. Browser showed "Not secure" / "Privacy error". LiteSpeed was serving the expired cert from memory even after self-signed cert files were placed on disk.
+- **Root cause of renewal failures**: Previous attempts used HTTP-01 challenge (`lego --http --http.webroot`), but lego's `--http.webroot` flag does NOT actually create challenge files in the webroot directory. Each failed attempt counted against the rate limit (5 failed auths/hour for the same identifier).
+- **Solution — TLS-ALPN-01**: Used TLS-ALPN-01 challenge instead, which works over port 443 (TLS) and doesn't depend on webroot or HTTP server. Lego runs its own temporary TLS server for validation.
+- **Steps performed**:
+  1. Stopped LiteSpeed: `systemctl stop openlitespeed` (needed to free port 443)
+  2. Disabled auto-restart: `systemctl disable openlitespeed` (prevents DirectAdmin from restarting it)
+  3. Ran lego: `lego run --accept-tos --domains dairyvyapar.clustcoders.com --email admin@clustcoders.com --path /root/.lego --tls`
+  4. Lego started temp TLS server on :443, ACME validated, cert obtained
+  5. Deployed cert to two locations:
+     - `/etc/lego/certificates/dairyvyapar.clustcoders.com.{key,crt}` — used by vhost `vhssl` block in `dairyvyapar-443`
+     - `/etc/openlitespeed/certs/server.key` + `server.crt.combined` — used by listener `31-97-235-218-443` as default SSL
+  6. Re-enabled and started LiteSpeed: `systemctl enable openlitespeed && systemctl start openlitespeed`
+- **New cert details**: issuer `C=US, O=Let's Encrypt, CN=YE2`, valid Sep 22 – Dec 21, 2026, EC256 key type
+- **Key files on VPS**:
+  - `/etc/lego/certificates/dairyvyapar.clustcoders.com.{key,crt,json}` — lego cert storage
+  - `/etc/openlitespeed/certs/server.key` + `server.crt.combined` — listener default SSL
+  - `/etc/openlitespeed/listeners.conf` — listener config (includes SSL cert paths)
+  - `/etc/openlitespeed/conf.d/dairyvyapar.conf` — vhost config with `vhssl` block pointing to lego path
+  - `/usr/local/directadmin/data/users/admin/openlitespeed.conf` — DA-managed vhosts
+- **Lego flags that DO work**: `--tls` flag must go AFTER `run` subcommand (e.g., `lego run --tls ...`), not before it. Putting flags before `run` treats them as global options.
+- **Rate limit note**: If rate limited, wait for the retry-after time shown in the error (e.g., "retry after 2026-09-22 12:53:18 UTC"). Each failed auth counts against the limit.
+- **curl testing note**: LiteSpeed binds to `31.97.235.218` (not `0.0.0.0`), so `curl http://127.0.0.1` gets "Connection refused". Use the actual IP or domain for testing.
+
+### 29. Backend login 500 error fix — dairyId string-to-number conversion
+- **Problem**: `POST /auth/login` with `dairyId` in body returned `500 Internal Server Error`. The error was `PrismaClientValidationError: Argument 'dairyId': Invalid value provided. Expected IntFilter or Int, provided String.`
+- **Root cause**: `local.strategy.ts` extracted `dairyId` from `request.body?.dairyId` and passed it directly to `authService.validateUser()`. JSON body parses numbers as strings when sent as `"1"` (quoted). Prisma expected an integer.
+- **Fix** (`server/src/auth/strategies/local.strategy.ts`):
+  ```typescript
+  // Before (broken):
+  const dairyId = request.body?.dairyId;
+  // After (fixed):
+  const rawDairyId = request.body?.dairyId;
+  const dairyId = rawDairyId != null ? Number(rawDairyId) : undefined;
+  ```
+- **Deployed via**: `sed` on the server's `dist/src/auth/strategies/local.strategy.js` + `pm2 restart dairyvyapar-api`
+- **Result**: Login now returns proper `401 Invalid credentials` instead of `500 Internal Server error`
+- **Note**: The `LoginDto` has `@IsNumber()` decorator on `dairyId`, but NestJS `ValidationPipe` only validates the DTO — it doesn't transform the type. The raw body value remains a string.
 
 ### 25. Supplier houses-all page — Admin feature parity (`supplier/houses-all/page.tsx`)
 - **Pre Bal column**: Added separate Pre Bal header + data cell in houses table; Balance now shows `previousBalance + currentBalance` sum

@@ -124,6 +124,42 @@ export function handleExpiredDairySession(): void {
   clearDairySession()
 }
 
+/**
+ * Validates the dairy plan before treating it as expired.
+ * The session only carries the planExpiry snapshot from login time, which can
+ * go stale (e.g. the plan was renewed afterwards). Never delete remembered
+ * accounts on suspicion alone: re-check with the server, fail open when
+ * offline, and only wipe + redirect when the server confirms expiry.
+ */
+export async function ensurePlanValid(): Promise<boolean> {
+  if (typeof window === "undefined") return true
+  const session = getSessionAuth()
+  if (!session?.planExpiry) return true
+  const snapshotExpiry = new Date(session.planExpiry).getTime()
+  if (Number.isNaN(snapshotExpiry) || snapshotExpiry >= Date.now()) return true
+  try {
+    const dairy = await apiGetDairy(session.dairyId)
+    const serverExpiry = dairy?.planExpiry ? new Date(dairy.planExpiry).getTime() : NaN
+    if (Number.isNaN(serverExpiry) || serverExpiry >= Date.now()) {
+      // Plan is fine on the server — heal the stale snapshot (and the saved profile).
+      saveSessionAuth({
+        ...session,
+        planExpiry: dairy?.planExpiry ?? null,
+        maxHouses: dairy?.maxHouses ?? session.maxHouses,
+      })
+      return true
+    }
+  } catch {
+    // Offline or unreachable — fail open, never wipe saved accounts on suspicion.
+    return true
+  }
+  handleExpiredDairySession()
+  if (!window.location.search.includes("plan-expired=1")) {
+    window.location.replace("/?plan-expired=1")
+  }
+  return false
+}
+
 /** Remove one remembered profile and deactivate it if it is active. */
 export function logoutSavedProfile(profileId?: string): void {
   if (typeof window === "undefined") return

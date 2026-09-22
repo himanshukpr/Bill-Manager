@@ -2,10 +2,10 @@
 
 import { useMemo, useState, useEffect } from 'react'
 import { ArrowLeftCircle } from 'lucide-react'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
-import { clearSessionAuth, handleExpiredDairySession, logoutSavedProfile, saveSessionAuth, restoreAdminSession, removeAdminSession, dashboardPath, getDairyIdFromCookie, getSessionAuth, type SessionAuth } from '@/lib/auth'
+import { clearSessionAuth, ensurePlanValid, logoutSavedProfile, saveSessionAuth, restoreAdminSession, removeAdminSession, dashboardPath, getDairyIdFromCookie } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { clearProfileScopedCaches } from '@/lib/account-switch'
 import { SupplierSidebar } from '@/components/dashboard/supplier/app-sidebar'
@@ -18,19 +18,11 @@ export default function SupplierLayout({ children }: SupplierLayoutProps) {
   const { auth, ready } = useAuthGuard('supplier')
   const [showBanner, setShowBanner] = useState(false)
   const pathname = usePathname()
-  const router = useRouter()
 
   useEffect(() => {
     if (window.location.search.includes("plan-expired=1")) return
-    const session = getSessionAuth()
-    if (session?.planExpiry) {
-      const expiryDate = new Date(session.planExpiry)
-      if (!Number.isNaN(expiryDate.getTime()) && expiryDate.getTime() < Date.now()) {
-        handleExpiredDairySession()
-        router.replace("/?plan-expired=1")
-      }
-    }
-  }, [pathname, router])
+    void ensurePlanValid()
+  }, [pathname])
 
   useEffect(() => {
     if (auth?.impersonator) setShowBanner(true)
