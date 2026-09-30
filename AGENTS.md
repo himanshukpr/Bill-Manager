@@ -267,6 +267,17 @@ None.
 - **Result**: Login now returns proper `401 Invalid credentials` instead of `500 Internal Server error`
 - **Note**: The `LoginDto` has `@IsNumber()` decorator on `dairyId`, but NestJS `ValidationPipe` only validates the DTO — it doesn't transform the type. The raw body value remains a string.
 
+### 30. Full local-vs-server drift audit + cash module deploy (Sep 23, 2026)
+- **Symptom**: Features worked locally but broken on deployed site
+- **Audit method**: MD5-hashed every `.ts`/`.tsx` file locally vs VPS (`find ... -exec md5sum`, compared in PowerShell)
+- **Client**: 101/101 files identical (app/components/hooks/lib); only `middleware.ts` differed (missing `add-account`/multi-profile login support) — synced via pscp + `npm run build` + PM2 restart
+- **Server**: VPS was missing entire `src/cash/` module (7 files from commit `f53343e`) + 14 files differed (server predated cash/auth updates) — `/cash/*` returned 404 while prod DB already had `cash_houses`/`cash_logs`/`cash_payments` tables
+- **Fix**: Zipped local `server/src` (61 files) → uploaded → swapped on VPS (old src kept at `src-old`, since removed) → `npx prisma generate` → `npm run build` → `pm2 restart dairyvyapar-api`
+- **No DB migration needed**: `schema.prisma` MD5 identical local-vs-server, cash tables already present in prod DB, no cash migration file exists locally either (tables were created via `db push`-style sync at some point)
+- **Verified**: `/cash/houses` 404→401 (auth-gated, correct), `/api/dairies` 200, login returns 401 (not 500), site 200, zero new PM2 errors
+- **Lesson**: VPS dirs are NOT git repos (deployed via pscp) — they drift silently. Always diff hashes before assuming deploy is current. Prefer zipping source + building on server over uploading `.next`/`dist` (pscp partial uploads corrupt builds; an aborted `.next` upload earlier caused ChunkLoadError until rebuild)
+- **`regen-bills.ts` is server-only** (not in local repo, not in git) — it broke `nest build` with `await prisma.()`; fixed on server via sed to `await prisma.$disconnect()`. Untouched by src sync (lives at server root, not in `src/`)
+
 ### 25. Supplier houses-all page — Admin feature parity (`supplier/houses-all/page.tsx`)
 - **Pre Bal column**: Added separate Pre Bal header + data cell in houses table; Balance now shows `previousBalance + currentBalance` sum
 - **Infinite scroll**: Added `visibleCount`/`visibleFiltered`/`hasMoreVisibleHouses` with IntersectionObserver; loads 25 houses at a time; scroll-to-end sentinel row

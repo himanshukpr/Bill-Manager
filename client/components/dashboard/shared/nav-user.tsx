@@ -27,10 +27,10 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { EllipsisVerticalIcon, KeyRound, LogOut, Users } from "lucide-react"
+import { EllipsisVerticalIcon, KeyRound, Loader2, LogOut, Settings, Users } from "lucide-react"
 import { LogoutConfirmButton } from "@/components/dashboard/shared/logout-confirm-button"
 import { ProfileSwitcherList } from "@/components/auth/profile-switcher"
-import { getSessionAuth } from "@/lib/auth"
+import { apiGetDairy, getDairySession, getSessionAuth, listSavedProfiles, saveDairySession, upsertSavedProfile } from "@/lib/auth"
 import { toast } from "sonner"
 import { dairiesApi } from "@/lib/api"
 
@@ -50,7 +50,13 @@ export function NavUser({
     const [accountsOpen, setAccountsOpen] = useState(false)
     const [newPassword, setNewPassword] = useState("")
     const [saving, setSaving] = useState(false)
+    const [settingsOpen, setSettingsOpen] = useState(false)
+    const [settingsLoading, setSettingsLoading] = useState(false)
+    const [dairyName, setDairyName] = useState("")
+    const [dairyPhone, setDairyPhone] = useState("")
+    const [savingSettings, setSavingSettings] = useState(false)
     const session = getSessionAuth()
+    const isAdmin = session?.role === "admin"
 
     const getInitials = (name: string) => {
         return name
@@ -73,6 +79,50 @@ export function NavUser({
             toast.error(e instanceof Error ? e.message : String(e))
         } finally {
             setSaving(false)
+        }
+    }
+
+    const handleOpenDairySettings = async () => {
+        if (!session?.dairyId) return
+        setSettingsLoading(true)
+        try {
+            const dairy = await apiGetDairy(session.dairyId)
+            setDairyName(dairy.name ?? "")
+            setDairyPhone(dairy.phone ?? "")
+            setSettingsOpen(true)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e))
+        } finally {
+            setSettingsLoading(false)
+        }
+    }
+
+    const handleSaveDairySettings = async () => {
+        if (!session?.dairyId) return
+        if (!dairyName.trim()) {
+            toast.error("Dairy name is required")
+            return
+        }
+        setSavingSettings(true)
+        try {
+            const updated = await dairiesApi.updateDairy(session.dairyId, {
+                name: dairyName.trim(),
+                phone: dairyPhone.trim(),
+            })
+            // Refresh cached names so the bills PDF header and switcher update.
+            const dairySession = getDairySession()
+            if (dairySession && dairySession.dairyId === session.dairyId) {
+                saveDairySession({ ...dairySession, dairyName: updated.name })
+            }
+            for (const profile of listSavedProfiles().filter((p) => p.dairyId === session.dairyId)) {
+                upsertSavedProfile(profile, updated.name)
+            }
+            toast.success("Dairy settings updated")
+            setSettingsOpen(false)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e))
+        } finally {
+            setSavingSettings(false)
         }
     }
 
@@ -140,6 +190,20 @@ export function NavUser({
                                 <KeyRound className="mr-2 h-4 w-4" />
                                 Change Password
                             </DropdownMenuItem>
+                            {isAdmin && (
+                                <DropdownMenuItem
+                                    onSelect={(e) => {
+                                        e.preventDefault()
+                                        void handleOpenDairySettings()
+                                    }}
+                                    className="cursor-pointer"
+                                >
+                                    {settingsLoading
+                                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        : <Settings className="mr-2 h-4 w-4" />}
+                                    Dairy Settings
+                                </DropdownMenuItem>
+                            )}
                             {onLogout && (
                                 <DropdownMenuItem asChild className="p-0 text-red-600 focus:bg-transparent focus:text-inherit">
                                     <LogoutConfirmButton
@@ -189,6 +253,30 @@ export function NavUser({
                         <DialogDescription>Move between dairies without signing out the other accounts.</DialogDescription>
                     </DialogHeader>
                     <ProfileSwitcherList onAddAccount={() => setAccountsOpen(false)} />
+                </DialogContent>
+            </Dialog>
+            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>Dairy Settings</DialogTitle>
+                        <DialogDescription>Set the dairy name and phone number printed on bills.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label>Dairy Name</Label>
+                            <Input placeholder="Enter dairy name" value={dairyName} onChange={e => setDairyName(e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Phone Number</Label>
+                            <Input placeholder="Enter phone number" value={dairyPhone} onChange={e => setDairyPhone(e.target.value)} />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setSettingsOpen(false)}>Cancel</Button>
+                        <Button onClick={() => void handleSaveDairySettings()} disabled={savingSettings || !dairyName.trim()}>
+                            {savingSettings ? 'Saving...' : 'Save Settings'}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </>

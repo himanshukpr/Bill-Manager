@@ -1703,6 +1703,9 @@ export const dairiesApi = {
   resetPassword: async (id: number, password: string) => {
     return apiPatch(`/dairies/${id}/password`, { password });
   },
+  updateDairy: async (id: number, data: { name?: string; phone?: string }) => {
+    return apiPatch<{ id: number; name: string; phone?: string | null }>(`/dairies/${id}`, data);
+  },
   getSettings: () => requestGet<Record<string, unknown>>('/dairies/settings'),
   updateSettings: async (settings: Record<string, unknown>) => {
     const res = await fetchApi('/dairies/settings', {

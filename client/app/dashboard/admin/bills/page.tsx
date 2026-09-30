@@ -5,7 +5,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Plus, FileText, Search, Trash2, Eye, CalendarDays, Check, Download, AlertTriangle } from 'lucide-react'
 import { billsApi, deliveryLogsApi, housesApi, balanceApi, dairiesApi, productRatesApi, type Bill, type House, type BillItem, type BillPreview, type DeliveryLog, type PaymentHistory, type ProductRate } from '@/lib/api'
-import { getDairySession, getDairyIdFromCookie } from '@/lib/auth'
+import { getDairySession, getDairyIdFromCookie, apiGetDairy } from '@/lib/auth'
 import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -699,6 +699,20 @@ export default function BillsPage() {
     setExportingBalancePdf(true)
 
     try {
+      // Dairy name/phone come from the dairy record itself so every dairy's
+      // bills print its own dedicated header, regardless of login session.
+      const activeDairyId = getDairyIdFromCookie()
+      let dairyName = getDairySession()?.dairyName || 'DAIRY'
+      let dairyPhone = ''
+      try {
+        if (activeDairyId) {
+          const dairy = await apiGetDairy(activeDairyId)
+          if (dairy?.name) dairyName = dairy.name
+          if (dairy?.phone) dairyPhone = dairy.phone
+        }
+      } catch {
+        // Fall back to the login-session values above.
+      }
       const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
@@ -797,7 +811,6 @@ export default function BillsPage() {
         doc.setFont('helvetica', 'bolditalic')
         doc.setFontSize(13)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        const dairyName = getDairySession()?.dairyName || 'DAIRY'
         doc.text(dairyName, x + cardWidth / 2, innerY + titleY, { align: 'center' })
 
         doc.setFont('helvetica', 'normal')
@@ -868,9 +881,13 @@ export default function BillsPage() {
         doc.text(formatPlainAmount(Number(bill.totalAmount ?? 0) + previousBalance), tableX + innerWidth - 1.4, footerStartY + 4.5, { align: 'right', baseline: 'middle' })
 
         doc.setFont('helvetica', 'italic')
-        doc.setFontSize(6.5)
+        doc.setFontSize(7)
         doc.setTextColor(textColor[0], textColor[1], textColor[2])
-        doc.text((bill as any)._shiftLabel || 'DIRECT', innerX + 1.2, y + cardH - 2.5)
+        const shiftLabel = (bill as any)._shiftLabel || 'DIRECT'
+        doc.text(shiftLabel, innerX + 1.2, y + cardH - 2.5)
+        if (dairyPhone) {
+          doc.text(`(Google Pay / PhonePay etc.) UPI: ${dairyPhone}`, innerRight - 1.6, y + cardH - 2.5, { align: 'right' })
+        }
       }
 
       const startNewPage = () => {
