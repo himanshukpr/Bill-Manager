@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Truck, Package, Edit2, Trash2, Save, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -28,6 +28,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { deliveryLogsApi, type DeliveryLog, type DeliveryLogItem, housesApi, productRatesApi, type House, type ProductRate } from '@/lib/api'
+
+const LOGS_PER_PAGE = 25
 
 function isSameLocalDate(left: Date, right: Date): boolean {
   return (
@@ -57,7 +59,7 @@ export default function DeliveryLogsPage() {
   const [deletingLog, setDeletingLog] = useState<DeliveryLog | null>(null)
 
   // Primary source: live Dexie cache — instant, reactive, consistent across views
-  const cachedLogs = useLiveQuery(() => db.deliveryLogs.toArray())
+  const cachedLogs = useLiveQuery(() => db.deliveryLogs.where('dairyId').equals(dairyId ?? 0).toArray())
 
   // Background refresh: fetch latest from server to keep Dexie cache in sync
   useEffect(() => {
@@ -109,6 +111,10 @@ export default function DeliveryLogsPage() {
     [productRates],
   )
 
+  const [visibleCount, setVisibleCount] = useState(LOGS_PER_PAGE)
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadMoreLockRef = useRef(false)
+
   const groupedLogs = useMemo(() => {
     const groups: Record<string, DeliveryLog[]> = {}
     for (const log of logs) {
@@ -121,6 +127,76 @@ export default function DeliveryLogsPage() {
     }
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
   }, [logs])
+
+  // Flatten all logs for pagination (newest first)
+  const flatLogs = useMemo(() => {
+    return groupedLogs.flatMap(([dateKey, dateLogs]) => 
+      dateLogs.map(log => ({ ...log, groupDateKey: dateKey }))
+    )
+  }, [groupedLogs])
+
+  const visibleLogs = useMemo(() => flatLogs.slice(0, visibleCount), [flatLogs, visibleCount])
+
+  const hasMoreLogs = visibleCount < flatLogs.length
+
+  // Regroup visible logs by date for display
+  const visibleGroupedLogs = useMemo(() => {
+    const groups: Record<string, DeliveryLog[]> = {}
+    for (const log of visibleLogs) {
+      const key = log.groupDateKey
+      if (!groups[key]) {
+        groups[key] = []
+      }
+      groups[key].push(log)
+    }
+    return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
+  }, [visibleLogs])
+
+  // Load more logs when sentinel is visible (matches houses-all pattern)
+  const loadMoreLogs = useCallback(() => {
+    if (loadMoreLockRef.current) return
+    loadMoreLockRef.current = true
+    setVisibleCount((prev) => {
+      const next = Math.min(prev + LOGS_PER_PAGE, flatLogs.length)
+      if (next === prev) {
+        loadMoreLockRef.current = false
+        return prev
+      }
+      return next
+    })
+    setTimeout(() => { loadMoreLockRef.current = false }, 250)
+  }, [flatLogs.length])
+
+  useEffect(() => {
+    if (!hasMoreLogs) return
+    const el = loadMoreSentinelRef.current
+    if (!el || !('IntersectionObserver' in window)) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreLogs()
+      }
+    }, { root: null, rootMargin: '300px 0px', threshold: 0.01 })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasMoreLogs, flatLogs.length, visibleCount, loadMoreLogs])
+
+  // Fallback: check on scroll (matches houses-all)
+  useEffect(() => {
+    if (!hasMoreLogs) return
+    const handleScroll = () => {
+      const remaining = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)
+      if (remaining <= 300) {
+        loadMoreLogs()
+      }
+    }
+    handleScroll()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('resize', handleScroll)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('resize', handleScroll)
+    }
+  }, [hasMoreLogs, loadMoreLogs])
 
   const todayKey = getLocalDateKey(new Date())
 
@@ -180,7 +256,8 @@ export default function DeliveryLogsPage() {
   function startEdit(log: DeliveryLog) {
     const items = (log.items || []).map((item) => ({
       milkType: (item.milkType || '').trim(),
-      qty: String(item.qty),
+      // Keep zero/empty qty as '' so the field shows the placeholder instead of a hard "0".
+      qty: item.qty ? String(item.qty) : '',
       rate: String(item.rate),
     }))
     if (items.length === 0) {
@@ -253,8 +330,9 @@ export default function DeliveryLogsPage() {
           <p className="text-sm">No delivery logs found</p>
         </div>
       ) : (
-        <div className="space-y-8">
-          {groupedLogs.map(([dateKey, dateLogs]) => {
+        <>
+          <div className="space-y-8">
+            {visibleGroupedLogs.map(([dateKey, dateLogs]) => {
             const date = new Date(dateKey)
             const isToday = dateKey === todayKey
             const totalForDay = dateLogs.reduce((sum, log) => sum + Number(log.totalAmount || 0), 0)
@@ -333,7 +411,14 @@ export default function DeliveryLogsPage() {
               </div>
             )
           })}
+          {/* Load more sentinel - single element after all date groups */}
+          {hasMoreLogs && (
+            <div ref={loadMoreSentinelRef} className="py-4 text-center text-sm text-muted-foreground">
+              Loading more...
+            </div>
+          )}
         </div>
+        </>
       )}
 
       {/* Edit Dialog */}
@@ -389,7 +474,7 @@ export default function DeliveryLogsPage() {
                       type="number"
                       min="0"
                       step="0.01"
-                      placeholder="Qty"
+                      placeholder="0"
                       value={item.qty}
                       onChange={(e) => updateEditItem(index, 'qty', e.target.value)}
                       className="h-7 w-16"

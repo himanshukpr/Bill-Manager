@@ -56,11 +56,16 @@ export async function getDeliveryLogs(params?: {
     logs = await db.deliveryLogs.where('houseId').equals(params.houseId).toArray();
   } else if (params?.shift) {
     logs = await db.deliveryLogs.where('shift').equals(params.shift).toArray();
+  } else if (params?.dairyId) {
+    // Use dairyId index for efficient querying by dairy
+    logs = await db.deliveryLogs.where('dairyId').equals(params.dairyId).toArray();
   } else {
     logs = await db.deliveryLogs.toArray();
   }
 
-  if (params?.dairyId) {
+  if (params?.dairyId && !params?.houseId && !params?.shift) {
+    // Already filtered by index, no need to filter again
+  } else if (params?.dairyId) {
     logs = logs.filter((l) => l.dairyId === params.dairyId);
   }
 
@@ -144,6 +149,9 @@ export async function forceRefreshDeliveryLogs(params?: {
     await db.deliveryLogs.where('houseId').equals(params.houseId).delete();
   } else if (params?.shift) {
     await db.deliveryLogs.where('shift').equals(params.shift).delete();
+  } else if (params?.dairyId) {
+    // Clear only logs for this dairyId
+    await db.deliveryLogs.where('dairyId').equals(params.dairyId).delete();
   } else {
     await db.deliveryLogs.clear();
   }
@@ -192,12 +200,16 @@ async function mergeServerLogsIntoIDB(
   // Delete ALL IDB logs that are NOT in the server response but match the query scope.
   // These are stale — they were deleted from the server by another user or action.
   // Keep logs outside the query scope (different houseId/shift) and logs with pending queue entries.
-  let candidates = db.deliveryLogs.toCollection();
+  let candidates: any;
 
   if (params?.houseId) {
-    candidates = db.deliveryLogs.where('houseId').equals(params.houseId) as any;
+    candidates = db.deliveryLogs.where('houseId').equals(params.houseId);
   } else if (params?.shift) {
-    candidates = db.deliveryLogs.where('shift').equals(params.shift) as any;
+    candidates = db.deliveryLogs.where('shift').equals(params.shift);
+  } else if (params?.dairyId) {
+    candidates = db.deliveryLogs.where('dairyId').equals(params.dairyId);
+  } else {
+    candidates = db.deliveryLogs.toCollection();
   }
 
   const idbLogs = await candidates.toArray();
@@ -206,7 +218,14 @@ async function mergeServerLogsIntoIDB(
   for (const log of idbLogs) {
     if (serverIds.has(log.id)) continue; // server still has it
     if (log.id < 0 && pendingTempIds.has(log.id)) continue; // tempLog being synced
-    if (params?.dairyId && log.dairyId !== params.dairyId) continue; // different dairy
+    // Date-scoped fetches only received a slice of the data — never treat logs
+    // outside the requested range as stale (they simply weren't fetched).
+    if (params?.fromDate || params?.toDate) {
+      const deliveredAt = String(log.deliveredAt ?? '');
+      if (params.fromDate && deliveredAt < params.fromDate) continue;
+      if (params.toDate && deliveredAt > params.toDate) continue;
+    }
+    // dairyId already filtered by index when used
     staleIds.push(log.id);
   }
 

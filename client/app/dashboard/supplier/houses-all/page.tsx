@@ -10,7 +10,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { balanceApi, billsApi, deliveryLogsApi, houseConfigApi, housesApi, productRatesApi, queryHousesForActiveDairy, usersApi, type Bill, type BillItem, type DeliveryLog, type House, type HouseBalance, type HouseConfig, type PaymentHistory, type ProductRate, type User } from '@/lib/api'
 import { db } from '@/lib/db'
-import { getSessionAuth, getAuthHeader, getDairyIdFromCookie, type SessionAuth } from '@/lib/auth'
+import { getSessionAuth, getAuthHeader, getDairyIdFromCookie, apiValidateDairyPassword, type SessionAuth } from '@/lib/auth'
 import { isStoredDateInMonth, getStoredDateKey, formatStoredDateKey } from '@/lib/date-utils'
 import { fetchApi } from '@/lib/api-base'
 import { toast } from 'sonner'
@@ -63,7 +63,7 @@ type MonthlyProductSummary = {
 }
 
 type DeliveryEditForm = {
-  items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
+  items: Array<{ milkType: string; qty: string; rate: number; amount: number }>
   note?: string
 }
 
@@ -126,7 +126,22 @@ function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
     const qty = Number(row.qty ?? 0)
     const rate = Number(row.rate ?? 0)
     const amount = Number(row.amount ?? (qty * rate))
-    return { milkType, qty, rate, amount }
+    // Keep qty as raw text in the edit form so zero/empty values show the
+    // placeholder in the editor instead of a hard "0".
+    return { milkType, qty: qty ? String(qty) : '', rate, amount }
+  })
+}
+
+// Convert edit-form items (qty stored as text) to numeric items for the API.
+function toSaveableItems(items: DeliveryEditForm['items']) {
+  return items.map((it) => {
+    const qty = Number(it.qty)
+    const amount = Number(it.amount)
+    return {
+      ...it,
+      qty: Number.isFinite(qty) ? qty : 0,
+      amount: Number.isFinite(amount) ? amount : 0,
+    }
   })
 }
 
@@ -466,6 +481,14 @@ export default function HousesPage() {
   const [deletingDeliveryLog, setDeletingDeliveryLog] = useState<DeliveryLog | null>(null)
   const [editDeliveryForm, setEditDeliveryForm] = useState<DeliveryEditForm>({ items: [], note: '' })
   const [editDeliverySaving, setEditDeliverySaving] = useState(false)
+
+  // Dairy password verification
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
+  const [passwordValue, setPasswordValue] = useState('')
+  const [passwordContext, setPasswordContext] = useState('This action requires any admin password of the current dairy.')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const pendingPasswordActionRef = useRef<(() => void | Promise<void>) | null>(null)
+
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [summaryFromDate, setSummaryFromDate] = useState('')
   const [summaryToDate, setSummaryToDate] = useState('')
@@ -1219,6 +1242,37 @@ export default function HousesPage() {
     return true
   }
 
+  const requireDairyPassword = useCallback((action: () => void | Promise<void>, context?: string) => {
+    pendingPasswordActionRef.current = action
+    setPasswordValue('')
+    setPasswordContext(context || 'This action requires any admin password of the current dairy.')
+    setPasswordDialogOpen(true)
+  }, [])
+
+  async function handleDairyPasswordVerify() {
+    if (!passwordValue.trim()) {
+      toast.error('Enter a password')
+      return
+    }
+    setPasswordSaving(true)
+    try {
+      const valid = await apiValidateDairyPassword(passwordValue.trim())
+      if (!valid) {
+        toast.error('Invalid password')
+        setPasswordValue('')
+        return
+      }
+      setPasswordDialogOpen(false)
+      const action = pendingPasswordActionRef.current
+      pendingPasswordActionRef.current = null
+      if (action) await action()
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setPasswordSaving(false)
+    }
+  }
+
   function openEditDeliveryDialog(row: HouseDeliverySummaryRow) {
     // Check if this specific date is blocked by a generated bill
     if (isDeliveryBlockedByBill(row.dateKey) || Boolean(row.log?.billGenerated)) {
@@ -1262,7 +1316,8 @@ export default function HousesPage() {
       setEditingDeliveryLog(newLog)
       setEditDeliveryForm({ items: [], note: '' })
     }
-    setEditDeliveryDialogOpen(true)
+
+    requireDairyPassword(() => setEditDeliveryDialogOpen(true), 'Editing a saved delivery requires any admin password of the current dairy.')
   }
 
   async function handleSaveDeliveryEdit() {
@@ -1283,7 +1338,7 @@ export default function HousesPage() {
         const result = await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
-          items: editDeliveryForm.items,
+          items: toSaveableItems(editDeliveryForm.items),
           note: editDeliveryForm.note,
           deliveredAt: editingDeliveryLog.deliveredAt,
         })
@@ -1291,7 +1346,7 @@ export default function HousesPage() {
       } else {
         // Update existing delivery
         await deliveryLogsApi.update(editingDeliveryLog.id, {
-          items: editDeliveryForm.items,
+          items: toSaveableItems(editDeliveryForm.items),
           note: editDeliveryForm.note,
         })
         toast.success('Delivery updated successfully')
@@ -2402,7 +2457,7 @@ export default function HousesPage() {
                                         <Button
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() => setDeletingDeliveryLog(row.log!)}
+                                          onClick={() => requireDairyPassword(() => setDeletingDeliveryLog(row.log!), 'Deleting a delivery log requires any admin password of the current dairy.')}
                                           title="Delete delivery"
                                           className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                                         >
@@ -2446,6 +2501,32 @@ export default function HousesPage() {
             <Button variant="outline" onClick={() => setDeletingDeliveryLog(null)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteDeliveryLog} disabled={editDeliverySaving}>
               {editDeliverySaving ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dairy Password Verification */}
+      <Dialog open={passwordDialogOpen} onOpenChange={(open) => { if (!open && !passwordSaving) { setPasswordDialogOpen(false); pendingPasswordActionRef.current = null } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Enter Dairy Password</DialogTitle>
+            <DialogDescription>
+              {passwordContext}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="password"
+            value={passwordValue}
+            onChange={(e) => setPasswordValue(e.target.value)}
+            placeholder="Dairy password"
+            onKeyDown={(e) => { if (e.key === 'Enter' && !passwordSaving) void handleDairyPasswordVerify() }}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasswordDialogOpen(false)} disabled={passwordSaving}>Cancel</Button>
+            <Button onClick={handleDairyPasswordVerify} disabled={passwordSaving}>
+              {passwordSaving ? 'Verifying...' : 'Verify'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2562,7 +2643,7 @@ export default function HousesPage() {
                         const firstProduct = activeProducts[0] || { name: '', rate: 0 }
                         const added = {
                           milkType: firstProduct.name,
-                          qty: 0,
+                          qty: '',
                           rate: getPreferredRateForHouse(firstProduct.name),
                           amount: 0,
                         }
@@ -2595,7 +2676,7 @@ export default function HousesPage() {
                                 onValueChange={(val) => {
                                   const milkType = val
                                   const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
+                                  const newQty = Number(updated[index].qty || 0)
                                   const newRate = getPreferredRateForHouse(milkType)
                                   updated[index] = { ...updated[index], milkType, rate: newRate, amount: newQty * newRate }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
@@ -2626,7 +2707,7 @@ export default function HousesPage() {
                                 onChange={(e) => {
                                   const newRate = Number(e.target.value)
                                   const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
+                                  const newQty = Number(updated[index].qty || 0)
                                   updated[index] = { ...updated[index], rate: newRate, amount: newQty * newRate }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
@@ -2640,16 +2721,19 @@ export default function HousesPage() {
                                 type="number"
                                 min="0"
                                 step="0.5"
-                                value={item.qty}
+                                value={item.qty || ''}
                                 onChange={(e) => {
-                                  const newQty = Number(e.target.value)
-                                  const newAmount = newQty * item.rate
+                                  // Store the raw text so partial input like "0." renders
+                                  // exactly as typed; parse only for the amount (NaN-safe).
+                                  const rawQty = e.target.value
+                                  const parsedQty = Number(rawQty)
+                                  const newAmount = Number.isFinite(parsedQty) ? parsedQty * item.rate : 0
                                   const updated = [...editDeliveryForm.items]
-                                  updated[index] = { ...item, qty: newQty, amount: newAmount }
+                                  updated[index] = { ...item, qty: rawQty, amount: newAmount }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
                                 className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
-                                placeholder="Qty"
+                                placeholder="0"
                               />
                             </div>
 

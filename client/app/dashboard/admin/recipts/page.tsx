@@ -58,7 +58,7 @@ type PaymentSummaryRow = {
 }
 
 type DeliveryEditForm = {
-  items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
+  items: Array<{ milkType: string; qty: string; rate: number; amount: number }>
   note?: string
 }
 
@@ -124,7 +124,22 @@ function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
     const qty = Number(row.qty ?? 0)
     const rate = Number(row.rate ?? 0)
     const amount = Number(row.amount ?? (qty * rate))
-    return { milkType, qty, rate, amount }
+    // Keep qty as raw text in the edit form so zero/empty values show the
+    // placeholder in the editor instead of a hard "0".
+    return { milkType, qty: qty ? String(qty) : '', rate, amount }
+  })
+}
+
+// Convert edit-form items (qty stored as text) to numeric items for the API.
+function toSaveableItems(items: DeliveryEditForm['items']) {
+  return items.map((it) => {
+    const qty = Number(it.qty)
+    const amount = Number(it.amount)
+    return {
+      ...it,
+      qty: Number.isFinite(qty) ? qty : 0,
+      amount: Number.isFinite(amount) ? amount : 0,
+    }
   })
 }
 
@@ -1026,7 +1041,7 @@ export default function ReceiptsPage() {
       setEditingDeliveryShifts([])
       setEditingDeliveryAllLogs([])
       setEditDeliveryForm({
-        items: [{ milkType: firstProduct.name, qty: 0, rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
+        items: [{ milkType: firstProduct.name, qty: '', rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
         note: '',
       })
     }
@@ -1053,13 +1068,13 @@ export default function ReceiptsPage() {
         await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
-          items: editDeliveryForm.items,
+          items: toSaveableItems(editDeliveryForm.items),
           note: editDeliveryForm.note,
           deliveredAt: editingDeliveryLog.deliveredAt,
         })
       } else {
         await deliveryLogsApi.update(editingDeliveryLog.id, {
-          items: editDeliveryForm.items,
+          items: toSaveableItems(editDeliveryForm.items),
           note: editDeliveryForm.note,
         })
 
@@ -1581,9 +1596,7 @@ export default function ReceiptsPage() {
                   <tr className="border-b border-border bg-muted/40">
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">House</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Amount</th>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Method</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Recorded By</th>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Date</th>
                     <th className="hidden md:table-cell px-4 py-3 text-left font-semibold text-muted-foreground">Created At</th>
                     <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Action</th>
                   </tr>
@@ -1612,27 +1625,22 @@ export default function ReceiptsPage() {
                       <tr key={p.id} className={`border-b border-border/60 hover:bg-muted/30 transition-colors ${idx === filtered.length - 1 ? 'border-b-0' : ''}`}>
                         <td className="px-4 py-3">
                           <p className="font-semibold">{p.balance?.house?.houseNo ?? '—'}</p>
+                          <span className='text-sm text-muted-foreground'>
+                            {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN', {
+                              day: 'numeric', month: 'short', year: 'numeric'
+                            })}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
                           <span className="font-bold text-emerald-600 dark:text-emerald-400">
                             ₹{Number(p.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </span><br />
+                          <span className='text-sm text-muted-foreground'>
+                            {paymentMethodLabel(p.paymentMethod)}
                           </span>
-                          {/* {Number(p.discount ?? 0) > 0 && (
-                            <span className="ml-1 text-xs font-normal text-red-500">
-                              (₹{Number(p.discount).toLocaleString('en-IN', { maximumFractionDigits: 2 })} discount)
-                            </span>
-                          )} */}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground">
-                          {paymentMethodLabel(p.paymentMethod)}
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
                           {p.recordedBy ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground">
-                          {new Date(p.paidAt || p.createdAt).toLocaleDateString('en-IN', {
-                            day: 'numeric', month: 'short', year: 'numeric'
-                          })}
                         </td>
                         <td className="hidden md:table-cell px-4 py-3 text-sm text-muted-foreground">
                           {new Date(p.createdAt).toLocaleDateString('en-IN', {
@@ -2677,7 +2685,7 @@ export default function ReceiptsPage() {
                         const firstProduct = activeProducts[0] ?? { name: '', rate: 0 }
                         const added = {
                           milkType: firstProduct.name,
-                          qty: 0,
+                          qty: '',
                           rate: getPreferredRateForHouse(firstProduct.name),
                           amount: 0,
                         }
@@ -2710,7 +2718,7 @@ export default function ReceiptsPage() {
                                 onValueChange={(value) => {
                                   const newRate = getPreferredRateForHouse(value)
                                   const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
+                                  const newQty = Number(updated[index].qty || 0)
                                   updated[index] = { ...updated[index], milkType: value, rate: newRate, amount: newQty * newRate }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
@@ -2737,16 +2745,19 @@ export default function ReceiptsPage() {
                                 type="number"
                                 min="0"
                                 step="0.5"
-                                value={item.qty}
+                                value={item.qty || ''}
                                 onChange={(event) => {
-                                  const newQty = Number(event.target.value)
-                                  const newAmount = newQty * item.rate
+                                  // Store the raw text so partial input like "0." renders
+                                  // exactly as typed; parse only for the amount (NaN-safe).
+                                  const rawQty = event.target.value
+                                  const parsedQty = Number(rawQty)
+                                  const newAmount = Number.isFinite(parsedQty) ? parsedQty * item.rate : 0
                                   const updated = [...editDeliveryForm.items]
-                                  updated[index] = { ...item, qty: newQty, amount: newAmount }
+                                  updated[index] = { ...item, qty: rawQty, amount: newAmount }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
                                 className="w-full rounded border border-border bg-background px-2 py-1 text-right text-sm"
-                                placeholder="Qty"
+                                placeholder="0"
                               />
                             </div>
 

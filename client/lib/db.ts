@@ -62,10 +62,10 @@ export class BillManagerDB extends Dexie {
       queryCache: 'key, updatedAt',
       deliveryQueue: '++id, op, status, createdAt, nextRetryAt, tempId, serverId',
     });
-    this.version(4).stores({
+    this.version(5).stores({
       houses: 'id, houseNo, phoneNo',
       houseConfigs: 'id, houseId, shift, supplierId',
-      deliveryLogs: 'id, houseId, supplierId, shift, deliveredAt',
+      deliveryLogs: 'id, dairyId, houseId, supplierId, shift, deliveredAt',
       bills: 'id, houseId, month, year',
       users: 'uuid, username, role',
       syncQueue: '++id, createdAt, nextRetryAt',

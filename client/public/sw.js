@@ -6,7 +6,6 @@ const PRE_CACHE_ASSETS = [
   '/',
   '/manifest.json',
   '/DairyVayapar Icon.png',
-  '/DairyVayapar Icon.png',
 ];
 
 // Install event - pre-cache static assets

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
-import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator, MessageCircle, Settings } from 'lucide-react'
+import { ArrowRight, BarChart3, ClipboardPlus, FileText, Home, Truck, Calculator, MessageCircle, Settings, Wallet } from 'lucide-react'
 import { deliveryLogsApi, housesApi, type DeliveryLog, type DeliveryLogItem, type House } from '@/lib/api'
 import { getDairyIdFromCookie } from '@/lib/auth'
 import { getStoredDateKey } from '@/lib/date-utils'
@@ -167,10 +167,14 @@ export default function AdminDashboardPage() {
   const loadSummary = async (date: Date) => {
     setSummaryLoading(true)
     try {
-       const [logs, houses] = await Promise.all([
-         deliveryLogsApi.list({ dairyId: dairyId ?? undefined }),
-         housesApi.list(),
-       ])
+      // Fetch only logs around the selected day instead of the dairy's entire
+      // history. ±1 day padding keeps ISO-timestamped early-morning deliveries
+      // (which fall on the previous UTC day) inside the range — the exact
+      // local-date filtering still happens below. Also note: no houses fetch
+      // here; it was unused and a slow/failing houses API delayed the dialog.
+      const fromDate = `${getLocalDateKey(new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1))}T00:00:00.000Z`
+      const toDate = `${getLocalDateKey(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1))}T23:59:59.999Z`
+      const logs = await deliveryLogsApi.list({ dairyId: dairyId ?? undefined, fromDate, toDate })
       const filteredLogs = (logs as DeliveryLog[]).filter((log) => {
         const logDate = new Date(log.deliveredAt || log.createdAt)
         return isSameLocalDate(logDate, date)
@@ -249,6 +253,15 @@ export default function AdminDashboardPage() {
       iconBg: 'bg-amber-500/15',
       iconColor: 'text-amber-600 dark:text-amber-400',
     },
+    {
+      label: 'Payment Pending',
+      description: 'View houses with pending balance payments.',
+      href: '/dashboard/admin/houses?payment=pending',
+      icon: Wallet,
+      accent: 'from-rose-500/10 to-rose-600/10',
+      iconBg: 'bg-rose-500/15',
+      iconColor: 'text-rose-600 dark:text-rose-400',
+    },
     // {
     //   label: 'Settings',
     //   description: 'Configure bill item categories and dairy preferences.',
@@ -269,7 +282,7 @@ export default function AdminDashboardPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {quickLinks.map((link) => {
           const Icon = link.icon
           return (

@@ -76,7 +76,7 @@ type PaymentSummaryRow = {
 }
 
 type DeliveryEditForm = {
-  items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
+  items: Array<{ milkType: string; qty: string; rate: number; amount: number }>
   note?: string
 }
 
@@ -128,7 +128,22 @@ function normalizeDeliveryItems(items: unknown): DeliveryEditForm['items'] {
     const qty = Number(row.qty ?? 0)
     const rate = Number(row.rate ?? 0)
     const amount = Number(row.amount ?? (qty * rate))
-    return { milkType, qty, rate, amount }
+    // Keep qty as raw text in the edit form so zero/empty values show the
+    // placeholder in the editor instead of a hard "0".
+    return { milkType, qty: qty ? String(qty) : '', rate, amount }
+  })
+}
+
+// Convert edit-form items (qty stored as text) to numeric items for the API.
+function toSaveableItems(items: DeliveryEditForm['items']) {
+  return items.map((it) => {
+    const qty = Number(it.qty)
+    const amount = Number(it.amount)
+    return {
+      ...it,
+      qty: Number.isFinite(qty) ? qty : 0,
+      amount: Number.isFinite(amount) ? amount : 0,
+    }
   })
 }
 
@@ -436,6 +451,16 @@ export default function HousesPage() {
   const [houseStatusFilter, setHouseStatusFilter] = useState<HouseStatusFilter>('activated')
   const [supplierFilter, setSupplierFilter] = useState<SupplierFilter>('all')
   const [form, setForm] = useState<HouseForm>(emptyForm)
+
+  // Pre-apply filter from URL (e.g. dashboard "Payment Pending" card links to
+  // /houses?payment=pending). Read once on mount; nothing else resets it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const payment = params.get('payment')
+    if (payment === 'pending' || payment === 'clear' || payment === 'advance') {
+      setPaymentFilter(payment)
+    }
+  }, [])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [toggleId, setToggleId] = useState<number | null>(null)
@@ -1859,7 +1884,7 @@ export default function HousesPage() {
       }
       setEditingDeliveryLog(newLog)
       setEditDeliveryForm({
-        items: [{ milkType: firstProduct.name, qty: 0, rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
+        items: [{ milkType: firstProduct.name, qty: '', rate: getPreferredRateForHouse(firstProduct.name), amount: 0 }],
         note: ''
       })
     }
@@ -1887,14 +1912,14 @@ export default function HousesPage() {
         await deliveryLogsApi.create({
           houseId: summaryHouse.id,
           shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
-          items: editDeliveryForm.items,
+          items: toSaveableItems(editDeliveryForm.items),
           note: editDeliveryForm.note,
           deliveredAt: editingDeliveryLog.deliveredAt,
         })
       } else {
         // Update the primary log with all combined items
         await deliveryLogsApi.update(editingDeliveryLog.id, {
-          items: editDeliveryForm.items,
+          items: toSaveableItems(editDeliveryForm.items),
           note: editDeliveryForm.note,
         })
 
@@ -3318,7 +3343,7 @@ const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-
                         const firstProduct = activeProducts[0] || { name: '', rate: 0 }
                         const added = {
                           milkType: firstProduct.name,
-                          qty: 0,
+                          qty: '',
                           rate: getPreferredRateForHouse(firstProduct.name),
                           amount: 0,
                         }
@@ -3351,7 +3376,7 @@ const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-
                                 onValueChange={(val) => {
                                   const newRate = getPreferredRateForHouse(val)
                                   const updated = [...editDeliveryForm.items]
-                                  const newQty = updated[index].qty ?? 0
+                                  const newQty = Number(updated[index].qty || 0)
                                   updated[index] = { ...updated[index], milkType: val, rate: newRate, amount: newQty * newRate }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
@@ -3380,16 +3405,19 @@ const lines = customBillSummary.map(i => `${i.name}: ${i.qty.toLocaleString('en-
                                 type="number"
                                 min="0"
                                 step="0.5"
-                                value={item.qty}
+                                value={item.qty || ''}
                                 onChange={(e) => {
-                                  const newQty = Number(e.target.value)
-                                  const newAmount = newQty * item.rate
+                                  // Store the raw text so partial input like "0." renders
+                                  // exactly as typed; parse only for the amount (NaN-safe).
+                                  const rawQty = e.target.value
+                                  const parsedQty = Number(rawQty)
+                                  const newAmount = Number.isFinite(parsedQty) ? parsedQty * item.rate : 0
                                   const updated = [...editDeliveryForm.items]
-                                  updated[index] = { ...item, qty: newQty, amount: newAmount }
+                                  updated[index] = { ...item, qty: rawQty, amount: newAmount }
                                   setEditDeliveryForm({ ...editDeliveryForm, items: updated })
                                 }}
                                 className="w-full rounded border border-border bg-background px-2 py-1 text-sm text-right"
-                                placeholder="Qty"
+                                placeholder="0"
                               />
                             </div>
 

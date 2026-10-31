@@ -221,6 +221,26 @@ function getHouseSearchText(house: House) {
     .toLowerCase()
 }
 
+// Edit dialog form: qty is kept as raw text while editing so zero/empty
+// values show the placeholder instead of a hard "0".
+type EditDeliveryForm = {
+  items: Array<{ milkType: string; name?: string; qty: string; rate: number; amount: number }>
+  note: string
+}
+
+// Convert edit-form items (qty stored as text) to numeric items for the API.
+function toSaveableItems(items: EditDeliveryForm['items']): DeliveryLogItem[] {
+  return items.map((it) => {
+    const qty = Number(it.qty)
+    const amount = Number(it.amount)
+    return {
+      ...it,
+      qty: Number.isFinite(qty) ? qty : 0,
+      amount: Number.isFinite(amount) ? amount : 0,
+    }
+  })
+}
+
 export default function DeliveryEntryPage() {
   const [loading, setLoading] = useState(true)
   const dairyId = getDairyIdFromCookie()
@@ -244,7 +264,7 @@ export default function DeliveryEntryPage() {
 
   // Edit / Delete state
   const [editingLog, setEditingLog] = useState<DeliveryLog | null>(null)
-  const [editForm, setEditForm] = useState<{ items: DeliveryLogItem[]; note: string }>({ items: [], note: '' })
+  const [editForm, setEditForm] = useState<EditDeliveryForm>({ items: [], note: '' })
   const [editSaving, setEditSaving] = useState(false)
   const [deletingLog, setDeletingLog] = useState<DeliveryLog | null>(null)
   const [deleteSaving, setDeleteSaving] = useState(false)
@@ -599,7 +619,7 @@ export default function DeliveryEntryPage() {
   function openEdit(log: DeliveryLog) {
     setEditingLog(log)
     setEditForm({
-      items: (log.items ?? []).map(item => ({ ...item })),
+      items: (log.items ?? []).map(item => ({ ...item, qty: item.qty ? String(item.qty) : '' })),
       note: log.note ?? '',
     })
   }
@@ -613,7 +633,7 @@ export default function DeliveryEntryPage() {
       const diff = newAmount - oldAmount
 
       await deliveryLogsApi.update(editingLog.id, {
-        items: editForm.items,
+        items: toSaveableItems(editForm.items),
         note: editForm.note,
       })
 
@@ -634,7 +654,7 @@ export default function DeliveryEntryPage() {
       setLogs(current => {
         const nextLogs = current.map(l =>
           l.id === editingLog.id
-            ? { ...l, items: editForm.items, note: editForm.note, totalAmount: String(newAmount) }
+            ? { ...l, items: toSaveableItems(editForm.items), note: editForm.note, totalAmount: String(newAmount) }
             : l
         )
         writeDirectEntryCache(`direct-entry:admin:logs:${logDate}`, nextLogs)
@@ -1361,7 +1381,8 @@ export default function DeliveryEntryPage() {
                         const resolvedRate = getResolvedRateByProductName(undefined, rates, val)
                         const newRate = Number(resolvedRate) || Number(item.rate)
                         const updated = [...editForm.items]
-                        updated[idx] = { ...updated[idx], milkType: val, rate: newRate, amount: Number(updated[idx].qty) * newRate }
+                        const typedQty = Number(updated[idx].qty)
+                        updated[idx] = { ...updated[idx], milkType: val, rate: newRate, amount: (Number.isFinite(typedQty) ? typedQty : 0) * newRate }
                         setEditForm(f => ({ ...f, items: updated }))
                       }}
                     >
@@ -1385,14 +1406,19 @@ export default function DeliveryEntryPage() {
                       type="number"
                       min="0"
                       step="0.5"
-                      value={item.qty}
+                      value={item.qty || ''}
                       onChange={e => {
-                        const newQty = Number(e.target.value)
+                        // Store the raw text so partial input like "0." renders
+                        // exactly as typed; parse only for the amount (NaN-safe).
+                        const rawQty = e.target.value
+                        const parsedQty = Number(rawQty)
+                        const newAmount = Number.isFinite(parsedQty) ? parsedQty * Number(item.rate) : 0
                         const updated = [...editForm.items]
-                        updated[idx] = { ...updated[idx], qty: newQty, amount: newQty * Number(item.rate) }
+                        updated[idx] = { ...updated[idx], qty: rawQty, amount: newAmount }
                         setEditForm(f => ({ ...f, items: updated }))
                       }}
                       className="h-8 text-sm text-right"
+                      placeholder="0"
                     />
                   </div>
                   <div className="col-span-2 text-right text-sm font-medium">
@@ -1407,7 +1433,7 @@ export default function DeliveryEntryPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setEditForm(f => ({ ...f, items: [...f.items, { milkType: '', qty: 0, rate: 0, amount: 0 }] }))}
+                  onClick={() => setEditForm(f => ({ ...f, items: [...f.items, { milkType: '', qty: '', rate: 0, amount: 0 }] }))}
                 >
                   <Plus className="mr-1 h-4 w-4" /> Add item
                 </Button>

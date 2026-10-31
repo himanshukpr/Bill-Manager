@@ -286,8 +286,21 @@ type MonthlyProductSummary = {
 }
 
 type DeliveryEditForm = {
-    items: Array<{ milkType: string; qty: number; rate: number; amount: number }>
+    items: Array<{ milkType: string; qty: string; rate: number; amount: number }>
     note?: string
+}
+
+// Convert edit-form items (qty stored as text) to numeric items for the API.
+function toSaveableItems(items: DeliveryEditForm['items']) {
+    return items.map((it) => {
+        const qty = Number(it.qty)
+        const amount = Number(it.amount)
+        return {
+            ...it,
+            qty: Number.isFinite(qty) ? qty : 0,
+            amount: Number.isFinite(amount) ? amount : 0,
+        }
+    })
 }
 
 type PaymentSummaryRow = {
@@ -557,6 +570,7 @@ export default function DeliveryPage() {
     const [swipeDeleteConfirmIndex, setSwipeDeleteConfirmIndex] = useState<number | null>(null)
     const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
     const [passwordValue, setPasswordValue] = useState('')
+    const [passwordContext, setPasswordContext] = useState('This action requires any admin password of the current dairy.')
     const [passwordSaving, setPasswordSaving] = useState(false)
     const pendingPasswordActionRef = useRef<(() => void | Promise<void>) | null>(null)
 
@@ -1105,7 +1119,7 @@ export default function DeliveryPage() {
             setClearTodayDialogOpen(false)
         }
 
-        requireDairyPassword(performClear)
+        requireDairyPassword(performClear, 'Deleting all delivery logs for the selected date requires any admin password of the current dairy.')
     }, [currentHouse, currentHouseLogs, selectedShift, selectedDate])
 
     const handleOpenHistory = useCallback(async () => {
@@ -1133,9 +1147,10 @@ export default function DeliveryPage() {
         return logs.some((log) => log.billGenerated === true)
     }
 
-    const requireDairyPassword = useCallback((action: () => void | Promise<void>) => {
+    const requireDairyPassword = useCallback((action: () => void | Promise<void>, context?: string) => {
         pendingPasswordActionRef.current = action
         setPasswordValue('')
+        setPasswordContext(context || 'This action requires the admin password of this dairy.')
         setPasswordDialogOpen(true)
     }, [])
 
@@ -1504,7 +1519,9 @@ export default function DeliveryPage() {
                     const milkType = summaryNormalizeMilkType(item.milkType)
                     const qty = Number(item.qty ?? 0)
                     const rate = summaryGetPreferredRateForHouse(milkType)
-                    return { milkType, qty, rate, amount: qty * rate }
+                    // Keep qty as raw text in the edit form so zero/empty values show
+                    // the placeholder instead of a hard "0".
+                    return { milkType, qty: qty ? String(qty) : '', rate, amount: qty * rate }
                 })
                 setEditDeliveryForm({ items: normalized, note: row.log.note })
             } else {
@@ -1530,7 +1547,7 @@ export default function DeliveryPage() {
             setEditDeliveryDialogOpen(true)
         }
 
-        requireDairyPassword(openEditor)
+        requireDairyPassword(openEditor, 'Editing a saved delivery requires any admin password of the current dairy.')
     }
 
     async function handleSaveDeliveryEdit() {
@@ -1556,14 +1573,14 @@ export default function DeliveryPage() {
                 await deliveryLogsApi.create({
                     houseId: summaryHouse.id,
                     shift: editingDeliveryLog.shift as 'morning' | 'evening' | 'shop',
-                    items: editDeliveryForm.items,
+                    items: toSaveableItems(editDeliveryForm.items),
                     note: editDeliveryForm.note,
                     deliveredAt: editingDeliveryLog.deliveredAt,
                 })
                 toast.success('Delivery created successfully')
             } else {
                 await deliveryLogsApi.update(editingDeliveryLog.id, {
-                    items: editDeliveryForm.items,
+                    items: toSaveableItems(editDeliveryForm.items),
                     note: editDeliveryForm.note,
                 })
                  toast.success('Delivery updated successfully')
@@ -2234,7 +2251,7 @@ export default function DeliveryPage() {
                 resetDeliveryFormAfterRemoval()
             }
 
-            requireDairyPassword(performRemoveAll)
+            requireDairyPassword(performRemoveAll, 'Removing all delivery items for the selected date requires any admin password of the current dairy.')
         } else if (removedProductName && currentHouseLogs.length > 0) {
             if (houseLogsBlockedByBill(currentHouseLogs)) {
                 toast.error('Cannot edit — a bill has already been generated for this delivery')
@@ -2314,7 +2331,7 @@ export default function DeliveryPage() {
                 resetDeliveryFormAfterRemoval()
             }
 
-            requireDairyPassword(performRemoveProduct)
+            requireDairyPassword(performRemoveProduct, 'Removing a product from the delivery requires any admin password of the current dairy.')
         } else {
             resetDeliveryFormAfterRemoval()
         }
@@ -2431,7 +2448,7 @@ export default function DeliveryPage() {
                 toast.success(`${currentHouse.houseNo} delivery updated!`)
             }
 
-            requireDairyPassword(performUpdate)
+            requireDairyPassword(performUpdate, 'Saving delivery changes requires any admin password of the current dairy.')
         } else {
             setCompletedHouses((prev) => new Set([...prev, currentHouse.id]))
             setHasUnsavedChanges(false)
@@ -3887,7 +3904,7 @@ export default function DeliveryPage() {
                                         <Button
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() => setDeletingDeliveryLog(row.log!)}
+                                          onClick={() => requireDairyPassword(() => setDeletingDeliveryLog(row.log!), 'Deleting a delivery log requires any admin password of the current dairy.')}
                                           title="Delete delivery"
                                           className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                                         >
@@ -4040,12 +4057,16 @@ export default function DeliveryPage() {
                                 {editDeliveryForm.items.map((item, idx) => (
                                     <div key={idx} className="flex items-center gap-2">
                                         <span className="flex-1 text-sm">{item.milkType}</span>
-                                        <Input type="number" value={item.qty} onChange={(e) => {
-                                            const qty = Number(e.target.value)
+                                        <Input type="number" value={item.qty || ''} placeholder="0" onChange={(e) => {
+                                            // Store the raw text so partial input like "0." renders
+                                            // exactly as typed; parse only for the amount (NaN-safe).
+                                            const rawQty = e.target.value
+                                            const parsedQty = Number(rawQty)
+                                            const qty = Number.isFinite(parsedQty) ? parsedQty : 0
                                             const rate = summaryGetPreferredRateForHouse(item.milkType)
                                             setEditDeliveryForm((prev) => ({
                                                 ...prev,
-                                                items: prev.items.map((it, i) => i === idx ? { ...it, qty, rate, amount: qty * rate } : it),
+                                                items: prev.items.map((it, i) => i === idx ? { ...it, qty: rawQty, rate, amount: qty * rate } : it),
                                             }))
                                         }} className="w-20" />
                                         <span className="text-sm text-muted-foreground">₹{item.amount.toLocaleString('en-IN')}</span>
@@ -4088,7 +4109,7 @@ export default function DeliveryPage() {
                     <DialogHeader>
                         <DialogTitle>Enter Dairy Password</DialogTitle>
                         <DialogDescription>
-                            Editing a saved delivery requires the admin password of this dairy.
+                            {passwordContext}
                         </DialogDescription>
                     </DialogHeader>
                     <Input
